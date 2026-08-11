@@ -1,0 +1,174 @@
+#define		_GLOBAL
+/*------------------------------------------------------------------------
+#	System	: TLFEP System
+#	Module	: 선물옵션 주문응답 분배
+#	File	: jc_1200_dd.c
+------------------------------------------------------------------------*/
+
+/*------------------------------------------------------------------------
+	Header Files
+------------------------------------------------------------------------*/
+#include	"fep_fepj.h"
+#include	"jc_struct.h"
+#include	"krx_struct.h"
+
+#define		DATA_SIZE	381					  /* Header(81) + Data(300) */
+#include	"buf_struct.h"
+
+/*------------------------------------------------------------------------
+	Constants and Structures
+------------------------------------------------------------------------*/
+#define		DATA_TIME	60 * 1000
+#define		READ_MAX	(FILE_BUF_LEN/(sizeof(FILE_RW_HEAD)+DATA_SIZE+1))
+
+/*------------------------------------------------------------------------
+	Global Variables
+------------------------------------------------------------------------*/
+int					R_Cnt;
+FILE_BUFF_FORMAT	R_Fmt[READ_MAX], W_Fmt;
+
+/*------------------------------------------------------------------------
+	Function Prototypes
+------------------------------------------------------------------------*/
+void	JC_1200_DD (void);
+void	Analyze_Data (void);
+void	Write_Data (int);
+
+/*----------------------------------------------------------------------*/
+int		main (int argc, char *argv[])
+/*----------------------------------------------------------------------*/
+{
+	Init_Proc (argc, argv);
+	JC_1200_DD ();
+	Exit_Process ();
+}	/* End of main ()	*/
+
+/*----------------------------------------------------------------------*/
+void	JC_1200_DD (void)
+/*----------------------------------------------------------------------*/
+{
+	int		rt;
+
+	while (START_S != JOB_END)
+	{
+		Stat_Save ();
+
+		while (START_S != JOB_END)
+		{
+			Stat_Save ();
+			memset (R_Fmt, 0, sizeof (FILE_BUFF_FORMAT) * READ_MAX);
+
+			R_Cnt = DSHM_R (PS_R_1, (void *)R_Fmt, READ_MAX);
+
+			if (R_Cnt < 0)
+			{
+				SLog (DSH_FATAL, "cannot read DSHM[%s,%d:%s]",
+					IDN(D_K,P_K,0), SYS_NO, SYS_STR);
+				sleep (1);
+				Exit_Process ();
+			}
+			else if (R_Cnt == 0)
+				break;
+
+			SLog (DSH_OK, "SHM RD [%s:%d][%d]",
+				IDN(D_K,P_K,0), R_Cnt, IDR(D_K,P_K,0,0));
+			Analyze_Data ();
+		}
+
+		rt = Poll_File (DATA_TIME);
+
+		if (rt == 1)
+			SLog (USR_OK, "poll timeout <%d>", INT_SEQ);
+		else if (rt == -1)
+			continue;
+	}
+}	/* End of JC_1200_DD ()	*/
+
+/*************************************************************************
+	Function		: . Analyze_Data
+	Parameters IN	: .
+	Parameters OUT	: .
+	Return Code		: . void
+	Comment			: . analyze and divide data
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+void	Analyze_Data (void)
+/*----------------------------------------------------------------------*/
+{
+	int					i;
+
+	for (i = 0; i < R_Cnt; i ++)
+	{
+		memcpy (&W_Fmt, &R_Fmt[i], sizeof (FILE_BUFF_FORMAT));
+
+		KRX_JUMUN_DATA_ST *dat =
+		(KRX_JUMUN_DATA_ST *)&R_Fmt[i].Data[sizeof(KRX_HEADER)+
+											sizeof(KRX_JUMUN_R_DATA)+11];
+
+		if (dat->MembershipItem[0] == 'S' ||		/* 상품	*/
+			dat->MembershipItem[0] == 'W')		/* 위탁	*/
+			Write_Data (1);
+		else
+		{
+			if (dat->MembershipItem[0] == 'D'	/* 직접접속	*/
+			{
+				Write_Data (2);
+
+				if (dat->MembershipItem[2] == 'P')	/* PK	*/
+					Write_Data (3);
+			}
+
+			else
+			{
+				SLog (USR_ERROR, "접속경로오류 [%c][%20s]",
+					dat->MembershipItem[0], 
+					dat->MembershipItem);
+				Dshm_Add_Count (PS_R_1, 1);
+				INT_SEQ ++;
+				continue;
+			}
+		}
+	}
+
+	return;
+}	/* End of Analyze_Data ()	*/
+
+/**************************************************************************
+	Function		: . Write_Data
+	Parameters IN	: . w_type	: write flag
+	Parameters OUT	: .
+	Return Code		: . void
+	Comment			: . write data to data SHM
+**************************************************************************/
+/*-----------------------------------------------------------------------*/
+void	Write_Data (int w_type)
+/*-----------------------------------------------------------------------*/
+{
+	int		rt;
+
+	rt = DSHM_W (w_type * 10, (void *)&W_Fmt, 1);
+
+	if (rt != 1)
+	{
+		SLog (DSH_FATAL, "DSHM write OD%d[%s:%d]",
+			w_type, ODN(D_K,P_K,w_type-1), rt);
+		Exit_Process ();
+	}
+
+	if (w_type == 3)
+		return;
+	else
+	{
+		Dshm_Add_Count (PS_R_1, 1);
+		INT_SEQ ++;
+		SLog (USR_OK, "DSHM write OD%d[%s:%d][%d]",
+			w_type, ODN(D_K,P_K,w_type-1), rt, ODW(D_K,P_K,w_type-1,0));
+		Set_TR_Time ();
+	}
+
+	return;
+}	/* End of Write_Data ()	*/
+
+/*************************************************************************
+	End of Program (jc_1200_dd.c)
+*************************************************************************/

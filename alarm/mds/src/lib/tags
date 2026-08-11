@@ -1,0 +1,1082 @@
+!_TAG_FILE_FORMAT	2	/extended format; --format=1 will not append ;" to lines/
+!_TAG_FILE_SORTED	1	/0=unsorted, 1=sorted, 2=foldcase/
+!_TAG_PROGRAM_AUTHOR	Darren Hiebert	/dhiebert@users.sourceforge.net/
+!_TAG_PROGRAM_NAME	Exuberant Ctags	//
+!_TAG_PROGRAM_URL	http://ctags.sourceforge.net	/official site/
+!_TAG_PROGRAM_VERSION	5.8	//
+AFLAGS	com/Makefile	/^AFLAGS=$(MY_AFLAGS)$/;"	m
+AFLAGS	mds/Makefile	/^AFLAGS=$(MY_AFLAGS)$/;"	m
+AROPTS	com/Makefile	/^AROPTS=$(MY_AROPTS)$/;"	m
+AROPTS	mds/Makefile	/^AROPTS=$(MY_AROPTS)$/;"	m
+CENTURY	mds/time.c	607;"	d	file:
+CFLAGS	com/Makefile	/^CFLAGS=$(L_CFLAGS) -I$(INC) $/;"	m
+CFLAGS	com/Makefile	/^CFLAGS=-g $(L_CFLAGS) -I$(INC) $/;"	m
+CFLAGS	mds/Makefile	/^CFLAGS=$(L_CFLAGS) -I$(INC)  $(P_CFLAGS)$/;"	m
+CFLAGS	mds/Makefile	/^CFLAGS=-g $(L_CFLAGS) -I$(INC) -I$(WFGPATH)\/src\/inc  -I$(SRC_HOME)\/src\/inc\/com $(P_CFLAGS) $/;"	m
+CRC	com/ipcsub.c	71;"	d	file:
+CXXFLAGS	com/Makefile	/^CXXFLAGS=-g $(L_CXXFLAGS) -I$(INC) $/;"	m
+CXXFLAGS	mds/Makefile	/^CXXFLAGS=-g $(L_CXXFLAGS) -I$(INC) $(P_CFLAGS)$/;"	m
+CalcCAmount	mds/aftermar/fetch.c	/^int CalcCAmount(MDFOLD  *folder)$/;"	f
+CalcCAmount	mds/fetch.c	/^int CalcCAmount(MDFOLD  *folder)$/;"	f
+CalcCAmount	mds/nomarkup/fetch.c	/^int CalcCAmount(MDFOLD  *folder)$/;"	f
+CalcCAmount	mds/price.c	/^int CalcCAmount(MDFOLD	*folder)$/;"	f
+ChangeSpotMarkup	mds/aftermar/fetch.c	/^void ChangeSpotMarkup(struct q_Markup* q, int nMarkupType)$/;"	f
+ChangeSpotMarkup	mds/fetch.c	/^void ChangeSpotMarkup(struct q_Markup* q, int nMarkupType)$/;"	f
+ChangeSpotMarkup	mds/nomarkup/fetch.c	/^void ChangeSpotMarkup(struct q_Markup* q, int nMarkupType)$/;"	f
+CheckQuotePrice	mds/aftermar/fetch.c	/^int CheckQuotePrice(MARKET *market, int iSource, char *msgb, int msgl)$/;"	f
+CheckQuotePrice	mds/fetch.c	/^int CheckQuotePrice(MARKET *market, int iSource, char *msgb, int msgl)$/;"	f
+CheckQuotePrice	mds/nomarkup/fetch.c	/^int CheckQuotePrice(MARKET *market, int iSource, char *msgb, int msgl)$/;"	f
+CheckStopPriceTime	mds/fetch.c	/^int CheckStopPriceTime()$/;"	f
+CustomPriceSetting	mds/aftermar/fetch.c	/^int CustomPriceSetting(int iSource, int iPriceType, char *symbol, char* date, char* time, char* bidPrice, char* offerPrice)$/;"	f
+CustomPriceSetting	mds/fetch.c	/^int CustomPriceSetting(int iSource, int iPriceType, char *symbol, char* date, char* time, char* bidPrice, char* offerPrice)$/;"	f
+CustomPriceSetting	mds/nomarkup/fetch.c	/^int CustomPriceSetting(int iSource, int iPriceType, char *symbol, char* date, char* time, char* bidPrice, char* offerPrice)$/;"	f
+CustomPriceSetting	mds/price.c	/^int CustomPriceSetting(int iSource, int iPriceType, char *symbol, char* date, char* time, char* bidPrice, char* offerPrice)$/;"	f
+DBNAME	mds/Makefile	/^    DBNAME=DSKEIT$/;"	m
+DBNAME	mds/Makefile	/^    DBNAME=DSKEIU$/;"	m
+DD	mds/time.c	610;"	d	file:
+DIR	Makefile	/^DIR=mds com$/;"	m
+FlotePoint	mds/aftermar/fetch.c	27;"	d	file:
+FlotePoint	mds/fetch.c	27;"	d	file:
+FlotePoint	mds/nomarkup/fetch.c	27;"	d	file:
+GetBookToDate	mds/aftermar/fetch.c	/^int GetBookToDate(char *symbol, char* Expiredate, BOOKSTRUCT* rtBook ,int nMarkupType, char ExpiredateType)$/;"	f
+GetBookToDate	mds/fetch.c	/^int GetBookToDate(char *symbol, char* Expiredate, BOOKSTRUCT* rtBook, int nMarkupType, char ExpiredateType)$/;"	f
+GetBookToDate	mds/nomarkup/fetch.c	/^int GetBookToDate(char *symbol, char* Expiredate, BOOKSTRUCT* rtBook ,int nMarkupType, char ExpiredateType)$/;"	f
+GetBookToDateNMarkup	mds/aftermar/fetch.c	/^int GetBookToDateNMarkup(char *symbol, char* Expiredate, BOOKSTRUCT* rtBook ,int nMarkupType)$/;"	f
+GetBookToDateNMarkup	mds/fetch.c	/^int GetBookToDateNMarkup(char *symbol, char* Expiredate, BOOKSTRUCT* rtBook ,int nMarkupType)$/;"	f
+GetBookToDateNMarkup	mds/nomarkup/fetch.c	/^int GetBookToDateNMarkup(char *symbol, char* Expiredate, BOOKSTRUCT* rtBook ,int nMarkupType)$/;"	f
+GetBookToDateNMarkupType	mds/aftermar/fetch.c	/^int GetBookToDateNMarkupType(char *symbol, char* Expiredate, BOOKSTRUCT* rtBook ,int nMarkupType, int fx_prdct_dstcd)$/;"	f
+GetBookToDateNMarkupType	mds/fetch.c	/^int GetBookToDateNMarkupType(char *symbol, char* Expiredate, BOOKSTRUCT* rtBook ,int nMarkupType, int fx_prdct_dstcd)$/;"	f
+GetBookToDateNMarkupType	mds/nomarkup/fetch.c	/^int GetBookToDateNMarkupType(char *symbol, char* Expiredate, BOOKSTRUCT* rtBook ,int nMarkupType, int fx_prdct_dstcd)$/;"	f
+GetCodeInfo	mds/aftermar/fetch.c	/^int  GetCodeInfo(char *symbol, S_CODEINFO* sCodeinfo)$/;"	f
+GetCodeInfo	mds/fetch.c	/^int  GetCodeInfo(char *symbol, S_CODEINFO* sCodeinfo)$/;"	f
+GetCodeInfo	mds/nomarkup/fetch.c	/^int  GetCodeInfo(char *symbol, S_CODEINFO* sCodeinfo)$/;"	f
+GetCodeInfo	mds/price.c	/^int  GetCodeInfo(char *symbol, S_CODEINFO* sCodeinfo)$/;"	f
+GetCodePind	mds/aftermar/fetch.c	/^int  GetCodePind(char *symbol)$/;"	f
+GetCodePind	mds/fetch.c	/^int  GetCodePind(char *symbol)$/;"	f
+GetCodePind	mds/nomarkup/fetch.c	/^int  GetCodePind(char *symbol)$/;"	f
+GetCodePind	mds/price.c	/^int  GetCodePind(char *symbol)$/;"	f
+GetDiffDate	mds/aftermar/fetch.c	/^int GetDiffDate(char* startDate, char* toDate)$/;"	f
+GetDiffDate	mds/fetch.c	/^int GetDiffDate(char* startDate, char* toDate)$/;"	f
+GetDiffDate	mds/nomarkup/fetch.c	/^int GetDiffDate(char* startDate, char* toDate)$/;"	f
+GetMid	mds/aftermar/fetch.c	/^double GetMid(double bidprice, double askprice, int zdiv)$/;"	f
+GetMid	mds/fetch.c	/^double GetMid(double bidprice, double askprice, int zdiv)$/;"	f
+GetMid	mds/nomarkup/fetch.c	/^double GetMid(double bidprice, double askprice, int zdiv)$/;"	f
+GetMid	mds/price.c	/^double GetMid(double bidprice, double askprice, int zdiv)$/;"	f
+GetPriceToDate	mds/aftermar/fetch.c	/^double GetPriceToDate(char* sbGubn, char *symbol, char* Expiredate)$/;"	f
+GetPriceToDate	mds/fetch.c	/^double GetPriceToDate(char* sbGubn, char *symbol, char* Expiredate)$/;"	f
+GetPriceToDate	mds/nomarkup/fetch.c	/^double GetPriceToDate(char* sbGubn, char *symbol, char* Expiredate)$/;"	f
+GetPriceToDate	mds/price.c	/^double GetPriceToDate(char* sbGubn, char *symbol, char* Expiredate)$/;"	f
+GetQuotToDate	mds/aftermar/fetch.c	/^int GetQuotToDate(char *symbol, char* Expiredate, S_SENDQUOT* rtQuot)$/;"	f
+GetQuotToDate	mds/fetch.c	/^int GetQuotToDate(char *symbol, char* Expiredate, S_SENDQUOT* rtQuot)$/;"	f
+GetQuotToDate	mds/nomarkup/fetch.c	/^int GetQuotToDate(char *symbol, char* Expiredate, S_SENDQUOT* rtQuot)$/;"	f
+GetQuotToDate	mds/price.c	/^int GetQuotToDate(char *symbol, char* Expiredate, S_SENDQUOT* rtQuot)$/;"	f
+GetSwapPriceToDate	mds/aftermar/fetch.c	/^int GetSwapPriceToDate(char *symbol, char* NearExpiredate, char* FarExpiredate,  char* sLgenNo, QUOTMSTRUCT* rtQuot, int nMarkupType)$/;"	f
+GetSwapPriceToDate	mds/fetch.c	/^int GetSwapPriceToDate(char *symbol, char* NearExpiredate, char* FarExpiredate,  char* sLgenNo, QUOTMSTRUCT* rtQuot, int nMarkupType)$/;"	f
+GetSwapPriceToDate	mds/nomarkup/fetch.c	/^int GetSwapPriceToDate(char *symbol, char* NearExpiredate, char* FarExpiredate,  char* sLgenNo, QUOTMSTRUCT* rtQuot, int nMarkupType)$/;"	f
+INC	com/Makefile	/^INC=..\/..\/inc\/mds$/;"	m
+INC	mds/Makefile	/^INC=..\/..\/inc\/mds$/;"	m
+INCF	com/Makefile	/^INCF=$(INC)\/mdfold.h $(INC)\/context.h $(INC)\/stream.h $(INC)\/config.h $/;"	m
+INCF	mds/Makefile	/^INCF=$(INC)\/mdfold.h $(INC)\/context.h $(INC)\/stream.h $(INC)\/config.h $(INC)\/cmbstrn.h $(WFGPATH)\/src\/inc\/axsnd.h$/;"	m
+InitMarketDate	mds/aftermar/fetch.c	/^int InitMarketDate(MARKET *market)$/;"	f
+InitMarketDate	mds/fetch.c	/^int InitMarketDate(MARKET *market)$/;"	f
+InitMarketDate	mds/nomarkup/fetch.c	/^int InitMarketDate(MARKET *market)$/;"	f
+LFLAGS	com/Makefile	/^LFLAGS=$(L_LFLAGS)$/;"	m
+LFLAGS	mds/Makefile	/^LFLAGS=$(L_LFLAGS) $(LFORA) $(PLFLAGS) -L$(DB2_LIB) -lkeitr$/;"	m
+MAKE_DATE	mds/time.c	656;"	d	file:
+MAX_CSVB	mds/misc.c	8;"	d	file:
+MAX_IF	mds/ifcfg.c	14;"	d	file:
+MAX_POOL	mds/market.c	3;"	d	file:
+MAX_SYMBOL	mds/codeconv.c	5;"	d	file:
+MAX_SYMBOL	mds/symbol.c	6;"	d	file:
+MAX_XCHG	mds/exchange.c	4;"	d	file:
+MM	mds/time.c	609;"	d	file:
+MULTICAST_F	mds/cook.c	11;"	d	file:
+MULTICAST_T	mds/cook.c	12;"	d	file:
+MarkupSetting	mds/aftermar/fetch.c	/^int MarkupSetting(S_SENDMARKUP markupData, int nMarkupType)$/;"	f
+MarkupSetting	mds/fetch.c	/^int MarkupSetting(S_SENDMARKUP markupData, int nMarkupType)$/;"	f
+MarkupSetting	mds/nomarkup/fetch.c	/^int MarkupSetting(S_SENDMARKUP markupData, int nMarkupType)$/;"	f
+MarkupSetting	mds/price.c	/^int MarkupSetting(S_SENDMARKUP markupData, int nMarkupType)$/;"	f
+OBJECT	com/Makefile	/^OBJECT=$(X_GFLIB) $(S_GFLIB) *.o$/;"	m
+OBJECT	mds/Makefile	/^OBJECT=$(X_GFLIB) $(S_GFLIB) *.o$/;"	m
+OBJF	com/Makefile	/^OBJF=ipcsub.o netconf.o$/;"	m
+OBJF	mds/Makefile	/^OBJF=setup.o cook.o open.o close.o shm.o folder.o recv.o udp.o sched.o time.o ifcfg.o exchange.o \\$/;"	m
+P_PUSH	mds/aftermar/fetch.c	24;"	d	file:
+P_PUSH	mds/fetch.c	24;"	d	file:
+P_PUSH	mds/nomarkup/fetch.c	24;"	d	file:
+QSZ	mds/cook.c	14;"	d	file:
+RTS_DEPTH	mds/aftermar/mds.c	367;"	d	file:
+RTS_DEPTH	mds/mds.c	275;"	d	file:
+RTS_DEPTH	mds/nomarkup/mds.c	361;"	d	file:
+ReloadVirtualQty	mds/aftermar/fetch.c	/^int ReloadVirtualQty()$/;"	f
+ReloadVirtualQty	mds/fetch.c	/^int ReloadVirtualQty()$/;"	f
+ReloadVirtualQty	mds/nomarkup/fetch.c	/^int ReloadVirtualQty()$/;"	f
+ReloadVirtualQty	mds/price.c	/^int ReloadVirtualQty()$/;"	f
+SECOND1DAY	mds/time.c	6;"	d	file:
+SMBSspotdate	mds/aftermar/fetch.c	/^  uint32_t    SMBSspotdate;  \/\/SMBS수신 SPOT일자 $/;"	m	struct:q_data	file:
+SMBSspotdate	mds/fetch.c	/^  uint32_t    SMBSspotdate;  \/\/SMBS수신 SPOT일자 $/;"	m	struct:q_data	file:
+SMBSspotdate	mds/nomarkup/fetch.c	/^  uint32_t    SMBSspotdate;  \/\/SMBS수신 SPOT일자 $/;"	m	struct:q_data	file:
+STRBUFFER_FACTOR	mds/strbuffer.c	16;"	d	file:
+STRBUFFER_MIN_SIZE	mds/strbuffer.c	15;"	d	file:
+STRBUFFER_SIZE_MAX	mds/strbuffer.c	17;"	d	file:
+S_GFLIB	com/Makefile	/^S_GFLIB=libcom.so$/;"	m
+S_GFLIB	mds/Makefile	/^S_GFLIB=libmds.so$/;"	m
+SendAndSavePriceData	mds/aftermar/fetch.c	/^int SendAndSavePriceData(MARKET *market, int iSource, char *msgb, int msgl)$/;"	f
+SendAndSavePriceData	mds/fetch.c	/^int SendAndSavePriceData(MARKET *market, int iSource, char *msgb, int msgl)$/;"	f
+SendAndSavePriceData	mds/nomarkup/fetch.c	/^int SendAndSavePriceData(MARKET *market, int iSource, char *msgb, int msgl)$/;"	f
+SetBasePrice	mds/aftermar/fetch.c	/^int SetBasePrice(BASEPRICEINPUT* bp)$/;"	f
+SetBasePrice	mds/fetch.c	/^int SetBasePrice(BASEPRICEINPUT* bp)$/;"	f
+SetBasePrice	mds/nomarkup/fetch.c	/^int SetBasePrice(BASEPRICEINPUT* bp)$/;"	f
+SetBasePrice	mds/price.c	/^int SetBasePrice(BASEPRICEINPUT* bp)$/;"	f
+SetPriceOrign	mds/aftermar/fetch.c	/^int SetPriceOrign(PRICEORIGN* bp)$/;"	f
+SetPriceOrign	mds/fetch.c	/^int SetPriceOrign(PRICEORIGN* bp)$/;"	f
+SetPriceOrign	mds/nomarkup/fetch.c	/^int SetPriceOrign(PRICEORIGN* bp)$/;"	f
+SetPriceOrign	mds/price.c	/^int SetPriceOrign(PRICEORIGN* bp)$/;"	f
+SetPriceSource	mds/aftermar/fetch.c	/^int SetPriceSource(char *symbol, int iSource)$/;"	f
+SetPriceSource	mds/fetch.c	/^int SetPriceSource(char *symbol, int iSource)$/;"	f
+SetPriceSource	mds/nomarkup/fetch.c	/^int SetPriceSource(char *symbol, int iSource)$/;"	f
+SetPriceSource	mds/price.c	/^int SetPriceSource(char *symbol, int iSource)$/;"	f
+SwapPriceSetting	mds/aftermar/fetch.c	/^int SwapPriceSetting(int iSource, S_SENDSWAP swapquot)$/;"	f
+SwapPriceSetting	mds/fetch.c	/^int SwapPriceSetting(int iSource, S_SENDSWAP swapquot)$/;"	f
+SwapPriceSetting	mds/nomarkup/fetch.c	/^int SwapPriceSetting(int iSource, S_SENDSWAP swapquot)$/;"	f
+SwapPriceSetting	mds/price.c	/^int SwapPriceSetting(int iSource, S_SENDSWAP swapquot)$/;"	f
+TZ	mds/close.c	/^static char TZ[40];$/;"	v	file:
+TZ	mds/misc.c	/^static char	TZ[40];$/;"	v	file:
+UpdateDayPrice	mds/aftermar/fetch.c	/^int UpdateDayPrice()$/;"	f
+UpdateDayPrice	mds/fetch.c	/^int UpdateDayPrice()$/;"	f
+UpdateDayPrice	mds/nomarkup/fetch.c	/^int UpdateDayPrice()$/;"	f
+UpdateMinutePrice	mds/aftermar/fetch.c	/^int UpdateMinutePrice()$/;"	f
+UpdateMinutePrice	mds/fetch.c	/^int UpdateMinutePrice()$/;"	f
+UpdateMinutePrice	mds/nomarkup/fetch.c	/^int UpdateMinutePrice()$/;"	f
+X_GFLIB	com/Makefile	/^X_GFLIB=libcom.a$/;"	m
+X_GFLIB	mds/Makefile	/^X_GFLIB=libmds.a$/;"	m
+X_NOTI	mds/aftermar/fetch.c	25;"	d	file:
+X_NOTI	mds/fetch.c	25;"	d	file:
+X_NOTI	mds/nomarkup/fetch.c	25;"	d	file:
+X_PUSH	mds/aftermar/fetch.c	22;"	d	file:
+X_PUSH	mds/fetch.c	22;"	d	file:
+X_PUSH	mds/nomarkup/fetch.c	22;"	d	file:
+X_SYNC	mds/aftermar/fetch.c	23;"	d	file:
+X_SYNC	mds/fetch.c	23;"	d	file:
+X_SYNC	mds/nomarkup/fetch.c	23;"	d	file:
+YY	mds/time.c	608;"	d	file:
+_CLOS_	mds/sched.c	8;"	d	file:
+_GNU_SOURCE	mds/strbuffer.c	3;"	d	file:
+_OPEN_	mds/sched.c	7;"	d	file:
+_SCHEMA_H_	mds/aftermar/mds.c	7;"	d	file:
+_SCHEMA_H_	mds/mds.c	7;"	d	file:
+_SCHEMA_H_	mds/nomarkup/mds.c	7;"	d	file:
+_STRUCTURED_PROC	mds/misc.c	469;"	d	file:
+_alarm_handler	com/ipcsub.c	/^void _alarm_handler(int signo)$/;"	f
+_fetch0_	mds/aftermar/fetch.c	/^static int _fetch0_(MARKET *market, ISAM *isam, char *record, int mode, int limit)$/;"	f	file:
+_fetch0_	mds/fetch.c	/^static int _fetch0_(MARKET *market, ISAM *isam, char *record, int mode, int limit)$/;"	f	file:
+_fetch0_	mds/nomarkup/fetch.c	/^static int _fetch0_(MARKET *market, ISAM *isam, char *record, int mode, int limit)$/;"	f	file:
+_fetch1_	mds/aftermar/fetch.c	/^static int _fetch1_(MARKET *market, ISAM *isam, char *record, int mode, int limit, int xymd)$/;"	f	file:
+_fetch1_	mds/fetch.c	/^static int _fetch1_(MARKET *market, ISAM *isam, char *record, int mode, int limit, int xymd)$/;"	f	file:
+_fetch1_	mds/nomarkup/fetch.c	/^static int _fetch1_(MARKET *market, ISAM *isam, char *record, int mode, int limit, int xymd)$/;"	f	file:
+_fetch2_	mds/aftermar/fetch.c	/^static int _fetch2_(MARKET *market, ISAM *isam, char *record, int mode, int limit, int xymd)$/;"	f	file:
+_fetch2_	mds/fetch.c	/^static int _fetch2_(MARKET *market, ISAM *isam, char *record, int mode, int limit, int xymd)$/;"	f	file:
+_fetch2_	mds/nomarkup/fetch.c	/^static int _fetch2_(MARKET *market, ISAM *isam, char *record, int mode, int limit, int xymd)$/;"	f	file:
+_func_	mds/aftermar/mds.c	/^static 	METHOD _func_ =  {$/;"	v	file:
+_func_	mds/mds.c	/^static 	METHOD _func_ =  {$/;"	v	file:
+_func_	mds/nomarkup/mds.c	/^static 	METHOD _func_ =  {$/;"	v	file:
+_mds_recv	mds/recv.c	/^static int _mds_recv(MARKET *market, int seqn, TOKEN *token, char *buf, int size, int timeout)$/;"	f	file:
+args_b	mds/xmlcfg.c	/^static	char	args_b[32][512+1];$/;"	v	file:
+args_l	mds/xmlcfg.c	/^static	int	args_n, args_l;$/;"	v	file:
+args_n	mds/xmlcfg.c	/^static	int	args_n, args_l;$/;"	v	file:
+askhighprice	mds/aftermar/mds.c	/^	char  askhighprice[26];			\/* ASKhigh price					*\/$/;"	m	struct:push_d	file:
+askhighprice	mds/mds.c	/^	char  askhighprice[26];			\/* ASKhigh price					*\/$/;"	m	struct:push_d	file:
+askhighprice	mds/nomarkup/mds.c	/^	char  askhighprice[26];			\/* ASKhigh price					*\/$/;"	m	struct:push_d	file:
+asklowprice	mds/aftermar/mds.c	/^	char  asklowprice[26];			\/* ASKlow price					*\/	$/;"	m	struct:push_d	file:
+asklowprice	mds/mds.c	/^	char  asklowprice[26];			\/* ASKlow price					*\/	$/;"	m	struct:push_d	file:
+asklowprice	mds/nomarkup/mds.c	/^	char  asklowprice[26];			\/* ASKlow price					*\/	$/;"	m	struct:push_d	file:
+askmarkup	mds/aftermar/fetch.c	/^  int          askmarkup;    \/\/가상잔량 마크업 틱  $/;"	m	struct:q_data	file:
+askmarkup	mds/fetch.c	/^  int          askmarkup;    \/\/가상잔량 마크업 틱  $/;"	m	struct:q_data	file:
+askmarkup	mds/nomarkup/fetch.c	/^  int          askmarkup;    \/\/가상잔량 마크업 틱  $/;"	m	struct:q_data	file:
+askopenprice	mds/aftermar/mds.c	/^	char  askopenprice[26];			\/* ASKopen price					*\/$/;"	m	struct:push_d	file:
+askopenprice	mds/mds.c	/^	char  askopenprice[26];			\/* ASKopen price					*\/$/;"	m	struct:push_d	file:
+askopenprice	mds/nomarkup/mds.c	/^	char  askopenprice[26];			\/* ASKopen price					*\/$/;"	m	struct:push_d	file:
+askspotprice	mds/aftermar/mds.c	/^	char  askspotprice[26];	   \/\/ASK Spot가격 . 주문시 필요해서 추가 $/;"	m	struct:push_d	file:
+askspotprice	mds/mds.c	/^	char  askspotprice[26];	   \/\/ASK Spot가격 . 주문시 필요해서 추가 $/;"	m	struct:push_d	file:
+askspotprice	mds/nomarkup/mds.c	/^	char  askspotprice[26];	   \/\/ASK Spot가격 . 주문시 필요해서 추가 $/;"	m	struct:push_d	file:
+bcad	mds/ifcfg.c	/^	char	bcad[24];			\/\/ broadcasting ipad$/;"	m	struct:ifconfig	file:
+bestcpask	mds/aftermar/mds.c	/^	char	bestcpask[1];			\/* best매도호가 색상('+', '-', ' ')	*\/$/;"	m	struct:push_mq	file:
+bestcpask	mds/aftermar/mds.c	/^	char	bestcpask[1];			\/* best매도호가 색상('+', '-', ' ')	*\/$/;"	m	struct:push_q	file:
+bestcpask	mds/mds.c	/^	char	bestcpask[1];			\/* best매도호가 색상('+', '-', ' ')	*\/$/;"	m	struct:push_mq	file:
+bestcpask	mds/mds.c	/^	char	bestcpask[1];		\/* best매도호가 색상('+', '-', ' ')	*\/$/;"	m	struct:push_q	file:
+bestcpask	mds/nomarkup/mds.c	/^	char	bestcpask[1];			\/* best매도호가 색상('+', '-', ' ')	*\/$/;"	m	struct:push_mq	file:
+bestcpask	mds/nomarkup/mds.c	/^	char	bestcpask[1];			\/* best매도호가 색상('+', '-', ' ')	*\/$/;"	m	struct:push_q	file:
+bestcpbid	mds/aftermar/mds.c	/^	char	bestcpbid[1];			\/* best매수호가 색상('+', '-', ' ')	*\/$/;"	m	struct:push_mq	file:
+bestcpbid	mds/aftermar/mds.c	/^	char	bestcpbid[1];			\/* best매수호가 색상('+', '-', ' ')	*\/$/;"	m	struct:push_q	file:
+bestcpbid	mds/mds.c	/^	char	bestcpbid[1];			\/* best매수호가 색상('+', '-', ' ')	*\/$/;"	m	struct:push_mq	file:
+bestcpbid	mds/mds.c	/^	char	bestcpbid[1];		\/* best매수호가 색상('+', '-', ' ')	*\/$/;"	m	struct:push_q	file:
+bestcpbid	mds/nomarkup/mds.c	/^	char	bestcpbid[1];			\/* best매수호가 색상('+', '-', ' ')	*\/$/;"	m	struct:push_mq	file:
+bestcpbid	mds/nomarkup/mds.c	/^	char	bestcpbid[1];			\/* best매수호가 색상('+', '-', ' ')	*\/$/;"	m	struct:push_q	file:
+bestpask	mds/aftermar/mds.c	/^	char	bestpask[20];			\/* best ask						*\/$/;"	m	struct:push_mq	file:
+bestpask	mds/aftermar/mds.c	/^	char	bestpask[20];			\/* best ask						*\/$/;"	m	struct:push_q	file:
+bestpask	mds/mds.c	/^	char	bestpask[20];			\/* best ask						*\/$/;"	m	struct:push_mq	file:
+bestpask	mds/mds.c	/^	char	bestpask[20];		\/* best ask						*\/$/;"	m	struct:push_q	file:
+bestpask	mds/nomarkup/mds.c	/^	char	bestpask[20];			\/* best ask						*\/$/;"	m	struct:push_mq	file:
+bestpask	mds/nomarkup/mds.c	/^	char	bestpask[20];			\/* best ask						*\/$/;"	m	struct:push_q	file:
+bestpbid	mds/aftermar/mds.c	/^	char	bestpbid[20];			\/* best ask						*\/$/;"	m	struct:push_mq	file:
+bestpbid	mds/aftermar/mds.c	/^	char	bestpbid[20];			\/* best ask						*\/$/;"	m	struct:push_q	file:
+bestpbid	mds/mds.c	/^	char	bestpbid[20];			\/* best ask						*\/$/;"	m	struct:push_mq	file:
+bestpbid	mds/mds.c	/^	char	bestpbid[20];		\/* best ask						*\/$/;"	m	struct:push_q	file:
+bestpbid	mds/nomarkup/mds.c	/^	char	bestpbid[20];			\/* best ask						*\/$/;"	m	struct:push_mq	file:
+bestpbid	mds/nomarkup/mds.c	/^	char	bestpbid[20];			\/* best ask						*\/$/;"	m	struct:push_q	file:
+bestspread	mds/aftermar/mds.c	/^	char	bestspread[6];			\/* bestspread						*\/$/;"	m	struct:push_mq	file:
+bestspread	mds/aftermar/mds.c	/^	char	bestspread[6];			\/* bestspread						*\/$/;"	m	struct:push_q	file:
+bestspread	mds/mds.c	/^	char	bestspread[6];			\/* bestspread						*\/$/;"	m	struct:push_mq	file:
+bestspread	mds/mds.c	/^	char	bestspread[6];		\/* bestspread						*\/$/;"	m	struct:push_q	file:
+bestspread	mds/nomarkup/mds.c	/^	char	bestspread[6];			\/* bestspread						*\/$/;"	m	struct:push_mq	file:
+bestspread	mds/nomarkup/mds.c	/^	char	bestspread[6];			\/* bestspread						*\/$/;"	m	struct:push_q	file:
+bestvask	mds/aftermar/mds.c	/^	char	bestvask[20];		\/* Best ask size						*\/$/;"	m	struct:push_mq	file:
+bestvask	mds/aftermar/mds.c	/^	char	bestvask[20];		\/* Best ask size						*\/$/;"	m	struct:push_q	file:
+bestvask	mds/mds.c	/^	char	bestvask[20];		\/* Best ask size						*\/$/;"	m	struct:push_mq	file:
+bestvask	mds/mds.c	/^	char	bestvask[20];		\/* Best ask size						*\/$/;"	m	struct:push_q	file:
+bestvask	mds/nomarkup/mds.c	/^	char	bestvask[20];		\/* Best ask size						*\/$/;"	m	struct:push_mq	file:
+bestvask	mds/nomarkup/mds.c	/^	char	bestvask[20];		\/* Best ask size						*\/$/;"	m	struct:push_q	file:
+bestvbid	mds/aftermar/mds.c	/^	char	bestvbid[20];		\/* Best size						*\/$/;"	m	struct:push_mq	file:
+bestvbid	mds/aftermar/mds.c	/^	char	bestvbid[20];		\/* Best size						*\/$/;"	m	struct:push_q	file:
+bestvbid	mds/mds.c	/^	char	bestvbid[20];		\/* Best size						*\/$/;"	m	struct:push_mq	file:
+bestvbid	mds/mds.c	/^	char	bestvbid[20];		\/* Best size						*\/$/;"	m	struct:push_q	file:
+bestvbid	mds/nomarkup/mds.c	/^	char	bestvbid[20];		\/* Best size						*\/$/;"	m	struct:push_mq	file:
+bestvbid	mds/nomarkup/mds.c	/^	char	bestvbid[20];		\/* Best size						*\/$/;"	m	struct:push_q	file:
+bidhighprice	mds/aftermar/mds.c	/^	char  bidhighprice[26];			\/* BIDhigh price					*\/$/;"	m	struct:push_d	file:
+bidhighprice	mds/mds.c	/^	char  bidhighprice[26];			\/* BIDhigh price					*\/$/;"	m	struct:push_d	file:
+bidhighprice	mds/nomarkup/mds.c	/^	char  bidhighprice[26];			\/* BIDhigh price					*\/$/;"	m	struct:push_d	file:
+bidlowprice	mds/aftermar/mds.c	/^	char  bidlowprice[26];			\/* BIDlow price					*\/$/;"	m	struct:push_d	file:
+bidlowprice	mds/mds.c	/^	char  bidlowprice[26];			\/* BIDlow price					*\/$/;"	m	struct:push_d	file:
+bidlowprice	mds/nomarkup/mds.c	/^	char  bidlowprice[26];			\/* BIDlow price					*\/$/;"	m	struct:push_d	file:
+bidmarkup	mds/aftermar/fetch.c	/^  int         bidmarkup;    \/\/가상잔량 마크업 틱$/;"	m	struct:q_data	file:
+bidmarkup	mds/fetch.c	/^  int         bidmarkup;    \/\/가상잔량 마크업 틱$/;"	m	struct:q_data	file:
+bidmarkup	mds/nomarkup/fetch.c	/^  int         bidmarkup;    \/\/가상잔량 마크업 틱$/;"	m	struct:q_data	file:
+bidopenprice	mds/aftermar/mds.c	/^	char  bidopenprice[26];			\/* BIDopen price					*\/$/;"	m	struct:push_d	file:
+bidopenprice	mds/mds.c	/^	char  bidopenprice[26];			\/* BIDopen price					*\/$/;"	m	struct:push_d	file:
+bidopenprice	mds/nomarkup/mds.c	/^	char  bidopenprice[26];			\/* BIDopen price					*\/$/;"	m	struct:push_d	file:
+bidspotprice	mds/aftermar/mds.c	/^	char  bidspotprice[26];    \/\/BID Spot가격 . 주문시 필요해서 추가$/;"	m	struct:push_d	file:
+bidspotprice	mds/mds.c	/^	char  bidspotprice[26];    \/\/BID Spot가격 . 주문시 필요해서 추가$/;"	m	struct:push_d	file:
+bidspotprice	mds/nomarkup/mds.c	/^	char  bidspotprice[26];    \/\/BID Spot가격 . 주문시 필요해서 추가$/;"	m	struct:push_d	file:
+book	mds/aftermar/mds.c	/^	} book[RTS_DEPTH];$/;"	m	struct:push_d	typeref:struct:push_d::__anon1	file:
+book	mds/mds.c	/^	} book[RTS_DEPTH];$/;"	m	struct:push_d	typeref:struct:push_d::__anon3	file:
+book	mds/nomarkup/mds.c	/^	} book[RTS_DEPTH];$/;"	m	struct:push_d	typeref:struct:push_d::__anon4	file:
+bymd	mds/aftermar/mds.c	/^	char	bymd		[8];			\/* business date 				*\/$/;"	m	struct:push_mq	file:
+bymd	mds/aftermar/mds.c	/^	char	bymd		[8];			\/* business date 				*\/$/;"	m	struct:push_q	file:
+bymd	mds/mds.c	/^	char	bymd		[8];			\/* business date 				*\/$/;"	m	struct:push_mq	file:
+bymd	mds/mds.c	/^	char	bymd		[8];	\/* business date 				*\/$/;"	m	struct:push_q	file:
+bymd	mds/nomarkup/mds.c	/^	char	bymd		[8];			\/* business date 				*\/$/;"	m	struct:push_mq	file:
+bymd	mds/nomarkup/mds.c	/^	char	bymd		[8];			\/* business date 				*\/$/;"	m	struct:push_q	file:
+cdate	mds/aftermar/mds.c	/^	char	cdate[1];			\/* 시가 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_mq	file:
+cdate	mds/mds.c	/^	char	cdate[1];			\/* 시가 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_mq	file:
+cdate	mds/nomarkup/mds.c	/^	char	cdate[1];			\/* 시가 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_mq	file:
+cdiff	mds/aftermar/mds.c	/^	char	cdiff[1];			\/* 대비 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_mq	file:
+cdiff	mds/aftermar/mds.c	/^	char	cdiff[1];			\/* 대비 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_q	file:
+cdiff	mds/mds.c	/^	char	cdiff[1];			\/* 대비 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_mq	file:
+cdiff	mds/mds.c	/^	char	cdiff[1];			\/* 대비 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_q	file:
+cdiff	mds/nomarkup/mds.c	/^	char	cdiff[1];			\/* 대비 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_mq	file:
+cdiff	mds/nomarkup/mds.c	/^	char	cdiff[1];			\/* 대비 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_q	file:
+cfgtag	mds/exchange.c	/^static	struct cfgtag {$/;"	s	file:
+cfgtag	mds/exchange.c	/^} cfgtag[] = {$/;"	v	typeref:struct:cfgtag	file:
+changef	mds/misc.c	/^void changef(char *buf, const char *form, int sign, double diff)$/;"	f
+checkbin	mds/sched.c	/^static int checkbin(const char *program)$/;"	f	file:
+chigh	mds/aftermar/mds.c	/^	char	chigh[1];			\/* 고가 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_mq	file:
+chigh	mds/aftermar/mds.c	/^	char	chigh[1];			\/* 고가 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_q	file:
+chigh	mds/mds.c	/^	char	chigh[1];			\/* 고가 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_mq	file:
+chigh	mds/mds.c	/^	char	chigh[1];			\/* 고가 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_q	file:
+chigh	mds/nomarkup/mds.c	/^	char	chigh[1];			\/* 고가 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_mq	file:
+chigh	mds/nomarkup/mds.c	/^	char	chigh[1];			\/* 고가 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_q	file:
+clast	mds/aftermar/mds.c	/^	char	clast[1];			\/* 현재가 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_mq	file:
+clast	mds/aftermar/mds.c	/^	char	clast[1];			\/* 현재가 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_q	file:
+clast	mds/mds.c	/^	char	clast[1];			\/* 현재가 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_mq	file:
+clast	mds/mds.c	/^	char	clast[1];			\/* 현재가 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_q	file:
+clast	mds/nomarkup/mds.c	/^	char	clast[1];			\/* 현재가 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_mq	file:
+clast	mds/nomarkup/mds.c	/^	char	clast[1];			\/* 현재가 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_q	file:
+close	mds/market.c	/^	void	(*close)(MARKET *);$/;"	m	struct:pool	file:
+closemarket	mds/sched.c	/^static void closemarket(MARKET *market)$/;"	f	file:
+clow	mds/aftermar/mds.c	/^	char	clow[1];			\/* 저가 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_mq	file:
+clow	mds/aftermar/mds.c	/^	char	clow[1];			\/* 저가 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_q	file:
+clow	mds/mds.c	/^	char	clow[1];			\/* 저가 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_mq	file:
+clow	mds/mds.c	/^	char	clow[1];			\/* 저가 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_q	file:
+clow	mds/nomarkup/mds.c	/^	char	clow[1];			\/* 저가 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_mq	file:
+clow	mds/nomarkup/mds.c	/^	char	clow[1];			\/* 저가 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_q	file:
+clr_leadmonth	mds/leadmonth.c	/^static MDFOLD *clr_leadmonth(MARKET *market, const char *symb)$/;"	f	file:
+clracct	mds/sched.c	/^static void clracct(MARKET *market, int hour, int caller)$/;"	f	file:
+cmpfolder	mds/shm.c	/^static int cmpfolder(const char *s1, const char *s2)$/;"	f	file:
+cmpindex	mds/shm.c	/^static int cmpindex(INDEX *i1, INDEX *i2)$/;"	f	file:
+cmplist	mds/cisam.c	/^static int cmplist(const void *p1, const void *p2)$/;"	f	file:
+cmpool	mds/market.c	/^static int cmpool(struct pool *p1, struct pool *p2)$/;"	f	file:
+cmpsymb	mds/symbol.c	/^static int cmpsymb(SYMBOL *s1, SYMBOL *s2)$/;"	f	file:
+cmpzymd	mds/symbol.c	/^static int cmpzymd(struct sequence *s1, struct sequence *s2)$/;"	f	file:
+code	mds/aftermar/mds.c	/^	char	code[12];			\/* realtime symbol		*\/$/;"	m	struct:push_g	file:
+code	mds/aftermar/mds.c	/^	char	code[20];			\/* realtime symbol				*\/$/;"	m	struct:push_d	file:
+code	mds/aftermar/mds.c	/^	char	code[20];			\/* realtime symbol				*\/$/;"	m	struct:push_mq	file:
+code	mds/aftermar/mds.c	/^	char	code[20];			\/* realtime symbol				*\/$/;"	m	struct:push_q	file:
+code	mds/mds.c	/^	char	code[12];			\/* realtime symbol		*\/$/;"	m	struct:push_g	file:
+code	mds/mds.c	/^	char	code[20];			\/* realtime symbol				*\/$/;"	m	struct:push_d	file:
+code	mds/mds.c	/^	char	code[20];			\/* realtime symbol				*\/$/;"	m	struct:push_mq	file:
+code	mds/mds.c	/^	char	code[20];			\/* realtime symbol				*\/$/;"	m	struct:push_q	file:
+code	mds/nomarkup/mds.c	/^	char	code[12];			\/* realtime symbol		*\/$/;"	m	struct:push_g	file:
+code	mds/nomarkup/mds.c	/^	char	code[20];			\/* realtime symbol				*\/$/;"	m	struct:push_d	file:
+code	mds/nomarkup/mds.c	/^	char	code[20];			\/* realtime symbol				*\/$/;"	m	struct:push_mq	file:
+code	mds/nomarkup/mds.c	/^	char	code[20];			\/* realtime symbol				*\/$/;"	m	struct:push_q	file:
+color	mds/aftermar/fetch.c	/^int color(double val, double base)$/;"	f
+color	mds/aftermar/mds.c	/^static char color(double val, double base)$/;"	f	file:
+color	mds/fetch.c	/^int color(double val, double base)$/;"	f
+color	mds/mds.c	/^static char color(double val, double base)$/;"	f	file:
+color	mds/nomarkup/fetch.c	/^int color(double val, double base)$/;"	f
+color	mds/nomarkup/mds.c	/^static char color(double val, double base)$/;"	f	file:
+color	mds/price.c	/^int color(double val, double base)$/;"	f
+color_ccvol	mds/aftermar/mds.c	/^static char color_ccvol(int dirf)$/;"	f	file:
+color_ccvol	mds/mds.c	/^static char color_ccvol(int dirf)$/;"	f	file:
+color_ccvol	mds/nomarkup/mds.c	/^static char color_ccvol(int dirf)$/;"	f	file:
+copen	mds/aftermar/mds.c	/^	char	copen[1];			\/* 시가 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_mq	file:
+copen	mds/aftermar/mds.c	/^	char	copen[1];			\/* 시가 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_q	file:
+copen	mds/mds.c	/^	char	copen[1];			\/* 시가 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_mq	file:
+copen	mds/mds.c	/^	char	copen[1];			\/* 시가 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_q	file:
+copen	mds/nomarkup/mds.c	/^	char	copen[1];			\/* 시가 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_mq	file:
+copen	mds/nomarkup/mds.c	/^	char	copen[1];			\/* 시가 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_q	file:
+cpask	mds/aftermar/mds.c	/^		char	cpask[1];		\/* 매수호가 색상('+', '-', ' ')	*\/$/;"	m	struct:push_d::__anon1	file:
+cpask	mds/aftermar/mds.c	/^	char	cpask[1];			\/* Avail매도호가 색상('+', '-', ' ')	*\/$/;"	m	struct:push_mq	file:
+cpask	mds/aftermar/mds.c	/^	char	cpask[1];			\/* Avail매도호가 색상('+', '-', ' ')	*\/$/;"	m	struct:push_q	file:
+cpask	mds/mds.c	/^		char	cpask[1];		\/* 매수호가 색상('+', '-', ' ')	*\/$/;"	m	struct:push_d::__anon3	file:
+cpask	mds/mds.c	/^	char	cpask[1];			\/* Avail매도호가 색상('+', '-', ' ')	*\/$/;"	m	struct:push_mq	file:
+cpask	mds/mds.c	/^	char	cpask[1];			\/* Avail매도호가 색상('+', '-', ' ')	*\/$/;"	m	struct:push_q	file:
+cpask	mds/nomarkup/mds.c	/^		char	cpask[1];		\/* 매수호가 색상('+', '-', ' ')	*\/$/;"	m	struct:push_d::__anon4	file:
+cpask	mds/nomarkup/mds.c	/^	char	cpask[1];			\/* Avail매도호가 색상('+', '-', ' ')	*\/$/;"	m	struct:push_mq	file:
+cpask	mds/nomarkup/mds.c	/^	char	cpask[1];			\/* Avail매도호가 색상('+', '-', ' ')	*\/$/;"	m	struct:push_q	file:
+cpbid	mds/aftermar/mds.c	/^		char	cpbid[1];		\/* 매수호가 색상('+', '-', ' ')	*\/$/;"	m	struct:push_d::__anon1	file:
+cpbid	mds/aftermar/mds.c	/^	char	cpbid[1];			\/* Avail매수호가 색상('+', '-', ' ')	*\/$/;"	m	struct:push_mq	file:
+cpbid	mds/aftermar/mds.c	/^	char	cpbid[1];			\/* Avail매수호가 색상('+', '-', ' ')	*\/$/;"	m	struct:push_q	file:
+cpbid	mds/mds.c	/^		char	cpbid[1];		\/* 매수호가 색상('+', '-', ' ')	*\/$/;"	m	struct:push_d::__anon3	file:
+cpbid	mds/mds.c	/^	char	cpbid[1];			\/* Avail매수호가 색상('+', '-', ' ')	*\/$/;"	m	struct:push_mq	file:
+cpbid	mds/mds.c	/^	char	cpbid[1];			\/* Avail매수호가 색상('+', '-', ' ')	*\/$/;"	m	struct:push_q	file:
+cpbid	mds/nomarkup/mds.c	/^		char	cpbid[1];		\/* 매수호가 색상('+', '-', ' ')	*\/$/;"	m	struct:push_d::__anon4	file:
+cpbid	mds/nomarkup/mds.c	/^	char	cpbid[1];			\/* Avail매수호가 색상('+', '-', ' ')	*\/$/;"	m	struct:push_mq	file:
+cpbid	mds/nomarkup/mds.c	/^	char	cpbid[1];			\/* Avail매수호가 색상('+', '-', ' ')	*\/$/;"	m	struct:push_q	file:
+crate	mds/aftermar/mds.c	/^	char	crate[1];			\/* 등락율 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_mq	file:
+crate	mds/aftermar/mds.c	/^	char	crate[1];			\/* 등락율 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_q	file:
+crate	mds/mds.c	/^	char	crate[1];			\/* 등락율 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_mq	file:
+crate	mds/mds.c	/^	char	crate[1];			\/* 등락율 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_q	file:
+crate	mds/nomarkup/mds.c	/^	char	crate[1];			\/* 등락율 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_mq	file:
+crate	mds/nomarkup/mds.c	/^	char	crate[1];			\/* 등락율 색상 ('+', '-', ' ')	*\/$/;"	m	struct:push_q	file:
+csvform	mds/misc.c	/^int csvform(const char *buff, char csvb[MAX_CSVB][128])$/;"	f
+delt	mds/aftermar/mds.c	/^	char	delt[9];			\/* 옵션민감도 : 델타		*\/$/;"	m	struct:push_g	file:
+delt	mds/mds.c	/^	char	delt[9];			\/* 옵션민감도 : 델타		*\/$/;"	m	struct:push_g	file:
+delt	mds/nomarkup/mds.c	/^	char	delt[9];			\/* 옵션민감도 : 델타		*\/$/;"	m	struct:push_g	file:
+desc	mds/misc.c	/^	char	desc[60];$/;"	m	struct:__anon2	file:
+diff	mds/aftermar/mds.c	/^	char	diff[20];			\/* net change					*\/$/;"	m	struct:push_mq	file:
+diff	mds/aftermar/mds.c	/^	char	diff[20];			\/* net change					*\/$/;"	m	struct:push_q	file:
+diff	mds/mds.c	/^	char	diff[20];			\/* net change					*\/$/;"	m	struct:push_mq	file:
+diff	mds/mds.c	/^	char	diff[20];			\/* net change					*\/$/;"	m	struct:push_q	file:
+diff	mds/nomarkup/mds.c	/^	char	diff[20];			\/* net change					*\/$/;"	m	struct:push_mq	file:
+diff	mds/nomarkup/mds.c	/^	char	diff[20];			\/* net change					*\/$/;"	m	struct:push_q	file:
+done	mds/sched.c	/^static	int	done = 0;			\/\/ done batch job ?$/;"	v	file:
+esym2isym	mds/codeconv.c	/^int esym2isym(MDMSTR *imstr, char *osymb)$/;"	f
+exchange	mds/exchange.c	/^static	XCHG	exchange[MAX_XCHG];$/;"	v	file:
+exchange_get	mds/exchange.c	/^static int exchange_get(const char *exnm, XCHG *xchg)$/;"	f	file:
+exchange_init	mds/exchange.c	/^static void exchange_init()$/;"	f	file:
+exchange_ipck	mds/exchange.c	/^static int exchange_ipck(int exid)$/;"	f	file:
+exnm	mds/misc.c	/^	char	exnm[2][8];$/;"	m	struct:__anon2	file:
+fetch_tick	mds/aftermar/mds.c	/^static int fetch_tick(MARKET *market, MDTICK *tick, int mode, int limit, int cont)$/;"	f	file:
+fetch_tick	mds/mds.c	/^static int fetch_tick(MARKET *market, MDTICK *tick, int mode, int limit, int cont)$/;"	f	file:
+fetch_tick	mds/nomarkup/mds.c	/^static int fetch_tick(MARKET *market, MDTICK *tick, int mode, int limit, int cont)$/;"	f	file:
+fetch_trad	mds/aftermar/mds.c	/^static int fetch_trad(MARKET *market, MDTRAD *trad, int mode, int limit, int cont)$/;"	f	file:
+fetch_trad	mds/mds.c	/^static int fetch_trad(MARKET *market, MDTRAD *trad, int mode, int limit, int cont)$/;"	f	file:
+fetch_trad	mds/nomarkup/mds.c	/^static int fetch_trad(MARKET *market, MDTRAD *trad, int mode, int limit, int cont)$/;"	f	file:
+fold	mds/symbol.c	/^	MDFOLD	*fold;$/;"	m	struct:sequence	file:
+folder_clear	mds/aftermar/mds.c	/^static void folder_clear(MARKET *market, void *folder)$/;"	f	file:
+folder_clear	mds/mds.c	/^static void folder_clear(MARKET *market, void *folder)$/;"	f	file:
+folder_clear	mds/nomarkup/mds.c	/^static void folder_clear(MARKET *market, void *folder)$/;"	f	file:
+folder_init	mds/aftermar/mds.c	/^static int folder_init(MARKET *market)$/;"	f	file:
+folder_init	mds/mds.c	/^static int folder_init(MARKET *market)$/;"	f	file:
+folder_init	mds/nomarkup/mds.c	/^static int folder_init(MARKET *market)$/;"	f	file:
+folder_push	mds/aftermar/mds.c	/^static void folder_push(MARKET *market, void *folder, int event)$/;"	f	file:
+folder_push	mds/mds.c	/^static void folder_push(MARKET *market, void *folder, int event)$/;"	f	file:
+folder_push	mds/nomarkup/mds.c	/^static void folder_push(MARKET *market, void *folder, int event)$/;"	f	file:
+folder_roff	mds/aftermar/mds.c	/^static void *folder_roff(MARKET *market, void *folder, int dbid)$/;"	f	file:
+folder_roff	mds/mds.c	/^static void *folder_roff(MARKET *market, void *folder, int dbid)$/;"	f	file:
+folder_roff	mds/nomarkup/mds.c	/^static void *folder_roff(MARKET *market, void *folder, int dbid)$/;"	f	file:
+folder_seek	mds/aftermar/mds.c	/^static int folder_seek(MARKET *market, const char *prefix, WHERE *where)$/;"	f	file:
+folder_seek	mds/mds.c	/^static int folder_seek(MARKET *market, const char *prefix, WHERE *where)$/;"	f	file:
+folder_seek	mds/nomarkup/mds.c	/^static int folder_seek(MARKET *market, const char *prefix, WHERE *where)$/;"	f	file:
+folder_sync	mds/aftermar/mds.c	/^static void folder_sync(MARKET *market, void *folder, int what)$/;"	f	file:
+folder_sync	mds/mds.c	/^static void folder_sync(MARKET *market, void *folder, int what)$/;"	f	file:
+folder_sync	mds/nomarkup/mds.c	/^static void folder_sync(MARKET *market, void *folder, int what)$/;"	f	file:
+folder_type	mds/aftermar/mds.c	/^static void folder_type(void *folder, int *styp, int *corp, double *strk)$/;"	f	file:
+folder_type	mds/mds.c	/^static void folder_type(void *folder, int *styp, int *corp, double *strk)$/;"	f	file:
+folder_type	mds/nomarkup/mds.c	/^static void folder_type(void *folder, int *styp, int *corp, double *strk)$/;"	f	file:
+foworddata	mds/aftermar/fetch.c	/^  struct    q_price    foworddata[MAX_TENNER];$/;"	m	struct:q_data	typeref:struct:q_data::q_price	file:
+foworddata	mds/fetch.c	/^  struct    q_price    foworddata[MAX_TENNER];$/;"	m	struct:q_data	typeref:struct:q_data::q_price	file:
+foworddata	mds/nomarkup/fetch.c	/^  struct    q_price    foworddata[MAX_TENNER];$/;"	m	struct:q_data	typeref:struct:q_data::q_price	file:
+g_quote	mds/aftermar/fetch.c	/^static struct cmbsquote*  g_quote;$/;"	v	typeref:struct:cmbsquote	file:
+g_quote	mds/fetch.c	/^static struct cmbsquote*  g_quote;$/;"	v	typeref:struct:cmbsquote	file:
+g_quote	mds/nomarkup/fetch.c	/^static struct cmbsquote*  g_quote;$/;"	v	typeref:struct:cmbsquote	file:
+gama	mds/aftermar/mds.c	/^	char	gama[9];			\/*              감마		*\/$/;"	m	struct:push_g	file:
+gama	mds/mds.c	/^	char	gama[9];			\/*              감마		*\/$/;"	m	struct:push_g	file:
+gama	mds/nomarkup/mds.c	/^	char	gama[9];			\/*              감마		*\/$/;"	m	struct:push_g	file:
+getCalcKRWquot	mds/aftermar/fetch.c	/^MDFOLD *getCalcKRWquot(MARKET *market, char *symb, char *check) $/;"	f
+getCalcKRWquot	mds/fetch.c	/^MDFOLD *getCalcKRWquot(MARKET *market, char *symb, char *check)$/;"	f
+getCalcKRWquot	mds/nomarkup/fetch.c	/^MDFOLD *getCalcKRWquot(MARKET *market, char *symb, char *check) $/;"	f
+getSpotquot	mds/aftermar/fetch.c	/^MDFOLD *getSpotquot(MARKET *market, char *msgb, int msgl, char *check) $/;"	f
+getSpotquot	mds/fetch.c	/^MDFOLD *getSpotquot(MARKET *market, char *msgb, int msgl, char *check) $/;"	f
+getSpotquot	mds/nomarkup/fetch.c	/^MDFOLD *getSpotquot(MARKET *market, char *msgb, int msgl, char *check) $/;"	f
+get_all_syminf	mds/codeconv.c	/^int get_all_syminf(SYMINF *osymlist, char *fnam)$/;"	f
+get_comd	mds/codeconv.c	/^int get_comd(char *isymb, char *comd)$/;"	f
+get_diff_rate	mds/codeconv.c	/^int get_diff_rate(double pric, double base, double *diff, double *rate)$/;"	f
+get_exid	mds/codeconv.c	/^int	get_exid(char *excd)$/;"	f
+get_intr	mds/intr.c	/^int get_intr(MARKET *market, MDFOLD *folder, MDINTR *out)$/;"	f
+get_loctz	mds/codeconv.c	/^int get_loctz(char *exch, char *tzon)$/;"	f
+get_symbinf	mds/codeconv.c	/^int get_symbinf(SYMINF *osym, char *fnam) $/;"	f
+getargs	mds/xmlcfg.c	/^void getargs(struct xmltag *xml, char *name, char *pstr)$/;"	f
+getargv	mds/xmlcfg.c	/^void getargv(struct xmltag *xml, char *name, int *pval)$/;"	f
+getargx	mds/xmlcfg.c	/^void getargx(struct xmltag *xml, char *name, int *v, int *n, int max)$/;"	f
+getbroadaddr	mds/ifcfg.c	/^int getbroadaddr(char *broadcast_addr)$/;"	f
+getfolder_isym	mds/codeconv.c	/^void *getfolder_isym(MARKET *market, const char *symb)$/;"	f
+getfolder_leadmonth	mds/codeconv.c	/^void *getfolder_leadmonth(MARKET *market, char *root)$/;"	f
+getifconfig	mds/ifcfg.c	/^static int getifconfig()$/;"	f	file:
+getinterface	mds/ifcfg.c	/^int getinterface(char *ipad, char *ifnm, char *ifba)$/;"	f
+getwords	mds/setup.c	/^static char *getwords(char *istr, char *word)$/;"	f	file:
+getxmlcfg	mds/xmlcfg.c	/^int getxmlcfg(const char *xmlpath, struct xmltag *xmltag)$/;"	f
+high	mds/aftermar/mds.c	/^	char	high[20];			\/* high price					*\/$/;"	m	struct:push_mq	file:
+high	mds/aftermar/mds.c	/^	char	high[20];			\/* high price					*\/$/;"	m	struct:push_q	file:
+high	mds/mds.c	/^	char	high[20];			\/* high price					*\/$/;"	m	struct:push_mq	file:
+high	mds/mds.c	/^	char	high[20];			\/* high price					*\/$/;"	m	struct:push_q	file:
+high	mds/nomarkup/mds.c	/^	char	high[20];			\/* high price					*\/$/;"	m	struct:push_mq	file:
+high	mds/nomarkup/mds.c	/^	char	high[20];			\/* high price					*\/$/;"	m	struct:push_q	file:
+holiday	mds/time.c	/^static	void holiday(MARKET *market)$/;"	f	file:
+ifconfig	mds/ifcfg.c	/^static	struct	ifconfig {$/;"	s	file:
+ifconfig	mds/ifcfg.c	/^} ifconfig[MAX_IF];$/;"	v	typeref:struct:ifconfig	file:
+ifnm	mds/ifcfg.c	/^	char	ifnm[16];			\/\/ ifname$/;"	m	struct:ifconfig	file:
+init	mds/misc.c	/^	int	(*init)(MARKET *);$/;"	m	struct:__anon2	file:
+initBasePriceData	mds/aftermar/fetch.c	/^int initBasePriceData()$/;"	f
+initBasePriceData	mds/fetch.c	/^int initBasePriceData()$/;"	f
+initBasePriceData	mds/nomarkup/fetch.c	/^int initBasePriceData()$/;"	f
+initBasePriceData	mds/price.c	/^int initBasePriceData()$/;"	f
+initMarkupPriceData	mds/aftermar/fetch.c	/^int initMarkupPriceData()$/;"	f
+initMarkupPriceData	mds/fetch.c	/^int initMarkupPriceData()$/;"	f
+initMarkupPriceData	mds/nomarkup/fetch.c	/^int initMarkupPriceData()$/;"	f
+initMarkupPriceData	mds/price.c	/^int initMarkupPriceData()$/;"	f
+initPriceOrign	mds/aftermar/fetch.c	/^int initPriceOrign()$/;"	f
+initPriceOrign	mds/fetch.c	/^int initPriceOrign()$/;"	f
+initPriceOrign	mds/nomarkup/fetch.c	/^int initPriceOrign()$/;"	f
+initPriceOrign	mds/price.c	/^int initPriceOrign()$/;"	f
+initSwapPriceData	mds/aftermar/fetch.c	/^int initSwapPriceData()$/;"	f
+initSwapPriceData	mds/fetch.c	/^int initSwapPriceData()$/;"	f
+initSwapPriceData	mds/nomarkup/fetch.c	/^int initSwapPriceData()$/;"	f
+initSwapPriceData	mds/price.c	/^int initSwapPriceData()$/;"	f
+insertCalcCAmount	mds/aftermar/fetch.c	/^int insertCalcCAmount(char *symbol, DATAFIELD df)$/;"	f
+insertCalcCAmount	mds/fetch.c	/^int insertCalcCAmount(char *symbol, DATAFIELD df)$/;"	f
+insertCalcCAmount	mds/nomarkup/fetch.c	/^int insertCalcCAmount(char *symbol, DATAFIELD df)$/;"	f
+insertCalcCAmount	mds/price.c	/^int insertCalcCAmount(char *symbol, DATAFIELD df)$/;"	f
+insertMarkupTofolder	mds/aftermar/fetch.c	/^void insertMarkupTofolder(struct q_Markup* q, struct q_Markup *qd)$/;"	f
+insertMarkupTofolder	mds/fetch.c	/^void insertMarkupTofolder(struct q_Markup* q, struct q_Markup *qd)$/;"	f
+insertMarkupTofolder	mds/nomarkup/fetch.c	/^void insertMarkupTofolder(struct q_Markup* q, struct q_Markup *qd)$/;"	f
+insertPricedataTofolder	mds/aftermar/fetch.c	/^void insertPricedataTofolder(struct q_price* q,  MDQUOT *mdq, struct q_price *qd, int mux, int nType )$/;"	f
+insertPricedataTofolder	mds/fetch.c	/^void insertPricedataTofolder(struct q_price* q, MDQUOT *mdq, struct q_price *qd, int mux, int nType)$/;"	f
+insertPricedataTofolder	mds/nomarkup/fetch.c	/^void insertPricedataTofolder(struct q_price* q,  MDQUOT *mdq, struct q_price *qd, int mux, int nType )$/;"	f
+ipad	mds/ifcfg.c	/^	char	ipad[24];			\/\/ ip address$/;"	m	struct:ifconfig	file:
+is_alloc	mds/cisam.c	/^static ISAMF *is_alloc()$/;"	f	file:
+is_build	mds/cisam.c	/^ISAMF * is_build(MARKET *market, int dbid, int xymd)$/;"	f
+is_close	mds/cisam.c	/^void is_close(ISAMF *isamf)$/;"	f
+is_free	mds/cisam.c	/^static void is_free(ISAMF *isamf)$/;"	f	file:
+is_list	mds/cisam.c	/^int is_list(MARKET *market, int dbid, int *xymd)$/;"	f
+is_open	mds/cisam.c	/^ISAMF * is_open(MARKET *market, int dbid, int xymd, int mode)$/;"	f
+is_read	mds/cisam.c	/^int is_read(ISAMF *isamf, char *record, int mode)$/;"	f
+is_rewrite	mds/cisam.c	/^int is_rewrite(ISAMF *isamf, char *record)$/;"	f
+is_upsert	mds/cisam.c	/^int is_upsert(ISAMF *isamf, char *record)$/;"	f
+is_write	mds/cisam.c	/^int is_write(ISAMF *isamf, char *record)$/;"	f
+ishms	mds/misc.c	/^static int ishms(uint32_t hms) $/;"	f	file:
+ispath	mds/cisam.c	/^static void ispath(MARKET *market, int dbid, int xymd, char *path)$/;"	f	file:
+isym2esym	mds/codeconv.c	/^int isym2esym(char *isymb, char *osymb, char *oexcd)$/;"	f
+khms	mds/aftermar/fetch.c	/^  uint32_t    khms;  $/;"	m	struct:q_data	file:
+khms	mds/aftermar/mds.c	/^	char	khms[6];			\/* korea trading time			*\/$/;"	m	struct:push_d	file:
+khms	mds/aftermar/mds.c	/^	char	khms[6];			\/* korean trading time			*\/$/;"	m	struct:push_mq	file:
+khms	mds/aftermar/mds.c	/^	char	khms[6];			\/* korean trading time			*\/$/;"	m	struct:push_q	file:
+khms	mds/fetch.c	/^  uint32_t    khms;  $/;"	m	struct:q_data	file:
+khms	mds/mds.c	/^	char	khms[6];			\/* korea trading time			*\/$/;"	m	struct:push_d	file:
+khms	mds/mds.c	/^	char	khms[6];			\/* korean trading time			*\/$/;"	m	struct:push_mq	file:
+khms	mds/mds.c	/^	char	khms[6];			\/* korean trading time			*\/$/;"	m	struct:push_q	file:
+khms	mds/nomarkup/fetch.c	/^  uint32_t    khms;  $/;"	m	struct:q_data	file:
+khms	mds/nomarkup/mds.c	/^	char	khms[6];			\/* korea trading time			*\/$/;"	m	struct:push_d	file:
+khms	mds/nomarkup/mds.c	/^	char	khms[6];			\/* korean trading time			*\/$/;"	m	struct:push_mq	file:
+khms	mds/nomarkup/mds.c	/^	char	khms[6];			\/* korean trading time			*\/$/;"	m	struct:push_q	file:
+kymd	mds/aftermar/fetch.c	/^  uint32_t    kymd;   $/;"	m	struct:q_data	file:
+kymd	mds/aftermar/mds.c	/^	char	kymd[8];			\/* korean trading time			*\/$/;"	m	struct:push_mq	file:
+kymd	mds/aftermar/mds.c	/^	char	kymd[8];			\/* korean trading time			*\/$/;"	m	struct:push_q	file:
+kymd	mds/fetch.c	/^  uint32_t    kymd;   $/;"	m	struct:q_data	file:
+kymd	mds/mds.c	/^	char	kymd[8];			\/* korean trading time			*\/$/;"	m	struct:push_mq	file:
+kymd	mds/mds.c	/^	char	kymd[8];			\/* korean trading time			*\/$/;"	m	struct:push_q	file:
+kymd	mds/nomarkup/fetch.c	/^  uint32_t    kymd;   $/;"	m	struct:q_data	file:
+kymd	mds/nomarkup/mds.c	/^	char	kymd[8];			\/* korean trading time			*\/$/;"	m	struct:push_mq	file:
+kymd	mds/nomarkup/mds.c	/^	char	kymd[8];			\/* korean trading time			*\/$/;"	m	struct:push_q	file:
+l_big_endian	com/netconf.c	/^int l_big_endian()$/;"	f
+l_getip	com/netconf.c	/^int l_getip(ipaddr)$/;"	f
+l_getip_ledger	com/netconf.c	/^int l_getip_ledger(ipaddr)$/;"	f
+l_getipbyname	com/netconf.c	/^int l_getipbyname(hostnm, ipaddr)$/;"	f
+l_getmsg	com/ipcsub.c	/^int l_getmsg(qid, mtype, trans_b, bsize, timeout)$/;"	f
+l_getmsgx	com/ipcsub.c	/^int l_getmsgx(queue_name, mtype, trans_b, bsize, timeout)$/;"	f
+l_getportbyname	com/netconf.c	/^int l_getportbyname(svcnm, proto)$/;"	f
+l_hostname	com/netconf.c	/^int l_hostname(char *hostnm)$/;"	f
+l_ishost	com/netconf.c	/^int l_ishost(char *hostnm)$/;"	f
+l_msgget	com/ipcsub.c	/^int l_msgget(queue_name, size, mode)$/;"	f
+l_name2id	com/ipcsub.c	/^static	int l_name2id(queue_name)$/;"	f	file:
+l_putmsg	com/ipcsub.c	/^int l_putmsg(qid, mtype, trans_b, trans_l, wait_mode)$/;"	f
+l_putmsgx	com/ipcsub.c	/^int l_putmsgx(queue_name, mtype, trans_b, trans_l, wait_mode)$/;"	f
+l_shmat	com/ipcsub.c	/^char	*l_shmat(shm_name)$/;"	f
+l_token	com/ipcsub.c	/^int l_token(ipc_name, ipc_type)$/;"	f
+last	mds/aftermar/mds.c	/^	char	last[20];			\/* last price					*\/$/;"	m	struct:push_mq	file:
+last	mds/aftermar/mds.c	/^	char	last[20];			\/* last price					*\/$/;"	m	struct:push_q	file:
+last	mds/mds.c	/^	char	last[20];			\/* last price					*\/$/;"	m	struct:push_mq	file:
+last	mds/mds.c	/^	char	last[20];			\/* last price					*\/$/;"	m	struct:push_q	file:
+last	mds/nomarkup/mds.c	/^	char	last[20];			\/* last price					*\/$/;"	m	struct:push_mq	file:
+last	mds/nomarkup/mds.c	/^	char	last[20];			\/* last price					*\/$/;"	m	struct:push_q	file:
+leap_year	mds/time.c	/^static unsigned int leap_year(int year)$/;"	f	file:
+low	mds/aftermar/mds.c	/^	char	low[20];				\/* low price					*\/$/;"	m	struct:push_mq	file:
+low	mds/aftermar/mds.c	/^	char	low[20];				\/* low price					*\/$/;"	m	struct:push_q	file:
+low	mds/mds.c	/^	char	low[20];				\/* low price					*\/$/;"	m	struct:push_mq	file:
+low	mds/mds.c	/^	char	low[20];			\/* low price					*\/$/;"	m	struct:push_q	file:
+low	mds/nomarkup/mds.c	/^	char	low[20];				\/* low price					*\/$/;"	m	struct:push_mq	file:
+low	mds/nomarkup/mds.c	/^	char	low[20];				\/* low price					*\/$/;"	m	struct:push_q	file:
+mark	mds/exchange.c	/^	int		mark;$/;"	m	struct:cfgtag	file:
+mark	mds/misc.c	/^	int	mark;$/;"	m	struct:__anon2	file:
+market	mds/market.c	/^	MARKET	*market;$/;"	m	struct:pool	file:
+market_del	mds/market.c	/^void market_del(const char *exnm)$/;"	f
+market_pop	mds/market.c	/^MARKET *market_pop(const char *exnm)$/;"	f
+market_push	mds/market.c	/^void market_push(MARKET *market, void (*close)(MARKET *))$/;"	f
+markupdata	mds/aftermar/fetch.c	/^  struct    q_Markup  markupdata[MAX_TENNER];$/;"	m	struct:q_data	typeref:struct:q_data::q_Markup	file:
+markupdata	mds/fetch.c	/^  struct    q_Markup  markupdata[MAX_TENNER];$/;"	m	struct:q_data	typeref:struct:q_data::q_Markup	file:
+markupdata	mds/nomarkup/fetch.c	/^  struct    q_Markup  markupdata[MAX_TENNER];$/;"	m	struct:q_data	typeref:struct:q_data::q_Markup	file:
+mask	mds/ifcfg.c	/^	char	mask[24];			\/\/ net mask$/;"	m	struct:ifconfig	file:
+max	mds/strbuffer.c	13;"	d	file:
+mds_alert	mds/alert.c	/^void	mds_alert(MARKET *market, const char *msg)$/;"	f
+mds_calendar	mds/time.c	/^void mds_calendar(MARKET *market)$/;"	f
+mds_chckday	mds/time.c	/^int mds_chckday(MARKET *market, uint32_t xymd)$/;"	f
+mds_close	mds/close.c	/^void mds_close(MARKET *market)$/;"	f
+mds_clrfolder	mds/folder.c	/^void mds_clrfolder(MARKET *market, void *folder)$/;"	f
+mds_cooker	mds/cook.c	/^int mds_cooker(MARKET *market, MDSPROC *proc, int noreturn)$/;"	f
+mds_date2julian	mds/time.c	/^uint32_t mds_date2julian(uint32_t date)$/;"	f
+mds_day4week	mds/time.c	/^int mds_day4week (uint32_t date)$/;"	f
+mds_day4year	mds/time.c	/^int mds_day4year(uint32_t date)$/;"	f
+mds_dbglog	mds/aftermar/fetch.c	/^int mds_dbglog(MARKET *market, char *pname, const char *format, ...)$/;"	f
+mds_dbglog	mds/fetch.c	/^int mds_dbglog(MARKET *market, char *pname, const char *format, ...)$/;"	f
+mds_dbglog	mds/nomarkup/fetch.c	/^int mds_dbglog(MARKET *market, char *pname, const char *format, ...)$/;"	f
+mds_delfolder	mds/folder.c	/^void mds_delfolder(MARKET *market, const char *symb)$/;"	f
+mds_exchange	mds/exchange.c	/^int mds_exchange(const char *exnm, XCHG *xchg)$/;"	f
+mds_exchange_by_exid	mds/exchange.c	/^XCHG *mds_exchange_by_exid(int exid)$/;"	f
+mds_exchanges	mds/exchange.c	/^XCHG *mds_exchanges()$/;"	f
+mds_exec	mds/misc.c	/^int mds_exec(MARKET *market, const char *command, int wait)$/;"	f
+mds_fetch	mds/aftermar/fetch.c	/^int mds_fetch(MARKET *market, int dbid, void *record, int mode, int limit, int cflag)$/;"	f
+mds_fetch	mds/fetch.c	/^int mds_fetch(MARKET *market, int dbid, void *record, int mode, int limit, int cflag)$/;"	f
+mds_fetch	mds/nomarkup/fetch.c	/^int mds_fetch(MARKET *market, int dbid, void *record, int mode, int limit, int cflag)$/;"	f
+mds_fetch_isfd	mds/cisam.c	/^int mds_fetch_isfd(MARKET *market, int dbid, int xymd, int *cflg)$/;"	f
+mds_fixtime	mds/time.c	/^int mds_fixtime(MARKET *market, const char *string, uint32_t *xymd, uint32_t *xhms, uint32_t *kymd, uint32_t *khms)$/;"	f
+mds_folder	mds/folder.c	/^static void *mds_folder(MARKET *market, INDEX *w)$/;"	f	file:
+mds_getacct	mds/misc.c	/^const MDACCT *mds_getacct(MARKET *market)$/;"	f
+mds_getfld	mds/misc.c	/^FIXFLD *mds_getfld(FIXFLD *fixfld, int tag_number)$/;"	f
+mds_getfolder	mds/folder.c	/^void *mds_getfolder(MARKET *market, const char *symb)$/;"	f
+mds_getport	mds/exchange.c	/^PORTCFG *mds_getport(MARKET *market)$/;"	f
+mds_gettymd	mds/misc.c	/^uint32_t mds_gettymd(MARKET *market)$/;"	f
+mds_holiday	mds/time.c	/^int mds_holiday(MARKET *market, uint32_t locdate, int caller)$/;"	f
+mds_init	mds/aftermar/mds.c	/^int mds_init(MARKET *market)$/;"	f
+mds_init	mds/mds.c	/^int mds_init(MARKET *market)$/;"	f
+mds_init	mds/nomarkup/mds.c	/^int mds_init(MARKET *market)$/;"	f
+mds_isbuild	mds/cisam.c	/^int mds_isbuild(MARKET *market, int dbid, uint32_t xymd)$/;"	f
+mds_iscleanup	mds/cisam.c	/^int mds_iscleanup(MARKET *market, int dbid)$/;"	f
+mds_isclose	mds/cisam.c	/^void mds_isclose(MARKET *market)$/;"	f
+mds_isdelete	mds/cisam.c	/^int mds_isdelete(MARKET *market, int dbid, void *record)$/;"	f
+mds_isdrop	mds/cisam.c	/^int mds_isdrop(MARKET *market, int dbid, const char *file_name)$/;"	f
+mds_isfd	mds/cisam.c	/^int mds_isfd(MARKET *market, int dbid, void *record, int *cflg)$/;"	f
+mds_isfetch	mds/aftermar/fetch.c	/^int mds_isfetch(MARKET *market, int dbid, void *record, int mode, int limit, int cflag)$/;"	f
+mds_isfetch	mds/fetch.c	/^int mds_isfetch(MARKET *market, int dbid, void *record, int mode, int limit, int cflag)$/;"	f
+mds_isfetch	mds/nomarkup/fetch.c	/^int mds_isfetch(MARKET *market, int dbid, void *record, int mode, int limit, int cflag)$/;"	f
+mds_isinit	mds/cisam.c	/^int mds_isinit(MARKET *market)$/;"	f
+mds_iskeep	mds/cisam.c	/^int mds_iskeep(MARKET *market, int dbid, int days)$/;"	f
+mds_islist	mds/cisam.c	/^int mds_islist(MARKET *market, ISAM *isam, struct islist *islist, int howmany)$/;"	f
+mds_islock	mds/cisam.c	/^void mds_islock(MARKET *market)$/;"	f
+mds_isopen	mds/cisam.c	/^int mds_isopen(MARKET *market)$/;"	f
+mds_isrenewal	mds/cisam.c	/^int mds_isrenewal(MARKET *market)$/;"	f
+mds_isunlock	mds/cisam.c	/^void mds_isunlock(MARKET *market)$/;"	f
+mds_isupsert	mds/cisam.c	/^int mds_isupsert(MARKET *market, int dbid, void *record)$/;"	f
+mds_julian2date	mds/time.c	/^uint32_t mds_julian2date(uint32_t days)$/;"	f
+mds_key2host	mds/cisam.c	/^void mds_key2host(MARKET *market, void *row, struct keydesc *keydesc)$/;"	f
+mds_key2isam	mds/cisam.c	/^void mds_key2isam(MARKET *market, void *row, struct keydesc *keydesc)$/;"	f
+mds_korhour	mds/time.c	/^int mds_korhour(MARKET *market, time_t clock)$/;"	f
+mds_kortime	mds/time.c	/^void mds_kortime(MARKET *market, uint32_t xymd, uint32_t xhms, uint32_t *kymd, uint32_t *khms)$/;"	f
+mds_kortm	mds/time.c	/^void mds_kortm(MARKET *market, struct tm *xtm, struct tm *ktm)$/;"	f
+mds_ktime	mds/time.c	/^void mds_ktime(MARKET *market, time_t clock, uint32_t *kymd, uint32_t *khms)$/;"	f
+mds_leadmonth_symbol	mds/leadmonth.c	/^void mds_leadmonth_symbol(MARKET *market)$/;"	f
+mds_leadmonth_update	mds/leadmonth.c	/^void mds_leadmonth_update(MARKET *market, char *symb)$/;"	f
+mds_lmsfolder	mds/folder.c	/^int mds_lmsfolder(MARKET *market, WHERE *where, const char *prefix)$/;"	f
+mds_lock	mds/misc.c	/^void mds_lock(MARKET *market)$/;"	f
+mds_loctime	mds/time.c	/^void mds_loctime(MARKET *market, uint32_t kymd, uint32_t khms, uint32_t *xymd, uint32_t *xhms)$/;"	f
+mds_log	mds/misc.c	/^void mds_log(MARKET *market, int level, const char *format, ...)$/;"	f
+mds_market_alloc	mds/setup.c	/^MARKET *mds_market_alloc()$/;"	f
+mds_market_close	mds/open.c	/^void mds_market_close(MARKET *market)$/;"	f
+mds_market_open	mds/open.c	/^void mds_market_open(MARKET *market)$/;"	f
+mds_mktime	mds/time.c	/^time_t mds_mktime(MARKET *market, uint32_t xymd, uint32_t xhms)$/;"	f
+mds_msg2fld	mds/misc.c	/^int mds_msg2fld(FIXFLD *fixfld, int howmany, char *msgb, int msgl, int seperator)$/;"	f
+mds_newfolder	mds/folder.c	/^void *mds_newfolder(MARKET *market, const char *symb)$/;"	f
+mds_nextday	mds/time.c	/^uint32_t mds_nextday(uint32_t ymd)$/;"	f
+mds_open	mds/open.c	/^MARKET *mds_open(const char *exnm, int flag)$/;"	f
+mds_pastday	mds/time.c	/^uint32_t mds_pastday(MARKET *market, uint32_t base, int doff)$/;"	f
+mds_plussecound	mds/time.c	/^void mds_plussecound(int nPlus, uint32_t xymd, uint32_t xhms, uint32_t *kymd, uint32_t *khms)$/;"	f
+mds_popfolder	mds/folder.c	/^void *mds_popfolder(MARKET *market)$/;"	f
+mds_portcfg	mds/exchange.c	/^int mds_portcfg(MARKET *market, const char *name, PORTCFG *portcfg)$/;"	f
+mds_postmsg	mds/post.c	/^void	mds_postmsg(int exid, const char *msg)$/;"	f
+mds_prevday	mds/time.c	/^uint32_t mds_prevday(uint32_t ymd)$/;"	f
+mds_printf	mds/misc.c	/^void mds_printf(const char *file, unsigned int line, const char *func, const char *format, ...)$/;"	f
+mds_procname	mds/misc.c	/^void mds_procname(char *procname)$/;"	f
+mds_pushfolder	mds/folder.c	/^void mds_pushfolder(MARKET *market, void *folder, int event)$/;"	f
+mds_recv	mds/recv.c	/^int mds_recv(MARKET *market, TOKEN *token, char *buf, int size, int timeout)$/;"	f
+mds_rewfolder	mds/folder.c	/^int mds_rewfolder(MARKET *market)$/;"	f
+mds_seekfolder	mds/folder.c	/^int mds_seekfolder(MARKET *market, const char *prefix, WHERE *where)$/;"	f
+mds_setenv	mds/setup.c	/^void mds_setenv()$/;"	f
+mds_setfolder	mds/folder.c	/^void mds_setfolder(MARKET *market, const char *symb)$/;"	f
+mds_setsyminf	mds/codeconv.c	/^int mds_setsyminf(MARKET *market, MDMSTR *mstr, SYMINF *psymi)$/;"	f
+mds_shmadd	mds/shm.c	/^INDEX *mds_shmadd(MARKET *market, const char *symb)$/;"	f
+mds_shmadj	mds/shm.c	/^int mds_shmadj(MARKET *market)$/;"	f
+mds_shmdel	mds/shm.c	/^void mds_shmdel(MARKET *market, const char *symb)$/;"	f
+mds_shmfold	mds/shm.c	/^void *mds_shmfold(MARKET *market, INDEX *w)$/;"	f
+mds_shmget	mds/shm.c	/^INDEX *mds_shmget(MARKET *market, const char *symbol)$/;"	f
+mds_shminit	mds/shm.c	/^int mds_shminit(MARKET *market, int fsz)$/;"	f
+mds_shmnew	mds/shm.c	/^void *mds_shmnew(MARKET *market, const void *fold)$/;"	f
+mds_shmpos	mds/shm.c	/^static int mds_shmpos(MARKET *market, const char *symb)$/;"	f	file:
+mds_shmseek	mds/shm.c	/^INDEX *mds_shmseek(MARKET *market, const char *symb)$/;"	f
+mds_sleep	mds/misc.c	/^void mds_sleep(int microseconds)$/;"	f
+mds_symb4push	mds/misc.c	/^void mds_symb4push(MARKET *market, char *real_symb, const char *symb, int delayed) $/;"	f
+mds_symbget	mds/symbol.c	/^SYMBOL *mds_symbget(MARKET *market, const char *symb)$/;"	f
+mds_symbinfo	mds/symbol.c	/^int mds_symbinfo(MARKET *market, MDMSTR *mstr)$/;"	f
+mds_symbinit	mds/symbol.c	/^int mds_symbinit(MARKET *market) $/;"	f
+mds_symbol	mds/symbol.c	/^SYMBOL *mds_symbol(MARKET *market, int *nsym)$/;"	f
+mds_symbseqn	mds/symbol.c	/^void mds_symbseqn(MARKET *market, MDFOLD *folder)$/;"	f
+mds_syncer	mds/syncer.c	/^void *mds_syncer(void *argv)$/;"	f
+mds_syncfolder	mds/folder.c	/^int mds_syncfolder(MARKET *market, void *folder, int dbid)$/;"	f
+mds_t1_leadmonth_update	mds/leadmonth.c	/^void mds_t1_leadmonth_update(MARKET *market, char *symb)$/;"	f
+mds_time	mds/time.c	/^void mds_time(MARKET *market, time_t clock, uint32_t *xymd, uint32_t *xhms, uint32_t *kymd, uint32_t *khms)$/;"	f
+mds_timezone	mds/time.c	/^void mds_timezone(MARKET *market)$/;"	f
+mds_tmplog	mds/misc.c	/^int mds_tmplog(MARKET *market, char *pname, const char *format, ...)$/;"	f
+mds_unlock	mds/misc.c	/^void mds_unlock(MARKET *market)$/;"	f
+mds_upsert	mds/syncer.c	/^int mds_upsert(MARKET *market, void *fptr, int dbid, const void *row)$/;"	f
+mds_utc2loc	mds/time.c	/^uint32_t mds_utc2loc(MARKET *market, const char *tstring)$/;"	f
+n_if	mds/ifcfg.c	/^static	int	n_if = 0;			\/\/ no of ifconfig$/;"	v	file:
+n_pool	mds/market.c	/^static int n_pool;$/;"	v	file:
+n_port	mds/exchange.c	/^static 	int	n_port = 0;$/;"	v	file:
+n_symbol	mds/symbol.c	/^static	int	n_symbol = 0;$/;"	v	file:
+n_syminf	mds/codeconv.c	/^int		n_syminf;$/;"	v
+n_xchg	mds/exchange.c	/^static	int	n_xchg = 0;$/;"	v	file:
+notifier	mds/recv.c	/^void *notifier(void *argv)$/;"	f
+nw_errno	com/netconf.c	23;"	d	file:
+onedayaskmarkup1	mds/aftermar/mds.c	/^	char  onedayaskmarkup1[26];$/;"	m	struct:push_d	file:
+onedayaskmarkup1	mds/aftermar/mds.c	/^	char  onedayaskmarkup1[26];$/;"	m	struct:push_q	file:
+onedayaskmarkup1	mds/mds.c	/^	char  onedayaskmarkup1[26]; \/* 1번그룹 1일 ask 마크업				*\/$/;"	m	struct:push_q	file:
+onedayaskmarkup1	mds/mds.c	/^	char  onedayaskmarkup1[26];$/;"	m	struct:push_d	file:
+onedayaskmarkup1	mds/nomarkup/mds.c	/^	char  onedayaskmarkup1[26];$/;"	m	struct:push_d	file:
+onedayaskmarkup1	mds/nomarkup/mds.c	/^	char  onedayaskmarkup1[26];$/;"	m	struct:push_q	file:
+onedayaskmarkup2	mds/aftermar/mds.c	/^	char  onedayaskmarkup2[26];$/;"	m	struct:push_d	file:
+onedayaskmarkup2	mds/aftermar/mds.c	/^	char  onedayaskmarkup2[26];$/;"	m	struct:push_q	file:
+onedayaskmarkup2	mds/mds.c	/^	char  onedayaskmarkup2[26];$/;"	m	struct:push_d	file:
+onedayaskmarkup2	mds/mds.c	/^	char  onedayaskmarkup2[26];$/;"	m	struct:push_q	file:
+onedayaskmarkup2	mds/nomarkup/mds.c	/^	char  onedayaskmarkup2[26];$/;"	m	struct:push_d	file:
+onedayaskmarkup2	mds/nomarkup/mds.c	/^	char  onedayaskmarkup2[26];$/;"	m	struct:push_q	file:
+onedayaskmarkup3	mds/aftermar/mds.c	/^	char  onedayaskmarkup3[26];	$/;"	m	struct:push_d	file:
+onedayaskmarkup3	mds/aftermar/mds.c	/^	char  onedayaskmarkup3[26];	$/;"	m	struct:push_q	file:
+onedayaskmarkup3	mds/mds.c	/^	char  onedayaskmarkup3[26];	$/;"	m	struct:push_d	file:
+onedayaskmarkup3	mds/mds.c	/^	char  onedayaskmarkup3[26];	$/;"	m	struct:push_q	file:
+onedayaskmarkup3	mds/nomarkup/mds.c	/^	char  onedayaskmarkup3[26];	$/;"	m	struct:push_d	file:
+onedayaskmarkup3	mds/nomarkup/mds.c	/^	char  onedayaskmarkup3[26];	$/;"	m	struct:push_q	file:
+onedayaskmarkup4	mds/aftermar/mds.c	/^	char  onedayaskmarkup4[26];	$/;"	m	struct:push_d	file:
+onedayaskmarkup4	mds/aftermar/mds.c	/^	char  onedayaskmarkup4[26];	$/;"	m	struct:push_q	file:
+onedayaskmarkup4	mds/mds.c	/^	char  onedayaskmarkup4[26];	$/;"	m	struct:push_d	file:
+onedayaskmarkup4	mds/mds.c	/^	char  onedayaskmarkup4[26];	$/;"	m	struct:push_q	file:
+onedayaskswap	mds/aftermar/mds.c	/^	char  onedayaskswap[26];$/;"	m	struct:push_d	file:
+onedayaskswap	mds/aftermar/mds.c	/^	char  onedayaskswap[26];$/;"	m	struct:push_q	file:
+onedayaskswap	mds/mds.c	/^	char  onedayaskswap[26];    \/* 1일 Ask Swap				*\/$/;"	m	struct:push_q	file:
+onedayaskswap	mds/mds.c	/^	char  onedayaskswap[26];$/;"	m	struct:push_d	file:
+onedayaskswap	mds/nomarkup/mds.c	/^	char  onedayaskswap[26];$/;"	m	struct:push_d	file:
+onedayaskswap	mds/nomarkup/mds.c	/^	char  onedayaskswap[26];$/;"	m	struct:push_q	file:
+onedaybidmarkup1	mds/aftermar/mds.c	/^	char  onedaybidmarkup1[26];$/;"	m	struct:push_d	file:
+onedaybidmarkup1	mds/aftermar/mds.c	/^	char  onedaybidmarkup1[26];$/;"	m	struct:push_q	file:
+onedaybidmarkup1	mds/mds.c	/^	char  onedaybidmarkup1[26]; \/* 1번그룹 1일 bid 마크업				*\/$/;"	m	struct:push_q	file:
+onedaybidmarkup1	mds/mds.c	/^	char  onedaybidmarkup1[26];$/;"	m	struct:push_d	file:
+onedaybidmarkup1	mds/nomarkup/mds.c	/^	char  onedaybidmarkup1[26];$/;"	m	struct:push_d	file:
+onedaybidmarkup1	mds/nomarkup/mds.c	/^	char  onedaybidmarkup1[26];$/;"	m	struct:push_q	file:
+onedaybidmarkup2	mds/aftermar/mds.c	/^	char  onedaybidmarkup2[26];$/;"	m	struct:push_d	file:
+onedaybidmarkup2	mds/aftermar/mds.c	/^	char  onedaybidmarkup2[26];$/;"	m	struct:push_q	file:
+onedaybidmarkup2	mds/mds.c	/^	char  onedaybidmarkup2[26];$/;"	m	struct:push_d	file:
+onedaybidmarkup2	mds/mds.c	/^	char  onedaybidmarkup2[26];$/;"	m	struct:push_q	file:
+onedaybidmarkup2	mds/nomarkup/mds.c	/^	char  onedaybidmarkup2[26];$/;"	m	struct:push_d	file:
+onedaybidmarkup2	mds/nomarkup/mds.c	/^	char  onedaybidmarkup2[26];$/;"	m	struct:push_q	file:
+onedaybidmarkup3	mds/aftermar/mds.c	/^	char  onedaybidmarkup3[26];$/;"	m	struct:push_d	file:
+onedaybidmarkup3	mds/aftermar/mds.c	/^	char  onedaybidmarkup3[26];$/;"	m	struct:push_q	file:
+onedaybidmarkup3	mds/mds.c	/^	char  onedaybidmarkup3[26];$/;"	m	struct:push_d	file:
+onedaybidmarkup3	mds/mds.c	/^	char  onedaybidmarkup3[26];$/;"	m	struct:push_q	file:
+onedaybidmarkup3	mds/nomarkup/mds.c	/^	char  onedaybidmarkup3[26];$/;"	m	struct:push_d	file:
+onedaybidmarkup3	mds/nomarkup/mds.c	/^	char  onedaybidmarkup3[26];$/;"	m	struct:push_q	file:
+onedaybidmarkup4	mds/aftermar/mds.c	/^	char  onedaybidmarkup4[26];$/;"	m	struct:push_d	file:
+onedaybidmarkup4	mds/aftermar/mds.c	/^	char  onedaybidmarkup4[26];$/;"	m	struct:push_q	file:
+onedaybidmarkup4	mds/mds.c	/^	char  onedaybidmarkup4[26];$/;"	m	struct:push_d	file:
+onedaybidmarkup4	mds/mds.c	/^	char  onedaybidmarkup4[26];$/;"	m	struct:push_q	file:
+onedaybidswap	mds/aftermar/mds.c	/^	char  onedaybidswap[26];$/;"	m	struct:push_d	file:
+onedaybidswap	mds/aftermar/mds.c	/^	char  onedaybidswap[26];$/;"	m	struct:push_q	file:
+onedaybidswap	mds/mds.c	/^	char  onedaybidswap[26];    \/* 1일 Bid Swap				*\/$/;"	m	struct:push_q	file:
+onedaybidswap	mds/mds.c	/^	char  onedaybidswap[26];$/;"	m	struct:push_d	file:
+onedaybidswap	mds/nomarkup/mds.c	/^	char  onedaybidswap[26];$/;"	m	struct:push_d	file:
+onedaybidswap	mds/nomarkup/mds.c	/^	char  onedaybidswap[26];$/;"	m	struct:push_q	file:
+open	mds/aftermar/mds.c	/^	char	open[20];			\/* open price					*\/$/;"	m	struct:push_mq	file:
+open	mds/aftermar/mds.c	/^	char	open[20];			\/* open price					*\/$/;"	m	struct:push_q	file:
+open	mds/mds.c	/^	char	open[20];			\/* open price					*\/$/;"	m	struct:push_mq	file:
+open	mds/mds.c	/^	char	open[20];			\/* open price					*\/$/;"	m	struct:push_q	file:
+open	mds/nomarkup/mds.c	/^	char	open[20];			\/* open price					*\/$/;"	m	struct:push_mq	file:
+open	mds/nomarkup/mds.c	/^	char	open[20];			\/* open price					*\/$/;"	m	struct:push_q	file:
+openmarket	mds/sched.c	/^static void openmarket(MARKET *market)$/;"	f	file:
+opennewday	mds/sched.c	/^static void opennewday(MARKET *market)$/;"	f	file:
+p_leadmonth	mds/aftermar/fetch.c	/^static void p_leadmonth(MARKET *market, MDFOLD *folder, char *check)$/;"	f	file:
+p_leadmonth	mds/fetch.c	/^static void p_leadmonth(MARKET *market, MDFOLD *folder, char *check)$/;"	f	file:
+p_leadmonth	mds/nomarkup/fetch.c	/^static void p_leadmonth(MARKET *market, MDFOLD *folder, char *check)$/;"	f	file:
+pask	mds/aftermar/mds.c	/^		char	pask[20];		\/* ask price					*\/$/;"	m	struct:push_d::__anon1	file:
+pask	mds/aftermar/mds.c	/^	char	pask[20];			\/* Avail ask						*\/$/;"	m	struct:push_mq	file:
+pask	mds/aftermar/mds.c	/^	char	pask[20];			\/* Avail ask						*\/$/;"	m	struct:push_q	file:
+pask	mds/mds.c	/^		char	pask[20];		\/* ask price					*\/$/;"	m	struct:push_d::__anon3	file:
+pask	mds/mds.c	/^	char	pask[20];			\/* Avail ask						*\/$/;"	m	struct:push_mq	file:
+pask	mds/mds.c	/^	char	pask[20];			\/* Avail ask						*\/$/;"	m	struct:push_q	file:
+pask	mds/nomarkup/mds.c	/^		char	pask[20];		\/* ask price					*\/$/;"	m	struct:push_d::__anon4	file:
+pask	mds/nomarkup/mds.c	/^	char	pask[20];			\/* Avail ask						*\/$/;"	m	struct:push_mq	file:
+pask	mds/nomarkup/mds.c	/^	char	pask[20];			\/* Avail ask						*\/$/;"	m	struct:push_q	file:
+pbid	mds/aftermar/mds.c	/^		char	pbid[20];		\/* bid price					*\/$/;"	m	struct:push_d::__anon1	file:
+pbid	mds/aftermar/mds.c	/^	char	pbid[20];			\/* Avail ask						*\/$/;"	m	struct:push_mq	file:
+pbid	mds/aftermar/mds.c	/^	char	pbid[20];			\/* Avail ask						*\/$/;"	m	struct:push_q	file:
+pbid	mds/mds.c	/^		char	pbid[20];		\/* bid price					*\/$/;"	m	struct:push_d::__anon3	file:
+pbid	mds/mds.c	/^	char	pbid[20];			\/* Avail ask						*\/$/;"	m	struct:push_mq	file:
+pbid	mds/mds.c	/^	char	pbid[20];			\/* Avail ask						*\/$/;"	m	struct:push_q	file:
+pbid	mds/nomarkup/mds.c	/^		char	pbid[20];		\/* bid price					*\/$/;"	m	struct:push_d::__anon4	file:
+pbid	mds/nomarkup/mds.c	/^	char	pbid[20];			\/* Avail ask						*\/$/;"	m	struct:push_mq	file:
+pbid	mds/nomarkup/mds.c	/^	char	pbid[20];			\/* Avail ask						*\/$/;"	m	struct:push_q	file:
+pibo_getfolder2	mds/aftermar/fetch.c	/^MDFOLD *pibo_getfolder2(char *exnm, char *symb, MARKET **market)$/;"	f
+pibo_getfolder2	mds/fetch.c	/^MDFOLD *pibo_getfolder2(char *exnm, char *symb, MARKET **market)$/;"	f
+pibo_getfolder2	mds/nomarkup/fetch.c	/^MDFOLD *pibo_getfolder2(char *exnm, char *symb, MARKET **market)$/;"	f
+pind	mds/aftermar/mds.c	/^	char	pind[1];			\/* price indicator				*\/$/;"	m	struct:push_d	file:
+pind	mds/aftermar/mds.c	/^	char	pind[1];			\/* price indicator				*\/$/;"	m	struct:push_mq	file:
+pind	mds/aftermar/mds.c	/^	char	pind[1];			\/* price indicator				*\/$/;"	m	struct:push_q	file:
+pind	mds/mds.c	/^	char	pind[1];			\/* price indicator				*\/$/;"	m	struct:push_d	file:
+pind	mds/mds.c	/^	char	pind[1];			\/* price indicator				*\/$/;"	m	struct:push_mq	file:
+pind	mds/mds.c	/^	char	pind[1];			\/* price indicator				*\/$/;"	m	struct:push_q	file:
+pind	mds/nomarkup/mds.c	/^	char	pind[1];			\/* price indicator				*\/$/;"	m	struct:push_d	file:
+pind	mds/nomarkup/mds.c	/^	char	pind[1];			\/* price indicator				*\/$/;"	m	struct:push_mq	file:
+pind	mds/nomarkup/mds.c	/^	char	pind[1];			\/* price indicator				*\/$/;"	m	struct:push_q	file:
+pool	mds/market.c	/^static 	struct pool {$/;"	s	file:
+pool	mds/market.c	/^} pool[MAX_POOL];$/;"	v	typeref:struct:pool	file:
+portcfg_init	mds/exchange.c	/^static void portcfg_init(MARKET *market)$/;"	f	file:
+ports	mds/exchange.c	/^static	PORTCFG ports[MAX_PORT];$/;"	v	file:
+prefetch	mds/aftermar/mds.c	/^static int prefetch(MARKET *market, int dbid, void *buf, int mode, int limit, int cont)$/;"	f	file:
+prefetch	mds/mds.c	/^static int prefetch(MARKET *market, int dbid, void *buf, int mode, int limit, int cont)$/;"	f	file:
+prefetch	mds/nomarkup/mds.c	/^static int prefetch(MARKET *market, int dbid, void *buf, int mode, int limit, int cont)$/;"	f	file:
+push_book	mds/aftermar/mds.c	/^static void push_book(MARKET *market, MDBOOK *book, int zdiv)$/;"	f	file:
+push_book	mds/mds.c	/^static void push_book(MARKET *market, MDBOOK *book, int zdiv)$/;"	f	file:
+push_book	mds/nomarkup/mds.c	/^static void push_book(MARKET *market, MDBOOK *book, int zdiv)$/;"	f	file:
+push_d	mds/aftermar/mds.c	/^struct push_d {$/;"	s	file:
+push_d	mds/mds.c	/^struct push_d {$/;"	s	file:
+push_d	mds/nomarkup/mds.c	/^struct push_d {$/;"	s	file:
+push_g	mds/aftermar/mds.c	/^struct	push_g {$/;"	s	file:
+push_g	mds/mds.c	/^struct	push_g {$/;"	s	file:
+push_g	mds/nomarkup/mds.c	/^struct	push_g {$/;"	s	file:
+push_marketquot	mds/aftermar/mds.c	/^void push_marketquot(MARKET *market, MDQUOT *quot, int zdiv) \/\/(MARKET *market, char *msgb, int msgl, int zdiv) $/;"	f
+push_marketquot	mds/mds.c	/^void push_marketquot(MARKET *market, MDQUOT *quot, int zdiv) \/\/(MARKET *market, char *msgb, int msgl, int zdiv) $/;"	f
+push_marketquot	mds/nomarkup/mds.c	/^void push_marketquot(MARKET *market, MDQUOT *quot, int zdiv) \/\/(MARKET *market, char *msgb, int msgl, int zdiv) $/;"	f
+push_mq	mds/aftermar/mds.c	/^struct push_mq {$/;"	s	file:
+push_mq	mds/mds.c	/^struct push_mq {$/;"	s	file:
+push_mq	mds/nomarkup/mds.c	/^struct push_mq {$/;"	s	file:
+push_q	mds/aftermar/mds.c	/^struct push_q {$/;"	s	file:
+push_q	mds/mds.c	/^struct push_q {$/;"	s	file:
+push_q	mds/nomarkup/mds.c	/^struct push_q {$/;"	s	file:
+push_quot	mds/aftermar/mds.c	/^static void push_quot(MARKET *market, MDQUOT *quot, int zdiv)$/;"	f	file:
+push_quot	mds/mds.c	/^static void push_quot(MARKET *market, MDQUOT *quot, int zdiv)$/;"	f	file:
+push_quot	mds/nomarkup/mds.c	/^static void push_quot(MARKET *market, MDQUOT *quot, int zdiv)$/;"	f	file:
+push_quot_filter	mds/aftermar/mds.c	/^void push_quot_filter(MARKET *market, MDQUOT *quot, int zdiv, double cvol)$/;"	f
+push_quot_filter	mds/mds.c	/^void push_quot_filter(MARKET *market, MDQUOT *quot, int zdiv, double cvol)$/;"	f
+push_quot_filter	mds/nomarkup/mds.c	/^void push_quot_filter(MARKET *market, MDQUOT *quot, int zdiv, double cvol)$/;"	f
+q_data	mds/aftermar/fetch.c	/^struct  q_data {$/;"	s	file:
+q_data	mds/fetch.c	/^struct  q_data {$/;"	s	file:
+q_data	mds/nomarkup/fetch.c	/^struct  q_data {$/;"	s	file:
+qpricef	mds/misc.c	/^void qpricef(char *buf, const char *form, double price, double base)$/;"	f
+queue_id	com/ipcsub.c	/^	int	queue_id;			\/* queue id		*\/$/;"	m	struct:queue_table	file:
+queue_nm	com/ipcsub.c	/^	char	queue_nm[16];			\/* queue name		*\/$/;"	m	struct:queue_table	file:
+queue_table	com/ipcsub.c	/^static	struct	queue_table {$/;"	s	file:
+quote_proc	mds/aftermar/fetch.c	/^int  quote_proc(MARKET *market, MDFOLD *folder, struct q_data *qd, char *check, int nType)$/;"	f
+quote_proc	mds/fetch.c	/^int  quote_proc(MARKET *market, MDFOLD *folder, struct q_data *qd, char *check, int nType)$/;"	f
+quote_proc	mds/nomarkup/fetch.c	/^int  quote_proc(MARKET *market, MDFOLD *folder, struct q_data *qd, char *check, int nType)$/;"	f
+rate	mds/aftermar/mds.c	/^	char	rate[6];			\/* change rate					*\/$/;"	m	struct:push_mq	file:
+rate	mds/aftermar/mds.c	/^	char	rate[6];			\/* change rate					*\/$/;"	m	struct:push_q	file:
+rate	mds/mds.c	/^	char	rate[6];			\/* change rate					*\/$/;"	m	struct:push_mq	file:
+rate	mds/mds.c	/^	char	rate[6];			\/* change rate					*\/$/;"	m	struct:push_q	file:
+rate	mds/nomarkup/mds.c	/^	char	rate[6];			\/* change rate					*\/$/;"	m	struct:push_mq	file:
+rate	mds/nomarkup/mds.c	/^	char	rate[6];			\/* change rate					*\/$/;"	m	struct:push_q	file:
+rho	mds/aftermar/mds.c	/^	char	rho[9];				\/*              로우		*\/$/;"	m	struct:push_g	file:
+rho	mds/mds.c	/^	char	rho[9];				\/*              로우		*\/$/;"	m	struct:push_g	file:
+rho	mds/nomarkup/mds.c	/^	char	rho[9];				\/*              로우		*\/$/;"	m	struct:push_g	file:
+root	mds/aftermar/mds.c	/^	char	root[10];			\/* root symbol					*\/$/;"	m	struct:push_d	file:
+root	mds/aftermar/mds.c	/^	char	root[10];			\/* root symbol					*\/$/;"	m	struct:push_mq	file:
+root	mds/aftermar/mds.c	/^	char	root[10];			\/* root symbol					*\/$/;"	m	struct:push_q	file:
+root	mds/mds.c	/^	char	root[10];			\/* root symbol					*\/$/;"	m	struct:push_d	file:
+root	mds/mds.c	/^	char	root[10];			\/* root symbol					*\/$/;"	m	struct:push_mq	file:
+root	mds/mds.c	/^	char	root[10];			\/* root symbol					*\/$/;"	m	struct:push_q	file:
+root	mds/nomarkup/mds.c	/^	char	root[10];			\/* root symbol					*\/$/;"	m	struct:push_d	file:
+root	mds/nomarkup/mds.c	/^	char	root[10];			\/* root symbol					*\/$/;"	m	struct:push_mq	file:
+root	mds/nomarkup/mds.c	/^	char	root[10];			\/* root symbol					*\/$/;"	m	struct:push_q	file:
+s_crctab	com/ipcsub.c	/^static unsigned short s_crctab[256] = {$/;"	v	file:
+s_io_buf	com/ipcsub.c	/^static	char	s_io_buf[1024*4];		\/* i\/o buffer		*\/$/;"	v	file:
+s_msgbuf	com/ipcsub.c	/^static	struct	msgbuf *s_msgbuf;		\/* msg i\/o struct ptr	*\/$/;"	v	typeref:struct:msgbuf	file:
+s_queue_n	com/ipcsub.c	/^static	int	s_queue_n = 0;			\/* valid queue table #	*\/$/;"	v	file:
+s_queue_table	com/ipcsub.c	/^} s_queue_table[32];$/;"	v	typeref:struct:queue_table	file:
+scheduler	mds/sched.c	/^void *scheduler(void *argv)$/;"	f
+scheduling	mds/sched.c	/^static void scheduling(MARKET *market)$/;"	f	file:
+sendfolder	mds/aftermar/fetch.c	/^void sendfolder(MARKET *market, MDFOLD *folder, char *check, int iSource)$/;"	f
+sendfolder	mds/fetch.c	/^void sendfolder(MARKET *market, MDFOLD *folder, char *check, int iSource)$/;"	f
+sendfolder	mds/nomarkup/fetch.c	/^void sendfolder(MARKET *market, MDFOLD *folder, char *check, int iSource)$/;"	f
+seqn	mds/aftermar/mds.c	/^	char	seqn[4];			\/* sequence in 1 second 		*\/$/;"	m	struct:push_mq	file:
+seqn	mds/aftermar/mds.c	/^	char	seqn[4];			\/* sequence in 1 second 		*\/$/;"	m	struct:push_q	file:
+seqn	mds/mds.c	/^	char	seqn[4];			\/* sequence in 1 second 		*\/$/;"	m	struct:push_mq	file:
+seqn	mds/mds.c	/^	char	seqn[4];			\/* sequence in 1 second 		*\/$/;"	m	struct:push_q	file:
+seqn	mds/nomarkup/mds.c	/^	char	seqn[4];			\/* sequence in 1 second 		*\/$/;"	m	struct:push_mq	file:
+seqn	mds/nomarkup/mds.c	/^	char	seqn[4];			\/* sequence in 1 second 		*\/$/;"	m	struct:push_q	file:
+sequence	mds/symbol.c	/^struct	sequence {$/;"	s	file:
+sequence	mds/symbol.c	/^} sequence[255];$/;"	v	typeref:struct:sequence
+set_leadmonth	mds/leadmonth.c	/^static MDFOLD *set_leadmonth(MARKET *market, const char *symb)$/;"	f	file:
+shm_key	com/ipcsub.c	/^	key_t	 shm_key;$/;"	m	struct:__anon5	file:
+shm_xxx	com/ipcsub.c	/^	char	*shm_xxx;$/;"	m	struct:__anon5	file:
+shmtbl	com/ipcsub.c	/^} shmtbl[32];$/;"	v	typeref:struct:__anon5	file:
+sigchld	mds/misc.c	/^static void sigchld(int signo)$/;"	f	file:
+sign	mds/aftermar/mds.c	/^	char	sign[1];			\/* change sign					*\/$/;"	m	struct:push_mq	file:
+sign	mds/aftermar/mds.c	/^	char	sign[1];			\/* change sign					*\/$/;"	m	struct:push_q	file:
+sign	mds/mds.c	/^	char	sign[1];			\/* change sign					*\/$/;"	m	struct:push_mq	file:
+sign	mds/mds.c	/^	char	sign[1];			\/* change sign					*\/$/;"	m	struct:push_q	file:
+sign	mds/nomarkup/mds.c	/^	char	sign[1];			\/* change sign					*\/$/;"	m	struct:push_mq	file:
+sign	mds/nomarkup/mds.c	/^	char	sign[1];			\/* change sign					*\/$/;"	m	struct:push_q	file:
+spotaskmarkup1	mds/aftermar/mds.c	/^	char  spotaskmarkup1[26];$/;"	m	struct:push_d	file:
+spotaskmarkup1	mds/aftermar/mds.c	/^	char  spotaskmarkup1[26];$/;"	m	struct:push_q	file:
+spotaskmarkup1	mds/mds.c	/^	char  spotaskmarkup1[26];   \/* 1번그룹 ask spot마크업				*\/$/;"	m	struct:push_q	file:
+spotaskmarkup1	mds/mds.c	/^	char  spotaskmarkup1[26];$/;"	m	struct:push_d	file:
+spotaskmarkup1	mds/nomarkup/mds.c	/^	char  spotaskmarkup1[26];$/;"	m	struct:push_d	file:
+spotaskmarkup1	mds/nomarkup/mds.c	/^	char  spotaskmarkup1[26];$/;"	m	struct:push_q	file:
+spotaskmarkup2	mds/aftermar/mds.c	/^	char  spotaskmarkup2[26];$/;"	m	struct:push_d	file:
+spotaskmarkup2	mds/aftermar/mds.c	/^	char  spotaskmarkup2[26];$/;"	m	struct:push_q	file:
+spotaskmarkup2	mds/mds.c	/^	char  spotaskmarkup2[26];   \/* 2번그룹 ask spot마크업				*\/$/;"	m	struct:push_q	file:
+spotaskmarkup2	mds/mds.c	/^	char  spotaskmarkup2[26];$/;"	m	struct:push_d	file:
+spotaskmarkup2	mds/nomarkup/mds.c	/^	char  spotaskmarkup2[26];$/;"	m	struct:push_d	file:
+spotaskmarkup2	mds/nomarkup/mds.c	/^	char  spotaskmarkup2[26];$/;"	m	struct:push_q	file:
+spotaskmarkup3	mds/aftermar/mds.c	/^	char  spotaskmarkup3[26];	$/;"	m	struct:push_d	file:
+spotaskmarkup3	mds/aftermar/mds.c	/^	char  spotaskmarkup3[26];	$/;"	m	struct:push_q	file:
+spotaskmarkup3	mds/mds.c	/^	char  spotaskmarkup3[26];	$/;"	m	struct:push_d	file:
+spotaskmarkup3	mds/mds.c	/^	char  spotaskmarkup3[26];	\/* 3번그룹 ask spot마크업				*\/$/;"	m	struct:push_q	file:
+spotaskmarkup3	mds/nomarkup/mds.c	/^	char  spotaskmarkup3[26];	$/;"	m	struct:push_d	file:
+spotaskmarkup3	mds/nomarkup/mds.c	/^	char  spotaskmarkup3[26];	$/;"	m	struct:push_q	file:
+spotaskmarkup4	mds/aftermar/mds.c	/^	char  spotaskmarkup4[26];	$/;"	m	struct:push_d	file:
+spotaskmarkup4	mds/aftermar/mds.c	/^	char  spotaskmarkup4[26];	$/;"	m	struct:push_q	file:
+spotaskmarkup4	mds/mds.c	/^	char  spotaskmarkup4[26];	$/;"	m	struct:push_d	file:
+spotaskmarkup4	mds/mds.c	/^	char  spotaskmarkup4[26];	$/;"	m	struct:push_q	file:
+spotbidmarkup1	mds/aftermar/mds.c	/^	char  spotbidmarkup1[26];$/;"	m	struct:push_d	file:
+spotbidmarkup1	mds/aftermar/mds.c	/^	char  spotbidmarkup1[26];$/;"	m	struct:push_q	file:
+spotbidmarkup1	mds/mds.c	/^	char  spotbidmarkup1[26];   \/* 1번그룹 bid spot마크업				*\/$/;"	m	struct:push_q	file:
+spotbidmarkup1	mds/mds.c	/^	char  spotbidmarkup1[26];$/;"	m	struct:push_d	file:
+spotbidmarkup1	mds/nomarkup/mds.c	/^	char  spotbidmarkup1[26];$/;"	m	struct:push_d	file:
+spotbidmarkup1	mds/nomarkup/mds.c	/^	char  spotbidmarkup1[26];$/;"	m	struct:push_q	file:
+spotbidmarkup2	mds/aftermar/mds.c	/^	char  spotbidmarkup2[26];$/;"	m	struct:push_d	file:
+spotbidmarkup2	mds/aftermar/mds.c	/^	char  spotbidmarkup2[26];$/;"	m	struct:push_q	file:
+spotbidmarkup2	mds/mds.c	/^	char  spotbidmarkup2[26];   \/* 2번그룹 bid spot마크업				*\/$/;"	m	struct:push_q	file:
+spotbidmarkup2	mds/mds.c	/^	char  spotbidmarkup2[26];$/;"	m	struct:push_d	file:
+spotbidmarkup2	mds/nomarkup/mds.c	/^	char  spotbidmarkup2[26];$/;"	m	struct:push_d	file:
+spotbidmarkup2	mds/nomarkup/mds.c	/^	char  spotbidmarkup2[26];$/;"	m	struct:push_q	file:
+spotbidmarkup3	mds/aftermar/mds.c	/^	char  spotbidmarkup3[26];$/;"	m	struct:push_d	file:
+spotbidmarkup3	mds/aftermar/mds.c	/^	char  spotbidmarkup3[26];$/;"	m	struct:push_q	file:
+spotbidmarkup3	mds/mds.c	/^	char  spotbidmarkup3[26];   \/* 2번그룹 bid spot마크업				*\/$/;"	m	struct:push_q	file:
+spotbidmarkup3	mds/mds.c	/^	char  spotbidmarkup3[26];$/;"	m	struct:push_d	file:
+spotbidmarkup3	mds/nomarkup/mds.c	/^	char  spotbidmarkup3[26];$/;"	m	struct:push_d	file:
+spotbidmarkup3	mds/nomarkup/mds.c	/^	char  spotbidmarkup3[26];$/;"	m	struct:push_q	file:
+spotbidmarkup4	mds/aftermar/mds.c	/^	char  spotbidmarkup4[26];$/;"	m	struct:push_d	file:
+spotbidmarkup4	mds/aftermar/mds.c	/^	char  spotbidmarkup4[26];$/;"	m	struct:push_q	file:
+spotbidmarkup4	mds/mds.c	/^	char  spotbidmarkup4[26];   $/;"	m	struct:push_q	file:
+spotbidmarkup4	mds/mds.c	/^	char  spotbidmarkup4[26];$/;"	m	struct:push_d	file:
+spotdata	mds/aftermar/fetch.c	/^  struct    q_price    spotdata;$/;"	m	struct:q_data	typeref:struct:q_data::q_price	file:
+spotdata	mds/fetch.c	/^  struct    q_price    spotdata;$/;"	m	struct:q_data	typeref:struct:q_data::q_price	file:
+spotdata	mds/nomarkup/fetch.c	/^  struct    q_price    spotdata;$/;"	m	struct:q_data	typeref:struct:q_data::q_price	file:
+spread	mds/aftermar/mds.c	/^	char	spread[6];			\/* Availspread						*\/$/;"	m	struct:push_mq	file:
+spread	mds/aftermar/mds.c	/^	char	spread[6];			\/* Availspread						*\/$/;"	m	struct:push_q	file:
+spread	mds/mds.c	/^	char	spread[6];			\/* Availspread						*\/$/;"	m	struct:push_mq	file:
+spread	mds/mds.c	/^	char	spread[6];			\/* Availspread						*\/$/;"	m	struct:push_q	file:
+spread	mds/nomarkup/mds.c	/^	char	spread[6];			\/* Availspread						*\/$/;"	m	struct:push_mq	file:
+spread	mds/nomarkup/mds.c	/^	char	spread[6];			\/* Availspread						*\/$/;"	m	struct:push_q	file:
+str2d	mds/misc.c	/^double str2d(char *s, int l)$/;"	f
+str2f	mds/misc.c	/^float str2f(char *s, int l)$/;"	f
+str2i	mds/misc.c	/^int str2i(char *s, int l)$/;"	f
+str2l	mds/misc.c	/^int64_t str2l(char *s, int l)$/;"	f
+str2p	mds/misc.c	/^double str2p(char *s, int l, int denominator, int with_sign)$/;"	f
+str2s	mds/misc.c	/^void str2s(char *ts, int tl, char *fs, int fl)$/;"	f
+str2words	mds/setup.c	/^static int str2words(char *lineB, char *wordB[], int wordN)$/;"	f	file:
+strbuffer_append	mds/strbuffer.c	/^int strbuffer_append(strbuffer_t *strbuff, const char *string)$/;"	f
+strbuffer_append_byte	mds/strbuffer.c	/^int strbuffer_append_byte(strbuffer_t *strbuff, char byte)$/;"	f
+strbuffer_append_bytes	mds/strbuffer.c	/^int strbuffer_append_bytes(strbuffer_t *strbuff, const char *data, size_t size)$/;"	f
+strbuffer_clear	mds/strbuffer.c	/^void strbuffer_clear(strbuffer_t *strbuff)$/;"	f
+strbuffer_close	mds/strbuffer.c	/^void strbuffer_close(strbuffer_t *strbuff)$/;"	f
+strbuffer_init	mds/strbuffer.c	/^int strbuffer_init(strbuffer_t *strbuff)$/;"	f
+strbuffer_pop	mds/strbuffer.c	/^char strbuffer_pop(strbuffer_t *strbuff)$/;"	f
+strbuffer_steal_value	mds/strbuffer.c	/^char *strbuffer_steal_value(strbuffer_t *strbuff)$/;"	f
+strbuffer_value	mds/strbuffer.c	/^const char *strbuffer_value(const strbuffer_t *strbuff)$/;"	f
+strip	mds/xmlcfg.c	/^static int strip(char *str)$/;"	f	file:
+swap16	mds/cisam.c	/^static uint16_t swap16(uint16_t n)$/;"	f	file:
+swap32	mds/cisam.c	/^static uint32_t swap32(uint32_t n)$/;"	f	file:
+swap64	mds/cisam.c	/^static uint64_t swap64(uint64_t n)$/;"	f	file:
+swapaskmarkup1	mds/aftermar/mds.c	/^	char  swapaskmarkup1[26];$/;"	m	struct:push_d	file:
+swapaskmarkup1	mds/aftermar/mds.c	/^	char  swapaskmarkup1[26];$/;"	m	struct:push_q	file:
+swapaskmarkup1	mds/mds.c	/^	char  swapaskmarkup1[26];   \/* 1번그룹 Swap ask마크업				*\/$/;"	m	struct:push_q	file:
+swapaskmarkup1	mds/mds.c	/^	char  swapaskmarkup1[26];$/;"	m	struct:push_d	file:
+swapaskmarkup1	mds/nomarkup/mds.c	/^	char  swapaskmarkup1[26];$/;"	m	struct:push_d	file:
+swapaskmarkup1	mds/nomarkup/mds.c	/^	char  swapaskmarkup1[26];$/;"	m	struct:push_q	file:
+swapaskmarkup2	mds/aftermar/mds.c	/^	char  swapaskmarkup2[26];$/;"	m	struct:push_d	file:
+swapaskmarkup2	mds/aftermar/mds.c	/^	char  swapaskmarkup2[26];$/;"	m	struct:push_q	file:
+swapaskmarkup2	mds/mds.c	/^	char  swapaskmarkup2[26];   \/* 2번그룹 Swap ask마크업				*\/$/;"	m	struct:push_q	file:
+swapaskmarkup2	mds/mds.c	/^	char  swapaskmarkup2[26];$/;"	m	struct:push_d	file:
+swapaskmarkup2	mds/nomarkup/mds.c	/^	char  swapaskmarkup2[26];$/;"	m	struct:push_d	file:
+swapaskmarkup2	mds/nomarkup/mds.c	/^	char  swapaskmarkup2[26];$/;"	m	struct:push_q	file:
+swapaskmarkup3	mds/aftermar/mds.c	/^	char  swapaskmarkup3[26];		$/;"	m	struct:push_d	file:
+swapaskmarkup3	mds/aftermar/mds.c	/^	char  swapaskmarkup3[26];	$/;"	m	struct:push_q	file:
+swapaskmarkup3	mds/mds.c	/^	char  swapaskmarkup3[26];		$/;"	m	struct:push_d	file:
+swapaskmarkup3	mds/mds.c	/^	char  swapaskmarkup3[26];	\/* 3번그룹 Swap ask마크업				*\/$/;"	m	struct:push_q	file:
+swapaskmarkup3	mds/nomarkup/mds.c	/^	char  swapaskmarkup3[26];		$/;"	m	struct:push_d	file:
+swapaskmarkup3	mds/nomarkup/mds.c	/^	char  swapaskmarkup3[26];	$/;"	m	struct:push_q	file:
+swapaskmarkup4	mds/aftermar/mds.c	/^	char  swapaskmarkup4[26];		$/;"	m	struct:push_d	file:
+swapaskmarkup4	mds/aftermar/mds.c	/^	char  swapaskmarkup4[26];		$/;"	m	struct:push_q	file:
+swapaskmarkup4	mds/mds.c	/^	char  swapaskmarkup4[26];		$/;"	m	struct:push_d	file:
+swapaskmarkup4	mds/mds.c	/^	char  swapaskmarkup4[26];	\/* 4번그룹 Swap ask마크업				*\/	    $/;"	m	struct:push_q	file:
+swapbidmarkup1	mds/aftermar/mds.c	/^	char  swapbidmarkup1[26];$/;"	m	struct:push_d	file:
+swapbidmarkup1	mds/aftermar/mds.c	/^	char  swapbidmarkup1[26];$/;"	m	struct:push_q	file:
+swapbidmarkup1	mds/mds.c	/^	char  swapbidmarkup1[26];   \/* 1번그룹 Swap bid마크업				*\/$/;"	m	struct:push_q	file:
+swapbidmarkup1	mds/mds.c	/^	char  swapbidmarkup1[26];$/;"	m	struct:push_d	file:
+swapbidmarkup1	mds/nomarkup/mds.c	/^	char  swapbidmarkup1[26];$/;"	m	struct:push_d	file:
+swapbidmarkup1	mds/nomarkup/mds.c	/^	char  swapbidmarkup1[26];$/;"	m	struct:push_q	file:
+swapbidmarkup2	mds/aftermar/mds.c	/^	char  swapbidmarkup2[26];$/;"	m	struct:push_d	file:
+swapbidmarkup2	mds/aftermar/mds.c	/^	char  swapbidmarkup2[26];$/;"	m	struct:push_q	file:
+swapbidmarkup2	mds/mds.c	/^	char  swapbidmarkup2[26];   \/* 2번그룹 Swap bid마크업				*\/$/;"	m	struct:push_q	file:
+swapbidmarkup2	mds/mds.c	/^	char  swapbidmarkup2[26];$/;"	m	struct:push_d	file:
+swapbidmarkup2	mds/nomarkup/mds.c	/^	char  swapbidmarkup2[26];$/;"	m	struct:push_d	file:
+swapbidmarkup2	mds/nomarkup/mds.c	/^	char  swapbidmarkup2[26];$/;"	m	struct:push_q	file:
+swapbidmarkup3	mds/aftermar/mds.c	/^	char  swapbidmarkup3[26];$/;"	m	struct:push_d	file:
+swapbidmarkup3	mds/aftermar/mds.c	/^	char  swapbidmarkup3[26];$/;"	m	struct:push_q	file:
+swapbidmarkup3	mds/mds.c	/^	char  swapbidmarkup3[26];   \/* 3번그룹 Swap bid마크업				*\/$/;"	m	struct:push_q	file:
+swapbidmarkup3	mds/mds.c	/^	char  swapbidmarkup3[26];$/;"	m	struct:push_d	file:
+swapbidmarkup3	mds/nomarkup/mds.c	/^	char  swapbidmarkup3[26];$/;"	m	struct:push_d	file:
+swapbidmarkup3	mds/nomarkup/mds.c	/^	char  swapbidmarkup3[26];$/;"	m	struct:push_q	file:
+swapbidmarkup4	mds/aftermar/mds.c	/^	char  swapbidmarkup4[26];$/;"	m	struct:push_d	file:
+swapbidmarkup4	mds/aftermar/mds.c	/^	char  swapbidmarkup4[26];$/;"	m	struct:push_q	file:
+swapbidmarkup4	mds/mds.c	/^	char  swapbidmarkup4[26];   \/* 4번그룹 Swap bid마크업				*\/$/;"	m	struct:push_q	file:
+swapbidmarkup4	mds/mds.c	/^	char  swapbidmarkup4[26];$/;"	m	struct:push_d	file:
+swapdata	mds/aftermar/fetch.c	/^  struct    q_price    swapdata[MAX_TENNER];$/;"	m	struct:q_data	typeref:struct:q_data::q_price	file:
+swapdata	mds/fetch.c	/^  struct    q_price    swapdata[MAX_TENNER];$/;"	m	struct:q_data	typeref:struct:q_data::q_price	file:
+swapdata	mds/nomarkup/fetch.c	/^  struct    q_price    swapdata[MAX_TENNER];$/;"	m	struct:q_data	typeref:struct:q_data::q_price	file:
+symb	mds/aftermar/fetch.c	/^  char        symb[SYMB_LEN];$/;"	m	struct:q_data	file:
+symb	mds/fetch.c	/^  char        symb[SYMB_LEN];$/;"	m	struct:q_data	file:
+symb	mds/misc.c	/^	char	symb[16];$/;"	m	struct:__anon2	file:
+symb	mds/nomarkup/fetch.c	/^  char        symb[SYMB_LEN];$/;"	m	struct:q_data	file:
+symb2exnm	mds/misc.c	/^} symb2exnm[] = { $/;"	v	typeref:struct:__anon2	file:
+symbconv1	mds/codeconv.c	/^void symbconv1(char *isymb, char *osymb)$/;"	f
+symbconv2	mds/codeconv.c	/^void symbconv2(char *isymb, char *osymb)$/;"	f
+symbol	mds/symbol.c	/^static	SYMBOL	symbol[MAX_SYMBOL];$/;"	v	file:
+symlist	mds/codeconv.c	/^SYMINF	symlist[MAX_SYMBOL];$/;"	v
+t_close	mds/sched.c	/^static	time_t	t_close = 0;			\/\/ timestamp to close$/;"	v	file:
+t_open	mds/sched.c	/^static	time_t	t_open = 0;			\/\/ timestamp to open$/;"	v	file:
+tags	mds/exchange.c	/^	char	tags[16];$/;"	m	struct:cfgtag	file:
+thet	mds/aftermar/mds.c	/^	char	thet[9];			\/*              세타		*\/$/;"	m	struct:push_g	file:
+thet	mds/mds.c	/^	char	thet[9];			\/*              세타		*\/$/;"	m	struct:push_g	file:
+thet	mds/nomarkup/mds.c	/^	char	thet[9];			\/*              세타		*\/$/;"	m	struct:push_g	file:
+tymd	mds/aftermar/fetch.c	/^  uint32_t    tymd;   $/;"	m	struct:q_data	file:
+tymd	mds/fetch.c	/^  uint32_t    tymd;   $/;"	m	struct:q_data	file:
+tymd	mds/nomarkup/fetch.c	/^  uint32_t    tymd;   $/;"	m	struct:q_data	file:
+type	mds/aftermar/mds.c	/^	char	type[2];			\/* must be 'C'			*\/$/;"	m	struct:push_g	file:
+type	mds/aftermar/mds.c	/^	char	type[2];			\/* must be 'FA'					*\/$/;"	m	struct:push_q	file:
+type	mds/aftermar/mds.c	/^	char	type[2];			\/* must be 'FB'					*\/$/;"	m	struct:push_d	file:
+type	mds/aftermar/mds.c	/^	char	type[2];			\/* must be 'FC'					*\/$/;"	m	struct:push_mq	file:
+type	mds/mds.c	/^	char	type[2];			\/* must be 'C'			*\/$/;"	m	struct:push_g	file:
+type	mds/mds.c	/^	char	type[2];			\/* must be 'FA'					*\/$/;"	m	struct:push_q	file:
+type	mds/mds.c	/^	char	type[2];			\/* must be 'FB'					*\/$/;"	m	struct:push_d	file:
+type	mds/mds.c	/^	char	type[2];			\/* must be 'FC'					*\/$/;"	m	struct:push_mq	file:
+type	mds/nomarkup/mds.c	/^	char	type[2];			\/* must be 'C'			*\/$/;"	m	struct:push_g	file:
+type	mds/nomarkup/mds.c	/^	char	type[2];			\/* must be 'FA'					*\/$/;"	m	struct:push_q	file:
+type	mds/nomarkup/mds.c	/^	char	type[2];			\/* must be 'FB'					*\/$/;"	m	struct:push_d	file:
+type	mds/nomarkup/mds.c	/^	char	type[2];			\/* must be 'FC'					*\/$/;"	m	struct:push_mq	file:
+udprcv	mds/udp.c	/^void *udprcv(void *argv)$/;"	f
+udratef	mds/misc.c	/^void udratef(char *buf, double rate)$/;"	f
+update_intr	mds/intr.c	/^int update_intr(MARKET *market, MDFOLD *folder, double setp)$/;"	f
+upsert	mds/aftermar/fetch.c	/^void upsert(MARKET *market, MDFOLD *folder, char *check)$/;"	f
+upsert	mds/fetch.c	/^void upsert(MARKET *market, MDFOLD *folder, char *check)$/;"	f
+upsert	mds/nomarkup/fetch.c	/^void upsert(MARKET *market, MDFOLD *folder, char *check)$/;"	f
+usdkreaskprice	mds/aftermar/fetch.c	/^  double    usdkreaskprice;  \/\/반영당시의 USDKRW가격$/;"	m	struct:q_data	file:
+usdkreaskprice	mds/fetch.c	/^  double    usdkreaskprice;  \/\/반영당시의 USDKRW가격$/;"	m	struct:q_data	file:
+usdkreaskprice	mds/nomarkup/fetch.c	/^  double    usdkreaskprice;  \/\/반영당시의 USDKRW가격$/;"	m	struct:q_data	file:
+usdkrwbidpirce	mds/aftermar/fetch.c	/^  double    usdkrwbidpirce;  \/\/반영당시의 USDKRW가격$/;"	m	struct:q_data	file:
+usdkrwbidpirce	mds/fetch.c	/^  double    usdkrwbidpirce;  \/\/반영당시의 USDKRW가격$/;"	m	struct:q_data	file:
+usdkrwbidpirce	mds/nomarkup/fetch.c	/^  double    usdkrwbidpirce;  \/\/반영당시의 USDKRW가격$/;"	m	struct:q_data	file:
+vask	mds/aftermar/mds.c	/^		char	vask[20];		\/* ask size						*\/$/;"	m	struct:push_d::__anon1	file:
+vask	mds/aftermar/mds.c	/^	char	vask[20];						\/* ask  size						*\/$/;"	m	struct:push_mq	file:
+vask	mds/aftermar/mds.c	/^	char	vask[20];						\/* ask  size						*\/$/;"	m	struct:push_q	file:
+vask	mds/mds.c	/^		char	vask[20];		\/* ask size						*\/$/;"	m	struct:push_d::__anon3	file:
+vask	mds/mds.c	/^	char	vask[20];						\/* ask  size						*\/$/;"	m	struct:push_mq	file:
+vask	mds/mds.c	/^	char	vask[20];					\/* ask  size						*\/$/;"	m	struct:push_q	file:
+vask	mds/nomarkup/mds.c	/^		char	vask[20];		\/* ask size						*\/$/;"	m	struct:push_d::__anon4	file:
+vask	mds/nomarkup/mds.c	/^	char	vask[20];						\/* ask  size						*\/$/;"	m	struct:push_mq	file:
+vask	mds/nomarkup/mds.c	/^	char	vask[20];						\/* ask  size						*\/$/;"	m	struct:push_q	file:
+vaskdisp	mds/aftermar/mds.c	/^		char	vaskdisp[15];		\/* ask disp						*\/$/;"	m	struct:push_d::__anon1	file:
+vaskdisp	mds/mds.c	/^		char	vaskdisp[15];		\/* ask disp						*\/$/;"	m	struct:push_d::__anon3	file:
+vaskdisp	mds/nomarkup/mds.c	/^		char	vaskdisp[15];		\/* ask disp						*\/$/;"	m	struct:push_d::__anon4	file:
+vbid	mds/aftermar/mds.c	/^		char	vbid[20];		\/* bid size						*\/$/;"	m	struct:push_d::__anon1	file:
+vbid	mds/aftermar/mds.c	/^	char	vbid[20];				\/* bid size						*\/$/;"	m	struct:push_mq	file:
+vbid	mds/aftermar/mds.c	/^	char	vbid[20];				\/* bid size						*\/$/;"	m	struct:push_q	file:
+vbid	mds/mds.c	/^		char	vbid[20];		\/* bid size						*\/$/;"	m	struct:push_d::__anon3	file:
+vbid	mds/mds.c	/^	char	vbid[20];				\/* bid size						*\/$/;"	m	struct:push_mq	file:
+vbid	mds/mds.c	/^	char	vbid[20];			\/* bid size						*\/$/;"	m	struct:push_q	file:
+vbid	mds/nomarkup/mds.c	/^		char	vbid[20];		\/* bid size						*\/$/;"	m	struct:push_d::__anon4	file:
+vbid	mds/nomarkup/mds.c	/^	char	vbid[20];				\/* bid size						*\/$/;"	m	struct:push_mq	file:
+vbid	mds/nomarkup/mds.c	/^	char	vbid[20];				\/* bid size						*\/$/;"	m	struct:push_q	file:
+vbiddisp	mds/aftermar/mds.c	/^		char	vbiddisp[15];		\/* bid size						*\/$/;"	m	struct:push_d::__anon1	file:
+vbiddisp	mds/mds.c	/^		char	vbiddisp[15];		\/* bid size						*\/$/;"	m	struct:push_d::__anon3	file:
+vbiddisp	mds/nomarkup/mds.c	/^		char	vbiddisp[15];		\/* bid size						*\/$/;"	m	struct:push_d::__anon4	file:
+vega	mds/aftermar/mds.c	/^	char	vega[9];			\/*	        베가		*\/$/;"	m	struct:push_g	file:
+vega	mds/mds.c	/^	char	vega[9];			\/*	        베가		*\/$/;"	m	struct:push_g	file:
+vega	mds/nomarkup/mds.c	/^	char	vega[9];			\/*	        베가		*\/$/;"	m	struct:push_g	file:
+when	mds/market.c	/^	time_t	when;$/;"	m	struct:pool	file:
+words2xmltag	mds/xmlcfg.c	/^static int words2xmltag(struct xmltag *xmltag)$/;"	f	file:
+xHOUR	mds/udp.c	4;"	d	file:
+xhms	mds/aftermar/fetch.c	/^  uint32_t    xhms;   $/;"	m	struct:q_data	file:
+xhms	mds/aftermar/mds.c	/^	char	xhms[6];			\/* exchange time				*\/$/;"	m	struct:push_d	file:
+xhms	mds/aftermar/mds.c	/^	char	xhms[6];			\/* exchange trading time		*\/$/;"	m	struct:push_mq	file:
+xhms	mds/aftermar/mds.c	/^	char	xhms[6];			\/* exchange trading time		*\/$/;"	m	struct:push_q	file:
+xhms	mds/fetch.c	/^  uint32_t    xhms;   $/;"	m	struct:q_data	file:
+xhms	mds/mds.c	/^	char	xhms[6];			\/* exchange time				*\/$/;"	m	struct:push_d	file:
+xhms	mds/mds.c	/^	char	xhms[6];			\/* exchange trading time		*\/$/;"	m	struct:push_mq	file:
+xhms	mds/mds.c	/^	char	xhms[6];			\/* exchange trading time		*\/$/;"	m	struct:push_q	file:
+xhms	mds/nomarkup/fetch.c	/^  uint32_t    xhms;   $/;"	m	struct:q_data	file:
+xhms	mds/nomarkup/mds.c	/^	char	xhms[6];			\/* exchange time				*\/$/;"	m	struct:push_d	file:
+xhms	mds/nomarkup/mds.c	/^	char	xhms[6];			\/* exchange trading time		*\/$/;"	m	struct:push_mq	file:
+xhms	mds/nomarkup/mds.c	/^	char	xhms[6];			\/* exchange trading time		*\/$/;"	m	struct:push_q	file:
+xmltag	mds/exchange.c	/^static struct	xmltag xmltag[256];$/;"	v	typeref:struct:xmltag	file:
+xymd	mds/aftermar/fetch.c	/^  uint32_t    xymd;   $/;"	m	struct:q_data	file:
+xymd	mds/aftermar/mds.c	/^	char	xymd[8];			\/* trading time					*\/$/;"	m	struct:push_mq	file:
+xymd	mds/aftermar/mds.c	/^	char	xymd[8];			\/* trading time					*\/$/;"	m	struct:push_q	file:
+xymd	mds/fetch.c	/^  uint32_t    xymd;   $/;"	m	struct:q_data	file:
+xymd	mds/mds.c	/^	char	xymd[8];			\/* trading time					*\/$/;"	m	struct:push_mq	file:
+xymd	mds/mds.c	/^	char	xymd[8];			\/* trading time					*\/$/;"	m	struct:push_q	file:
+xymd	mds/nomarkup/fetch.c	/^  uint32_t    xymd;   $/;"	m	struct:q_data	file:
+xymd	mds/nomarkup/mds.c	/^	char	xymd[8];			\/* trading time					*\/$/;"	m	struct:push_mq	file:
+xymd	mds/nomarkup/mds.c	/^	char	xymd[8];			\/* trading time					*\/$/;"	m	struct:push_q	file:
+zCdiv	mds/aftermar/mds.c	/^	char	zCdiv[ 1];			\/* no of Customer decimal				*\/$/;"	m	struct:push_mq	file:
+zCdiv	mds/aftermar/mds.c	/^	char	zCdiv[ 1];			\/* no of Customer decimal				*\/$/;"	m	struct:push_q	file:
+zCdiv	mds/aftermar/mds.c	/^	char  zCdiv[ 1];			\/* no of Customer decimal				*\/$/;"	m	struct:push_d	file:
+zCdiv	mds/mds.c	/^	char	zCdiv[ 1];			\/* no of Customer decimal				*\/$/;"	m	struct:push_mq	file:
+zCdiv	mds/mds.c	/^	char	zCdiv[ 1];			\/* no of Customer decimal				*\/$/;"	m	struct:push_q	file:
+zCdiv	mds/mds.c	/^	char  zCdiv[ 1];			\/* no of Customer decimal				*\/$/;"	m	struct:push_d	file:
+zCdiv	mds/nomarkup/mds.c	/^	char	zCdiv[ 1];			\/* no of Customer decimal				*\/$/;"	m	struct:push_mq	file:
+zCdiv	mds/nomarkup/mds.c	/^	char	zCdiv[ 1];			\/* no of Customer decimal				*\/$/;"	m	struct:push_q	file:
+zCdiv	mds/nomarkup/mds.c	/^	char  zCdiv[ 1];			\/* no of Customer decimal				*\/$/;"	m	struct:push_d	file:
+zdiv	mds/aftermar/mds.c	/^	char	zdiv  [ 1];			\/* no of decimal				*\/$/;"	m	struct:push_mq	file:
+zdiv	mds/aftermar/mds.c	/^	char	zdiv  [ 1];			\/* no of decimal				*\/$/;"	m	struct:push_q	file:
+zdiv	mds/mds.c	/^	char	zdiv  [ 1];			\/* no of decimal				*\/$/;"	m	struct:push_mq	file:
+zdiv	mds/mds.c	/^	char	zdiv  [ 1];			\/* no of decimal				*\/$/;"	m	struct:push_q	file:
+zdiv	mds/nomarkup/mds.c	/^	char	zdiv  [ 1];			\/* no of decimal				*\/$/;"	m	struct:push_mq	file:
+zdiv	mds/nomarkup/mds.c	/^	char	zdiv  [ 1];			\/* no of decimal				*\/$/;"	m	struct:push_q	file:
+zymd	mds/symbol.c	/^	int	zymd;$/;"	m	struct:sequence	file:

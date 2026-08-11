@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FEP 서버 프로세스 관계도 (채권 전용)</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', -apple-system, sans-serif;
+    background: #0f1923;
+    color: #e0e0e0;
+    min-height: 100vh;
+    padding: 20px 16px;
+  }
+  h1 { text-align: center; font-size: 19px; font-weight: 600; color: #fff; margin-bottom: 4px; }
+  .subtitle { text-align: center; font-size: 11px; color: #778; margin-bottom: 20px; }
+
+  .diagram { max-width: 1480px; margin: 0 auto; }
+
+  /* ══ FLOW SECTION ══ */
+  .flow-section {
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 10px;
+    padding: 12px;
+    margin-bottom: 14px;
+    position: relative;
+  }
+  .flow-title {
+    position: absolute; top: -10px; left: 16px;
+    font-size: 11px; font-weight: 700; padding: 2px 10px;
+    border-radius: 4px; letter-spacing: 0.5px;
+  }
+  .flow-row { display: flex; align-items: stretch; gap: 0; }
+
+  /* ══ Server Boxes ══ */
+  .box {
+    border-radius: 8px; padding: 12px 10px; position: relative;
+  }
+  .bt {
+    font-size: 12px; font-weight: 700; text-align: center;
+    padding: 4px 8px; border-radius: 4px; margin-bottom: 8px;
+  }
+  .bip { text-align: center; font-size: 9px; font-family: monospace; color: #667; margin-bottom: 6px; }
+
+  .krx { background: #1a1a2e; border: 2px solid #e94560; }
+  .krx .bt { background: #e94560; color: #fff; }
+  .fep { background: #162030; border: 2px solid #f59e0b; }
+  .fep .bt { background: #f59e0b; color: #1a1a2e; }
+  .ap { background: #1a2e1a; border: 2px solid #22c55e; }
+  .ap .bt { background: #22c55e; color: #1a1a2e; }
+  .sise { background: #1a2332; border: 2px solid #0ea5e9; }
+  .sise .bt { background: #0ea5e9; color: #fff; }
+  .koscom { background: #1e1a2e; border: 2px solid #a855f7; }
+  .koscom .bt { background: #a855f7; color: #fff; }
+
+  /* ══ Process Items ══ */
+  .gl { font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #556; margin: 6px 0 3px 2px; }
+  .p {
+    background: rgba(255,255,255,0.06); border-radius: 4px;
+    padding: 3px 7px; margin-bottom: 2px; font-size: 9.5px;
+    line-height: 1.4; border-left: 3px solid transparent;
+  }
+  .p .id { font-weight: 700; color: #fff; font-family: Consolas, monospace; font-size: 9.5px; }
+  .p .d { color: #99aabb; font-size: 8.5px; }
+  .p .pt { color: #f59e0b; font-size: 8.5px; font-family: monospace; }
+  .p.tx  { border-left-color: #ef4444; }
+  .p.rx  { border-left-color: #3b82f6; }
+  .p.mp  { border-left-color: #a855f7; }
+  .p.dd  { border-left-color: #22c55e; }
+  .p.ur  { border-left-color: #06b6d4; }
+  .p.qr  { border-left-color: #f97316; }
+  .p.qs  { border-left-color: #ec4899; }
+  .p.mg  { border-left-color: #64748b; }
+
+  .badge { display:inline-block; font-size:7px; font-weight:700; padding:0 3px; border-radius:2px; margin-left:3px; vertical-align:middle; }
+  .badge-r { background:#22c55e; color:#fff; }
+  .badge-s { background:#ef4444; color:#fff; }
+
+  /* ══ Arrow Columns ══ */
+  .arr-col {
+    display: flex; flex-direction: column; justify-content: center;
+    align-items: center; width: 68px; min-width: 68px; flex-shrink: 0;
+  }
+  .ar { display: flex; flex-direction: column; align-items: center; margin: 3px 0; }
+  .ar .lb { font-size: 7px; font-weight: 700; padding: 1px 4px; border-radius: 2px; white-space: nowrap; }
+  .ar .ln { font-size: 15px; line-height: 1; }
+  .ar .pr { font-size: 7px; font-family: monospace; color: #556; }
+
+  .lb-tcp { background: #e94560; color: #fff; }
+  .lb-udp { background: #0ea5e9; color: #fff; }
+  .lb-tcp1 { background: #f59e0b; color: #1a1a2e; }
+  .lb-shm { background: #a855f7; color: #fff; }
+
+  .cr { color: #ef4444; }
+  .cl { color: #3b82f6; }
+  .cb { color: #22c55e; }
+  .cu { color: #0ea5e9; }
+
+  .sep { border-top: 1px solid rgba(255,255,255,0.06); margin: 5px 0; }
+
+  /* ══ FEP Grid ══ */
+  .fg { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+  .ff { grid-column: 1 / -1; }
+
+  /* ══ IPC Block ══ */
+  .ipc {
+    background: rgba(168,85,247,0.06); border-radius: 4px;
+    padding: 5px 7px; font-size: 8.5px; color: #99aabb; line-height: 1.5;
+  }
+
+  /* ══ Legend ══ */
+  .legend {
+    max-width: 1480px; margin: 14px auto 0;
+    display: flex; flex-wrap: wrap; gap: 12px; justify-content: center;
+  }
+  .li { display: flex; align-items: center; gap: 4px; font-size: 9px; color: #99aabb; }
+  .ld { width: 7px; height: 7px; border-radius: 2px; }
+
+  /* ══ Notes ══ */
+  .notes {
+    max-width: 1480px; margin: 12px auto 0;
+    background: rgba(255,255,255,0.04); border-radius: 6px;
+    padding: 10px 14px; font-size: 9.5px; line-height: 1.9; color: #8899aa;
+  }
+  .notes strong { color: #ccc; }
+  .notes .hl { color: #f59e0b; }
+  .notes .bl { color: #0ea5e9; }
+  .notes .rd { color: #ef4444; }
+
+  .dashed { border-top: 1px dashed #334; width: 100%; margin: 3px 0; }
+</style>
+</head>
+<body>
+
+<h1>FEP 서버 프로세스 관계도 <span style="color:#f59e0b; font-size:13px;">(채권 전용 · Status=R만)</span></h1>
+<div class="subtitle">거래소(KRX) ↔ FEP ↔ AP(업무서버) | 코스콤 UDP → 시세서버 → AP | proc.ini · tcp2.ini · udpip.ini 기반</div>
+
+<div class="diagram">
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- FLOW 1: 주문/응답/체결 — 거래소 ↔ FEP ↔ AP           -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div class="flow-section" style="border-color: #e9456040;">
+  <div class="flow-title" style="background:#e94560; color:#fff;">FLOW 1 — 채권 주문/응답/체결 (거래소 ↔ FEP ↔ AP)</div>
+  <div class="flow-row" style="margin-top:6px;">
+
+    <!-- KRX -->
+    <div class="box krx" style="flex:0 0 185px;">
+      <div class="bt">KRX 거래소</div>
+      <div class="bip">192.168.157.119~120</div>
+
+      <div class="gl">채권 KTS 직접접속</div>
+      <div class="p tx"><div class="d">주문수신 <span class="pt">:37221</span></div></div>
+      <div class="p rx"><div class="d">응답/체결송신 <span class="pt">:57221</span></div></div>
+      <div class="p rx"><div class="d">체결DropCopy <span class="pt">:61726</span></div></div>
+      <div class="p rx"><div class="d">공개장운영 <span class="pt">:61725</span></div></div>
+      <div class="p rx"><div class="d">RDS일괄수신 <span class="pt">:63724</span></div></div>
+      <div class="p rx"><div class="d">RDS일괄송신 <span class="pt">:63725</span></div></div>
+    </div>
+
+    <!-- Arrows: KRX ↔ FEP -->
+    <div class="arr-col">
+      <div class="ar"><div class="lb lb-tcp">TCP직접</div><div class="ln cr">→</div><div class="pr">채권주문</div></div>
+      <div class="ar"><div class="lb lb-tcp">TCP직접</div><div class="ln cl">←</div><div class="pr">응답/체결</div></div>
+      <div class="ar"><div class="lb lb-tcp">TCP직접</div><div class="ln cl">←</div><div class="pr">체결DP</div></div>
+      <div class="ar"><div class="lb lb-tcp">TCP직접</div><div class="ln cl">←</div><div class="pr">장운영/RDS</div></div>
+    </div>
+
+    <!-- FEP (주문/응답 영역) -->
+    <div class="box fep" style="flex:1 1 520px; max-width:560px;">
+      <div class="bt">FEP Server (podm11/12)</div>
+      <div class="bip">채권 주문/응답/체결 처리 프로세스</div>
+
+      <div class="fg">
+        <!-- 좌: KRX방향 -->
+        <div>
+          <div class="gl">채권 주문/응답 (KRX KTS)</div>
+          <div class="p tx"><span class="id">pa_1101_ts</span><span class="badge badge-r">R</span><div class="d">채권주문송신 → KRX <span class="pt">:37221</span></div></div>
+          <div class="p rx"><span class="id">pa_1201_tr</span><span class="badge badge-r">R</span><div class="d">채권응답체결수신 ← KRX <span class="pt">:57221</span></div></div>
+          <div class="p rx"><span class="id">pa_1211_tr</span><span class="badge badge-r">R</span><div class="d">채권체결DropCopy ← <span class="pt">:61726</span></div></div>
+          <div class="p mp"><span class="id">pa_1201_mp</span><span class="badge badge-r">R</span><div class="d">채권응답처리</div></div>
+          <div class="p mp"><span class="id">pa_1291_mp</span><span class="badge badge-r">R</span><div class="d">채권응답미체결</div></div>
+          <div class="p mp"><span class="id">pa_1401_mp</span><span class="badge badge-r">R</span><div class="d">채권체결처리</div></div>
+          <div class="p mp"><span class="id">pa_1491_mp</span><span class="badge badge-r">R</span><div class="d">채권체결미니원장</div></div>
+          <div class="p mp"><span class="id">pa_1492_mp</span><span class="badge badge-r">R</span><div class="d">채권체결재처리</div></div>
+
+          <div class="gl" style="margin-top:8px;">RDS/장운영/Batch</div>
+          <div class="p rx"><span class="id">pa_1801_ts</span><span class="badge badge-r">R</span><div class="d">채권일괄수신 ← <span class="pt">:63724</span></div></div>
+          <div class="p rx"><span class="id">pa_7801_tr</span><span class="badge badge-r">R</span><div class="d">채권RDS수신 ← <span class="pt">:63725</span></div></div>
+          <div class="p mp"><span class="id">pa_1601_tr</span><span class="badge badge-r">R</span><div class="d">KTS장운영 ← <span class="pt">:61725</span></div></div>
+          <div class="p mp"><span class="id">pa_2601_mp</span><span class="badge badge-r">R</span><div class="d">DEV공개장채널</div></div>
+          <div class="p dd"><span class="id">pa_7801_dd</span><span class="badge badge-r">R</span><div class="d">채권종목RDS ShmLoad</div></div>
+          <div class="p dd"><span class="id">pa_7802_dd</span><span class="badge badge-r">R</span><div class="d">KTS종목RDS ShmLoad</div></div>
+        </div>
+
+        <!-- 우: AP방향 -->
+        <div>
+          <div class="gl">AP 업무연동 (Client 송수신)</div>
+          <div class="p tx"><span class="id">pa_8101_ts</span><span class="badge badge-r">R</span><div class="d">Client송신 → AP <span class="pt">:32001</span></div></div>
+          <div class="p rx"><span class="id">pa_8201_tr</span><span class="badge badge-r">R</span><div class="d">Client수신 ← AP <span class="pt">:32011</span></div></div>
+          <div class="p tx"><span class="id">pa_8111_ts</span><span class="badge badge-r">R</span><div class="d">채권체결DP송신 <span class="pt">:32009</span></div></div>
+          <div class="p tx"><span class="id">pa_8105_ts</span><span class="badge badge-r">R</span><div class="d">채권장운영송신 <span class="pt">:32008</span></div></div>
+          <div class="p tx"><span class="id">pa_8116_ts</span><span class="badge badge-r">R</span><div class="d">RDS01결과송신 <span class="pt">:32016</span></div></div>
+          <div class="p tx"><span class="id">pa_8117_ts</span><span class="badge badge-r">R</span><div class="d">RDS01송신 <span class="pt">:32017</span></div></div>
+          <div class="p tx"><span class="id">pa_8118_ts</span><span class="badge badge-r">R</span><div class="d">RDS02송신 <span class="pt">:32018</span></div></div>
+          <div class="p rx"><span class="id">pa_8211_tr</span><span class="badge badge-r">R</span><div class="d">Batch송신 <span class="pt">:32019</span></div></div>
+
+          <div class="gl" style="margin-top:8px;">주문/응답 큐 처리</div>
+          <div class="p qr"><span class="id">pa_5001_qr</span><span class="badge badge-r">R</span><div class="d">채권주문수신(AP→KRX)</div></div>
+          <div class="p qs"><span class="id">pa_5201_qs</span><span class="badge badge-r">R</span><div class="d">채권응답송신(KRX→AP)</div></div>
+          <div class="p qs"><span class="id">pa_5401_qs</span><span class="badge badge-r">R</span><div class="d">채권체결송신(KRX→AP)</div></div>
+
+          <div class="gl" style="margin-top:8px;">FX 주문/체결</div>
+          <div class="p qr"><span class="id">pa_4201_qr</span><span class="badge badge-r">R</span><div class="d">FX체결수신</div></div>
+          <div class="p mp"><span class="id">pa_4201_mp</span><span class="badge badge-r">R</span><div class="d">FX응답처리</div></div>
+          <div class="p mp"><span class="id">pa_4401_mp</span><span class="badge badge-r">R</span><div class="d">FX체결처리</div></div>
+          <div class="p mp"><span class="id">pa_4491_mp</span><span class="badge badge-r">R</span><div class="d">FX체결미니원장</div></div>
+          <div class="p mp"><span class="id">pa_4492_mp</span><span class="badge badge-r">R</span><div class="d">FX체결재처리</div></div>
+        </div>
+
+        <!-- 채권체결호가 송신 (시세서버 방향) -->
+        <div class="ff">
+          <div class="gl">채권체결/호가 송신 (시세서버 방향)</div>
+          <div style="display:flex; gap:4px; flex-wrap:wrap;">
+            <div class="p tx" style="flex:1;min-width:120px;">
+              <span class="id">pa_7622_tr</span><span class="badge badge-r">R</span>
+              <div class="d">채권체결호가송신 <span class="pt">:42001</span> (서버소켓)</div>
+            </div>
+            <div class="p tx" style="flex:1;min-width:120px;">
+              <span class="id">pa_7623_tr</span><span class="badge badge-r">R</span>
+              <div class="d">채권M4송신 <span class="pt">:42002</span> (서버소켓)</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 관리 프로세스 -->
+        <div class="ff">
+          <div class="gl">관리 프로세스</div>
+          <div style="display:flex; gap:4px; flex-wrap:wrap;">
+            <div class="p mg" style="flex:1;min-width:100px;"><span class="id">pa_9001_mp</span><span class="badge badge-r">R</span><div class="d">한도/전략관리</div></div>
+            <div class="p mg" style="flex:1;min-width:100px;"><span class="id">pa_1001_mp</span><span class="badge badge-r">R</span><div class="d">SyncManager</div></div>
+            <div class="p mg" style="flex:1;min-width:100px;"><span class="id">pa_2001_mp</span><span class="badge badge-r">R</span><div class="d">LogManager</div></div>
+          </div>
+        </div>
+
+        <!-- IPC -->
+        <div class="ff ipc">
+          <span style="color:#a855f7;">■ SHM</span> 계좌/미체결/시세/전략상태 &nbsp;
+          <span style="color:#22c55e;">■ FIFO</span> 프로세스간 메시지(77개) &nbsp;
+          <span style="color:#ef4444;">■ 비활성(S):</span> UDP시세송신(7xxx_us), Auto전략(50xxx), 조회분배(6001_mp), 금융상품UDP수신(7201~7203_ur)
+        </div>
+      </div>
+    </div>
+
+    <!-- Arrows: FEP ↔ AP -->
+    <div class="arr-col">
+      <div class="ar"><div class="lb lb-tcp">TCP</div><div class="ln cl">←</div><div class="pr">주문접수(:32011)</div></div>
+      <div class="ar"><div class="lb lb-tcp">TCP</div><div class="ln cr">→</div><div class="pr">응답/체결(:32001)</div></div>
+      <div class="ar"><div class="lb lb-tcp">TCP</div><div class="ln cr">→</div><div class="pr">체결DP(:32009)</div></div>
+      <div class="ar"><div class="lb lb-tcp">TCP</div><div class="ln cr">→</div><div class="pr">장운영(:32008)</div></div>
+      <div class="ar"><div class="lb lb-tcp">TCP</div><div class="ln cr">→</div><div class="pr">RDS(:32016~19)</div></div>
+      <div class="dashed"></div>
+      <div class="ar"><div class="lb lb-tcp1">TCP1</div><div class="ln cb">↔</div><div class="pr">업무접속(:35010)</div></div>
+    </div>
+
+    <!-- AP -->
+    <div class="box ap" style="flex:0 0 180px;">
+      <div class="bt">AP 업무서버</div>
+
+      <div class="gl">Main / Backup</div>
+      <div class="p tx"><div class="id">ap53</div><div class="d">업무계 Main</div><div class="pt">172.30.220.153</div></div>
+      <div class="p rx"><div class="id">ap63</div><div class="d">업무계 Backup</div><div class="pt">172.30.220.163</div></div>
+
+      <div class="sep"></div>
+
+      <div class="gl">FEP에서 수신</div>
+      <div class="p rx"><div class="d">주문응답/체결 <span class="pt">:32001</span></div></div>
+      <div class="p rx"><div class="d">체결DP <span class="pt">:32009</span></div></div>
+      <div class="p rx"><div class="d">장운영 <span class="pt">:32008</span></div></div>
+      <div class="p rx"><div class="d">RDS결과 <span class="pt">:3201x</span></div></div>
+
+      <div class="sep"></div>
+
+      <div class="gl">FEP로 송신</div>
+      <div class="p tx"><div class="d">주문요청 <span class="pt">:32011</span></div></div>
+      <div class="p tx"><div class="d">업무접속 <span class="pt">TCP1:35010</span></div></div>
+
+      <div class="sep"></div>
+
+      <div class="gl">시세서버에서 수신</div>
+      <div class="p ur" style="border-left-color:#0ea5e9;"><div class="d">채권시세/호가</div></div>
+      <div class="p ur" style="border-left-color:#0ea5e9;"><div class="d">장운영정보</div></div>
+
+      <div class="sep"></div>
+
+      <div class="gl">접속 클라이언트</div>
+      <div class="p mg"><div class="d" style="font-size:7.5px;">TS, OS, IA, IB<br>BLTS(NY/Frankfurt)<br>PK시스템<br>(client.ini 화이트리스트)</div></div>
+    </div>
+
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- FLOW 2: 시세 — 코스콤 → 시세서버 → AP                -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div class="flow-section" style="border-color: #0ea5e940;">
+  <div class="flow-title" style="background:#0ea5e9; color:#fff;">FLOW 2 — 채권 시세 (코스콤 UDP → 시세서버 → AP)</div>
+  <div class="flow-row" style="margin-top:6px;">
+
+    <!-- 코스콤 -->
+    <div class="box koscom" style="flex:0 0 185px;">
+      <div class="bt">코스콤 (KOSCOM)</div>
+      <div class="bip">KRX 시세분배 시스템</div>
+
+      <div class="gl">UDP 멀티캐스트</div>
+      <div class="bip">233.38.231.x</div>
+      <div class="p ur"><div class="d">채권시세(A7/B6/A3/G7)</div><div class="pt">:10402 (8M)</div></div>
+      <div class="p ur"><div class="d">채권장운영(M4/R3/R4)</div><div class="pt">:10406 (8M)</div></div>
+      <div class="p ur"><div class="d">금융상품선물A0</div><div class="pt">:10301 (100M)</div></div>
+      <div class="p ur"><div class="d">금융상품선물시세(G7)</div><div class="pt">:10305 (100M)</div></div>
+      <div class="p ur"><div class="d">금융상품M4</div><div class="pt">:10315 (100M)</div></div>
+
+      <div class="sep"></div>
+      <div style="font-size:8px; color:#778; line-height:1.4; padding:4px;">
+        ※ 채권시세: 233.38.231.91(8M)<br>
+        ※ 채권장운영: 233.38.231.153(8M)<br>
+        ※ 선물통합: .91~.93(100M)
+      </div>
+    </div>
+
+    <!-- Arrows: 코스콤 → 시세서버 -->
+    <div class="arr-col">
+      <div class="ar"><div class="lb lb-udp">UDP</div><div class="ln cu">→</div><div class="pr">멀티캐스트</div></div>
+      <div class="ar"><div class="lb lb-udp">UDP</div><div class="ln cu">→</div><div class="pr">채권시세</div></div>
+      <div class="ar"><div class="lb lb-udp">UDP</div><div class="ln cu">→</div><div class="pr">장운영</div></div>
+    </div>
+
+    <!-- 시세서버 -->
+    <div class="box sise" style="flex:0 0 220px;">
+      <div class="bt">시세서버</div>
+      <div class="bip">192.168.151.11 외</div>
+
+      <div class="gl">코스콤 시세 수신 (UDP)</div>
+      <div class="p ur"><div class="d">채권시세 수신 → 가공 → AP 전달</div></div>
+      <div class="p ur"><div class="d">채권장운영 수신 → 가공 → AP 전달</div></div>
+
+      <div class="sep"></div>
+
+      <div class="gl">FEP에서 수신 (TCP)</div>
+      <div class="p rx"><div class="d">채권체결호가 ← FEP <span class="pt">:42001</span></div></div>
+      <div class="p rx"><div class="d">채권M4 ← FEP <span class="pt">:42002</span></div></div>
+      <div style="font-size:8px; color:#778; padding:3px; line-height:1.4;">
+        ※ FEP에서 실시간 채권 체결/호가<br>
+        데이터를 받아 시세에 통합
+      </div>
+
+      <div class="sep"></div>
+
+      <div class="gl">AP로 시세 전달</div>
+      <div class="p tx"><div class="d">채권시세/호가/장운영 → AP</div></div>
+      <div class="p tx"><div class="d">채권체결정보 → AP</div></div>
+    </div>
+
+    <!-- Arrows: 시세서버 → AP -->
+    <div class="arr-col">
+      <div class="ar"><div class="lb lb-tcp">TCP</div><div class="ln cr">→</div><div class="pr">채권시세</div></div>
+      <div class="ar"><div class="lb lb-tcp">TCP</div><div class="ln cr">→</div><div class="pr">호가/장운영</div></div>
+    </div>
+
+    <!-- AP (시세 수신) -->
+    <div class="box ap" style="flex:0 0 180px;">
+      <div class="bt">AP 업무서버</div>
+      <div class="bip">ap53 / ap63</div>
+
+      <div class="gl">시세서버에서 수신</div>
+      <div class="p ur" style="border-left-color:#0ea5e9;"><div class="d">채권시세(A7/B6/A3/G7)</div></div>
+      <div class="p ur" style="border-left-color:#0ea5e9;"><div class="d">장운영스케줄(M4)</div></div>
+      <div class="p ur" style="border-left-color:#0ea5e9;"><div class="d">채권체결정보</div></div>
+
+      <div class="sep"></div>
+
+      <div style="font-size:8px; color:#778; padding:4px; line-height:1.6;">
+        AP서버는 2개 서버와 인터페이스:<br>
+        <span style="color:#f59e0b;">① FEP</span> — 주문/응답/체결<br>
+        <span style="color:#0ea5e9;">② 시세서버</span> — 채권시세/호가
+      </div>
+    </div>
+
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- FLOW 3: FEP 내부 시세 수신 (자체 사용)               -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div class="flow-section" style="border-color: #a855f740;">
+  <div class="flow-title" style="background:#a855f7; color:#fff;">FLOW 3 — FEP 내부 시세 수신 (자체 사용 · SHM Load)</div>
+  <div class="flow-row" style="margin-top:6px;">
+
+    <div class="box koscom" style="flex:0 0 185px;">
+      <div class="bt">코스콤 UDP</div>
+      <div class="bip">233.38.231.x</div>
+      <div class="p ur"><div class="d">채권시세 <span class="pt">:10402</span></div></div>
+      <div class="p ur"><div class="d">채권장운영 <span class="pt">:10406</span></div></div>
+      <div class="sep"></div>
+      <div style="font-size:8px; color:#778; padding:3px;">
+        ※ FEP도 코스콤 멀티캐스트를<br>
+        직접 수신 (자체 SHM Load용)
+      </div>
+    </div>
+
+    <div class="arr-col">
+      <div class="ar"><div class="lb lb-udp">UDP</div><div class="ln cu">→</div><div class="pr">채권시세</div></div>
+      <div class="ar"><div class="lb lb-udp">UDP</div><div class="ln cu">→</div><div class="pr">장운영M4</div></div>
+    </div>
+
+    <div class="box fep" style="flex:1 1 auto; max-width:700px;">
+      <div class="bt">FEP 내부 시세 처리 (Status=R)</div>
+
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <div style="flex:1; min-width:200px;">
+          <div class="gl">채권 시세 UDP 수신 → SHM</div>
+          <div class="p ur"><span class="id">pa_7102_ur</span><span class="badge badge-r">R</span><div class="d">채권KTS시세수신 ← UDP <span class="pt">:10402</span></div></div>
+          <div class="p dd"><span class="id">pa_7102_dd</span><span class="badge badge-r">R</span><div class="d">채권KTS시세 ShmLoad → SHM</div></div>
+          <div class="p ur"><span class="id">pa_7103_ur</span><span class="badge badge-r">R</span><div class="d">채권KTS M4수신 ← UDP <span class="pt">:10406</span></div></div>
+          <div class="p dd"><span class="id">pa_7103_dd</span><span class="badge badge-r">R</span><div class="d">채권KTS M4 ShmLoad → SHM</div></div>
+        </div>
+
+        <div style="flex:1; min-width:200px;">
+          <div class="gl">RDS/종목 SHM Load</div>
+          <div class="p dd"><span class="id">pa_7181_dd</span><span class="badge badge-r">R</span><div class="d">채권RDS01 ShmLoad</div></div>
+          <div class="p dd"><span class="id">pa_7182_dd</span><span class="badge badge-r">R</span><div class="d">채권RDS02 ShmLoad</div></div>
+          <div class="p dd"><span class="id">pa_7201_dd</span><span class="badge badge-r">R</span><div class="d">선물A0 ShmLoad</div></div>
+          <div class="p dd"><span class="id">pa_7202_dd</span><span class="badge badge-r">R</span><div class="d">선물시세 ShmLoad</div></div>
+          <div class="p dd"><span class="id">pa_7801_dd</span><span class="badge badge-r">R</span><div class="d">채권종목정보 RDS</div></div>
+          <div class="p dd"><span class="id">pa_7802_dd</span><span class="badge badge-r">R</span><div class="d">KTS종목정보 RDS</div></div>
+        </div>
+
+        <div style="flex:1; min-width:200px;">
+          <div class="gl">기타 시세 수신</div>
+          <div class="p rx"><span class="id">pa_7701_tr</span><span class="badge badge-r">R</span><div class="d">금융파생TCP ← <span class="pt">127.0.0.1:16511</span></div></div>
+          <div class="p ur"><span class="id">pa_7402_ur</span><span class="badge badge-r">R</span><div class="d">금융상품호가 ← UDP <span class="pt">:30021</span></div></div>
+          <div class="sep"></div>
+          <div class="gl" style="color:#ef4444;">비활성 (Status=S)</div>
+          <div class="p mg"><span class="id" style="color:#888;">pa_7201_ur</span><span class="badge badge-s">S</span><div class="d">금융상품선물A0수신</div></div>
+          <div class="p mg"><span class="id" style="color:#888;">pa_7202_ur</span><span class="badge badge-s">S</span><div class="d">금융상품선물시세수신</div></div>
+          <div class="p mg"><span class="id" style="color:#888;">pa_7203_ur</span><span class="badge badge-s">S</span><div class="d">금융상품M4수신</div></div>
+          <div class="p mg"><span class="id" style="color:#888;">pa_7102_us</span><span class="badge badge-s">S</span><div class="d">채권시세송신(UDP)</div></div>
+        </div>
+      </div>
+
+      <div class="ipc" style="margin-top:6px;">
+        <span style="color:#a855f7;">■ SHM</span> 시세데이터를 SHM에 Load → 한도관리(pa_9001_mp), Auto전략(50xxx 비활성), 주문처리 등에서 참조<br>
+        <span style="color:#ef4444;">■ 참고:</span> UDP시세송신(pa_7xxx_us)이 모두 <span style="color:#ef4444;">Status=S</span> → FEP에서 AP로의 시세 UDP재분배는 비활성. 시세는 시세서버를 통해 AP로 전달됨
+      </div>
+    </div>
+
+  </div>
+</div>
+
+</div>
+
+<!-- Legend -->
+<div class="legend">
+  <div class="li"><div class="ld" style="background:#ef4444;"></div> TS (TCP송신)</div>
+  <div class="li"><div class="ld" style="background:#3b82f6;"></div> TR (TCP수신)</div>
+  <div class="li"><div class="ld" style="background:#a855f7;"></div> MP (처리)</div>
+  <div class="li"><div class="ld" style="background:#22c55e;"></div> DD (ShmLoad)</div>
+  <div class="li"><div class="ld" style="background:#06b6d4;"></div> UR (UDP수신)</div>
+  <div class="li"><div class="ld" style="background:#f97316;"></div> QR (큐수신)</div>
+  <div class="li"><div class="ld" style="background:#ec4899;"></div> QS (큐송신)</div>
+  <div class="li"><span class="badge badge-r">R</span> 운영</div>
+  <div class="li"><span class="badge badge-s">S</span> 정지</div>
+</div>
+
+<!-- Notes -->
+<div class="notes">
+  <strong>전체 아키텍처 요약 (채권 전용):</strong><br><br>
+
+  <strong class="hl">① 거래소(KRX) ↔ FEP ↔ AP — 주문/응답/체결:</strong><br>
+  AP(ap53) → TCP:32011 → <span class="hl">pa_8201_tr</span>(수신) → FIFO → <span class="hl">pa_5001_qr</span>(큐) → FIFO →
+  <span class="hl">pa_1101_ts</span>(송신) → TCP:37221 → KRX<br>
+  KRX → TCP:57221 → <span class="hl">pa_1201_tr</span>(수신) → FIFO → <span class="hl">pa_1201_mp</span>(응답) / <span class="hl">pa_1401_mp</span>(체결) →
+  FIFO → <span class="hl">pa_8101_ts</span>(송신) → TCP:32001 → AP<br><br>
+
+  <strong class="bl">② 코스콤 UDP → 시세서버 → AP — 시세:</strong><br>
+  코스콤(233.38.231.x) → UDP멀티캐스트(:10402/:10406) → <span class="bl">시세서버</span> → 가공 → <span class="bl">AP(ap53/63)</span><br>
+  ※ FEP(pa_7xxx_us) UDP시세송신은 모두 <span class="rd">Status=S</span> → FEP가 AP로 시세를 직접 보내지 않음<br><br>
+
+  <strong style="color:#a855f7;">③ FEP → 시세서버 — 채권체결/호가:</strong><br>
+  FEP <span class="hl">pa_7622_tr</span>(서버소켓:42001) / <span class="hl">pa_7623_tr</span>(서버소켓:42002) → 시세서버에서 접속하여 채권체결호가/M4 데이터 수신<br><br>
+
+  <strong>④ AP는 2개 서버와 인터페이스:</strong> <span class="hl">FEP</span>(주문/응답/체결) + <span class="bl">시세서버</span>(시세/호가)<br><br>
+
+  <strong>운영 현황:</strong> 총 111개 프로세스 중 Status=R 약 55개 | TCP2: 28포트 | UDP: 12채널 | FIFO: 77개 | TCP1: 2마스터(P:35010, B:45010)<br>
+  <strong>접속 클라이언트:</strong> ap53/ap63(업무계), at04(테스트), TS, OS, IA, IB, BLTS(NY/Frankfurt), PK시스템 (client.ini 화이트리스트)
+</div>
+
+</body>
+</html>

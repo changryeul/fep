@@ -1,0 +1,529 @@
+#ifndef	_MDS2_H_
+#define	_MDS2_H_
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <stdarg.h>
+#include <stdint.h>
+#include <fcntl.h>
+#include <string.h>
+#include <libgen.h>
+#include <time.h>
+#include <signal.h>
+#include <errno.h>
+#include <pthread.h>
+#include <ctype.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/time.h>
+#include <sys/timeb.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#include <sys/msg.h>
+#include <sys/mman.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <limits.h>
+#include <math.h>
+
+
+#define		TZ_KST				"TZ=ROK"
+#define		MAX_PACKET_SIZE		2048
+#define		MAX_XCHG			16
+
+#define		I_AM_COOKER			1			// market data cooker(open mode : O_RDWR|O_CREAT)
+#define		I_AM_WRITER			2			//  WRONLY or RDWR
+#define		I_AM_READER			3			// RDONLY
+
+#define		MULTICAST_F			"224.0.0.0"
+#define		MULTICAST_T			"239.255.255.255"
+
+#define		X_PUSH				0x01		// 0001
+#define		X_SYNC				0x02		// 0010
+#define		P_PUSH				0x04		// 0100
+#define		X_NOTI				0x08		// 1000
+
+#define		SYMB_LEN			6
+#define 	SYMB_SUBLEN			3
+#define 	SYMB_RLEN			SYMB_LEN + SYMB_SUBLEN	
+
+#define		MAX_DEFINITION		16
+
+#define		DF_ON				1
+#define		DF_OFF				0
+
+#define		DF_C_ON				'1'
+#define		DF_C_OFF			'0'
+
+/*
+#define     APLOG_EMERG     0  // system is unusable
+#define     APLOG_ALERT     1  // action must be taken immediately
+#define     APLOG_CRIT      2  // critical conditions
+#define     APLOG_ERR       3  // error conditions
+#define     APLOG_WARNING   4  // warning conditions
+#define     APLOG_NOTICE    5  // normal but significant condition
+#define     APLOG_INFO      6  // informational
+#define     APLOG_DEBUG     7  // debug-level messages
+*/
+#define		MLOG_MUST			0
+#define		MLOG_ERROR			3
+#define		MLOG_WARNING		4
+#define		MLOG_NOTICE			5
+#define		MLOG_BIZ			6
+#define		MLOG_DEBUG			7
+
+#define		NODATE				0
+#define		TRADDAY				1
+#define		SATURDAY			2
+#define		SUNDAY				3
+#define		HOLIDAY				4
+                            	
+#define		PUSH_QUOT			0x01		// event bits (REAL-TR : ?A) ? : On exchange configuration 
+#define		PUSH_BOOK			0x02		// event bits (REAL-TR : ?B) ? : On exchange configuration
+#define		PUSH_MARKET			0x04		// event bits (REAL-TR : ?C) ? : On exchange configuration
+#define		PUSH_PRED			0x08		// event bits (REAL-TR : ?D) ? : On exchange configuration
+#define		PUSH_TUJA			0x10		// event bits (REAL-TR : ?E) ? : On exchange configuration
+
+#define		STR2S(x, y)			str2s(x, sizeof(x), y, sizeof(y))
+#define		STR2I(x)			str2i(x, sizeof(x))
+#define		STR2L(x)			str2l(x, sizeof(x))
+#define		STR2F(x)			str2f(x, sizeof(x))
+#define		STR2D(x)			str2d(x, sizeof(x))
+#define		STR2P(x,y,z)		str2p(x, sizeof(x), y, z)
+#define		STR2N(x)			memset(x, 0, sizeof(x))
+
+#define		YMD(y,m,d)			((y) * 10000 + (m) * 100 + (d))
+#define		HMS(h,m,s)			((h) * 10000 + (m) * 100 + (s))
+#define		YEAR(x)				((x)/10000)
+#define		MONTH(x)			((x)%10000) / 100
+#define		MDAY(x)				((x) % 100)
+#define		HOUR(x)				((x)/10000)
+#define		MINUTE(x)			((x)%10000) / 100
+#define		SECOND(x)			((x)%100)
+#define		ENDMK_HMS			888888			// end of market
+#define		ENDAH_HMS			999999			// end of after hour trading
+#define		YYMMDD(ymd)			(ymd % 1000000)
+#define		CCYYMMDD(ymd)		YEAR(ymd) <= 99 ? ymd + 20000000 : ymd
+
+#define		MEMCPY(x, y)		memcpy(x, y, (strlen(y)>sizeof(x)?sizeof(x):strlen(y)))
+
+#define		COLOR(x,y)			(x>y?2:(x<y?5:3))		// 가격의 업다운 색상 뒤의가격 기준 상승 2 하락 5 보합 3 을 반환
+
+#define		IPCK(x, n)			(x + n)
+
+#define		DF_CUSTPORT			30428	// old:30500
+#define		DF_BESTPORT			30429	// old:30510
+
+#define		DF_USDKRW			"USDKRW"
+
+#define		DF_EXNM_BEST		"BEST"
+#define		DF_EXNM_CUST		"CUST"
+
+#define		DF_EXCD_HAND		'H'		// 관리자 수기시세 : 수기시세전환 대상은 CUST 만..나머지 원천은 계속 수신처리 함.
+#define		DF_EXCD_BEST		'B'
+#define		DF_EXCD_CUST		'Z'
+
+#define		DF_CFEED_STND		'1'		// 기본 : 고객시세 제공타입 (TSKEIAM97.PRC_ORIGN_DSTCD)
+#define		DF_CFEED_HAND		'2'		// 수기 : 고객시세 제공타입 (TSKEIAM97.PRC_ORIGN_DSTCD)
+#define		DF_CFEED_STOP		'3'		// 중단 : 고객시세 제공타입 (TSKEIAM97.PRC_ORIGN_DSTCD)
+#define		DF_CFEED_PRIO		'4'		// 우선 : 고객시세 제공타입 (TSKEIAM97.PRC_ORIGN_DSTCD)
+#define		DF_CFEED_DEPN		'5'		// 의존 : 고객시세 제공타입 (TSKEIAM97.PRC_ORIGN_DSTCD)
+
+#define		DF_ALRM_QUOT		"E0200"	// 수신환율 오류 알람 (1613화면기준)
+#define		DF_ALRM_TERM		60		// 이상호가수신 n초 이상 지속 시 알람.
+
+enum {
+	DF_SISEQ4MA		= 0,
+	DF_SISEQ4AP		,
+	DF_SISEQ4DB
+};
+
+enum {
+	_UL_	= 1,
+	_UP_	,
+	_NC_	,
+	_DL_	,
+	_DN_
+};
+
+enum {
+	SISE_STOP		= 0,
+	SISE_MARKET		,
+	SISE_MANUAL
+};
+
+typedef unsigned int 		uint32_t;
+typedef unsigned char 		uint8_t;
+
+struct message {
+	long	mtype;
+	unsigned char	mtext[1024];
+};
+
+//##### mds/src/inc/mds/mds.h
+typedef struct {
+	char		excode			[ 1];		// 원천 : 'S'=SMB, 'K'=KMB, 'E'=EBS, 'C'=CMB, 'H'=HAND
+	char		symb			[ 7];		// 통화코드
+	char		date			[ 8];		// 수신일자 YYYYMMDD (서버시간)
+	char		time			[ 9];		// 수신시간 HHMMSSSSS
+	char		quotid			[30];		// Unique identifier of CMBS MarketData (use bid side)
+//	char		reqid			[20];		// MDReqID : Unique identifier of the client’s MarketDataRequest
+	double		bidprc			;			// Price of the MarketData Entry
+	double		bidqty			;			// Quantity of the MarketData Entry. Always “0” For USD/KRW, CNH/KRW
+	char		biddate			[ 8];		// NotUse : Specific date of trade settlement in YYYYMMDD format.
+//	char		bidquoteid		[12];		// NotUse : Unique identifier of this MarketData Snapshot
+	char		bidsettype		[ 4];		// NotUse : Always SP (SPOT) Tenor Code
+	double		bidbestprc		;			// NotUse : Only USD/KRW, CNH/KRW. Not tradeable price, reference only
+	double		bidbestqty		;			// NotUse : Only USD/KRW, CNH/KRW. Not tradeable price, reference only
+	double		offerprc		;			// Price of the MarketData Entry
+	double		offerqty		;			// Quantity of the MarketData Entry. Always “0” For USD/KRW, CNH/KRW
+	char		offerdate		[ 8];		// NotUse : Specific date of trade settlement in YYYYMMDD format.
+//	char		offerquoteid	[12];		// NotUse : Unique identifier of this MarketData Snapshot
+	char		offersettype	[ 4];		// NotUse : Always SP (SPOT) Tenor Code
+	double		offerbestprc	;			// NotUse : Only USD/KRW, CNH/KRW. Not tradeable price, reference only
+	double		offerbestqty	;			// NotUse : Only USD/KRW, CNH/KRW. Not tradeable price, reference only
+} MDSSISE;
+#define		SZ_MDSSISE		sizeof(MDSSISE)
+
+// ascii 전문이 일반적이나, 시스템 내부시세이므로 binary 전문사용 (필요시 ascii로 변경해도 무방)
+typedef struct {
+	char		excode			[ 1];		// 'S'MB/'K'MB/E'BS/'C'MB/'B'EST/'Z'CUST
+	char		bidex			[ 1];		// BID원천 : 'S':SMB, 'K':KMB, 'E':EBS, 'C':CMB, 'H':HAND
+	char		offerex			[ 1];		// ASK원천 : 'S':SMB, 'K':KMB, 'E':EBS, 'C':CMB, 'H':HAND
+	char		symb			[ 7];		// root symbol
+	char		date			[ 8];		// 수신일자 YYYYMMDD (서버시간)
+	char		time			[ 9];		// 수신시간 HHMMSSSSS
+	double		usdbid			;			// Current USDKRW BID
+	double		usdoffer		;			// Current USDKRW OFFER
+	double		bidprc			;			// Price of the MarketData Entry
+	double		offerprc		;			// Price of the MarketData Entry
+	double		bidqty			;			// Quantity of the MarketData Entry. Always “0” For USD/KRW, CNH/KRW
+	double		offerqty		;			// Quantity of the MarketData Entry. Always “0” For USD/KRW, CNH/KRW
+} APSISE;
+#define		SZ_APSISE		sizeof(APSISE)
+
+typedef struct {
+	char		type			[ 2];		// must be 'FA'
+	char		rdcode			[20];		// realtime symbol : 원천(1:S/K/E/C/'B'est/'Z'cust) + symb(6)
+	char		excode			[ 1];		// 'S'MB/'K'MB/E'BS/'C'MB/'B'EST/'Z'CUST
+	char		bidex			[ 1];		// BID원천 : 'S':SMB, 'K':KMB, 'E':EBS, 'C':CMB, 'H':HAND
+	char		offerex			[ 1];		// ASK원천 : 'S':SMB, 'K':KMB, 'E':EBS, 'C':CMB, 'H':HAND
+	char		symb			[10];		// root symbol
+	char		kymd			[ 8];		// korean trading time
+	char		khms			[ 6];		// korean trading time
+	char		copen			[ 1];		// 시가 색상 ('+', '-', ' ')
+	char		open			[20];		// open price
+	char		chigh			[ 1];		// 고가 색상 ('+', '-', ' ')
+	char		high			[20];		// high price
+	char		clow			[ 1];		// 저가 색상 ('+', '-', ' ')
+	char		low				[20];		// low price
+	char		clast			[ 1];		// 현재가 색상 ('+', '-', ' ')
+	char		last			[20];		// last price
+	char		sign			[ 1];		// change sign
+	char		cdiff			[ 1];		// 대비 색상 ('+', '-', ' ')
+	char		diff			[20];		// net change
+	char		crate			[ 1];		// 등락율 색상 ('+', '-', ' ')
+	char		rate			[ 6];		// change rate
+	char		cpask			[ 1];		// 매도호가 색상('+', '-', ' ')
+	char		pask			[20];		// ask
+	char		cpbid			[ 1];		// 매수호가 색상('+', '-', ' ')
+	char		pbid			[20];		// bid
+	char		spread			[ 6];		// Spread
+	char		bestcpask		[ 1];		// best매도호가 색상('+', '-', ' ')
+	char		bestpask		[20];		// best ask
+	char		bestcpbid		[ 1];		// best매수호가 색상('+', '-', ' ')
+	char		bestpbid		[20];		// best ask
+	char		bestspread		[ 6];		// bestspread
+	char		vask			[20];		// ask  size
+	char		vbid			[20];		// bid size
+	char		bestvask		[20];		// Best ask size
+	char		bestvbid		[20];		// Best size
+	char		bizdate			[ 8];		// 영업일
+} CUSTSISE;
+#define		SZ_CUSTSISE		sizeof(CUSTSISE)
+
+// SMBS 체결데이터 실시간
+typedef struct {
+	char		type			[ 2];		// must be 'FX'
+	char		rdcode			[20];		// realtime symbol : 원천(1:S/K/E/C/'B'est/'Z'cust) + symb(6)
+	char		excode			[ 1];		// 'S'MB/'K'MB/E'BS/'C'MB/'B'EST/'Z'CUST
+	char		symb			[10];		// root symbol
+	char		trade_ymd		[ 8];		// trading time
+	char		trade_time		[ 6];		// trading time
+	char		trade_side		[ 1];		// '1'=BUY, 2'=SELL
+	char		trade_prc		[20];		// open price
+	char		trade_vol		[20];		// bid size
+} CUSTXSISE;
+#define		SZ_CUSTXSISE	sizeof(CUSTXSISE)
+
+//////////////////////////////////////////////////////////////////////////////////////
+
+struct	xmltag {
+	char	tags[32];
+	int		many;
+	struct	{
+		char	name[32];
+		char	vals[80];
+	} defs[16];
+	int		eotf;
+};
+
+//#####################################
+//##### mds/src/inc/mds/context.h
+typedef	struct {
+	int			llog			;		// log level
+	char		logf			[128];	// log path
+	int			chck			;		// general checking flags
+	pthread_mutex_t 	lock	;
+	pthread_mutex_t 	mutex	;
+	pthread_mutex_t 	islock	;
+} MDCTX;
+#define		SZ_MDCTX		sizeof(MDCTX)
+
+//#####################################
+//##### mds/src/inc/mds/mds.h
+typedef	struct {
+	int			flag			;		// open flags
+	int			whoami			;		// READER/WRITER/COOKER
+	char		procname		[32];	// process name
+	int			exid			;		// shm key 조합용
+	char		exnm			[16];	// exhange name
+	char		excode			[ 1];	// 'S'MBS/'K'MBS/E'MBS/'C'MBS/'B'est/'Z'CUST
+	key_t 		ipck			;
+	char		TZ				[60];	// time zone
+	time_t		g2et			;		// GMT to exchange time
+	time_t		e2lt			;		// diference with local time
+	int			isdst			;		// daylight saving time ?
+	void		*arch			;		// (MDARCH *)
+	void		*indx			;		// (INDEX *)
+	void		*fold			;		// (MDFOLD *)
+	void		*fptr			;		// (MDFOLD *)
+	MDCTX		ctx				;		// market control information
+} MARKET;
+#define		SZ_MARKET		sizeof(MARKET)
+
+//#####################################
+//##### mds/src/inc/mds/mds.h
+typedef	struct {
+	int			exid			;		// exchange id
+	char		exnm			[ 8];	// short name
+	char		excode			[ 1];	// 'S'MBS/'K'MBS/E'MBS/'C'MBS/'B'est/'Z'CUST
+// TODO : custflag는 MDFOLDER로 이동
+	char		custflag		;		// 미사용 : 고객용시세 여부 = '1':YES, '0':NO (cfg내에 'cust' 필드)
+										// SMBS 시세 수신 시 MU59 업데이트 여부를 판단하는 flag 로 사용 (24.07.08)
+	char		TZ				[60];	// 미사용 : time zone
+	int			maxcnt			;		// maximum no of symbol for shared memory
+	int			ma_pnum			;		// number of master update threads
+	int			ap_pnum			;		// number of ap packet send threads
+	int			db_pnum			;		// number of db update threads
+	struct	{
+		char		name		[16];	// port id (=product name)
+		char		ipad		[20];	// ip address
+		int			port		;		// port number
+	} from;
+	struct	{
+		int			cast		;		// if TRUE, multicasting
+		char		neta		[20];	// local address
+		char		ipad		[20];	// multicasting IP-address
+		int			port		;
+	} apsnd;
+	char		quenm			[128];	// 시세 수신 큐이름 (exchange.cfg)
+	char		dirp			[128];	// data file path
+	int			llog			;		// log level
+	char		logf			[128];	// log path
+} XCHG;
+#define		SZ_XCHG			sizeof(XCHG)
+
+//=======================================================
+// SHARED MEMORY : MDARCH + INDEX(* arch.mrec) + MDFOLD
+//=======================================================
+//#####################################
+//##### mds/src/inc/mds/context.h
+typedef	struct	{
+	XCHG		xchg			;		// exchange information
+	time_t		rtim			;		// receive time stamp
+	long		rsum			;		// daily total
+	int			tymd			;		// 영업일
+	int			mrec			;		// max record
+	int			nrec			;		// current record numbers of whereis
+	int			drec			;		// number of deleted records of folder
+	int			vrec			;		// current record numbers of folder
+} MDARCH;				// shared memory pointer
+#define		SZ_MDARCH		sizeof(MDARCH)
+
+//#####################################
+// pindx = (INDEX *)(parch + sizeof(MDARCH));
+typedef	struct  {
+	char		symb			[SYMB_LEN];	// symbol code
+	int			indx			;			// position
+} INDEX;
+#define		SZ_INDEX		sizeof(INDEX)
+
+//#####################################
+//##### mds/src/inc/mds/mdfold.h
+// pfold = (MDFOLD *)(parch + sizeof(MDARCH) + (sizeof(INDEX)*parch->xchg.maxcnt));
+typedef struct {
+	char		symb			[SYMB_LEN];
+	int			seqn			;		// MDFOLD OFFSET
+//	int			pricestat		;		// 시세제공상태 (SISE_STOP/SISE_MARKET/SISE_MANUAL)
+	int			trdf			;		// tradable flag (CUST 인 경우만 참조함, 0=불가, 1=가능)
+
+	// CUST 에만 유효값 있음
+	struct _custfeed {
+		char		excode		[ 1];	// 고객시세 원천코드
+		char		feedtp		[ 1];	// 고객시세 제공 타입 : TSKEIAM97.PRC_ORIGN_DSTCD 값 (중단/수기/우선/기본)
+		char		stm			[14];	// 고객시세 제공시작시간 : YYYYMMDDHHmmSS
+		char		etm			[14];	// 고객시세 제공종료시간 : YYYYMMDDHHmmSS
+		char		finclstop	[ 1];	// 고객재정시세 불가여부 : TSKEIAM97.FINCL_ANOUN_STOP_YN ('0'=가능, '1'=불가)
+	} cust;
+//------------
+	uint32_t	tymd			;		// current trading day	// TSKEIAM00 의 영업일 일자 사용 (12시 넘어도 영업일 유지됨)
+	uint32_t	kymd			;		// last update date		// 시세에서 내려오는 일자 사용.  (12시 넘어도 일자 유지됨)
+	uint32_t	khms			;		// last update time		// 시세에서 내려오는 시간 사용.
+//------------
+	int			usdpos			;		// USD위치 ("0": CADKRW=USDKRW/USDCAD, "1":EURKRW=USDKRW*EURUSD)
+	int			zdiv			;		// no of Employ decimals
+	int			zCustdiv		;		// no of decimals
+	time_t		quotalarm		;		// 호가 이상('0') 발생시간 : 정상호가 수신되면 '0' 으로 초기화		// 24.07.29) 변경
+	char		filler			[ 8];	// FILLER FLAG														// 24.07.29) 추가
+	char		spotdate		[ 8];	// SPOT DATE
+//	struct {							// struct q_price from "mdcommon.h"
+	double		baseprc			;
+	char		bidex			[ 1];	// BID 원천 : 'S'MBS/'K'MBS/E'MBS/'C'MBS
+	double		bidopen			;
+	double		bidhigh			;
+	double		bidlow			;
+	double		bidlast			;
+	double		bidbest			;
+	double		prebid			;
+	double		bidvol			;
+	double		bidbestvol		;
+	int			bidsign			;
+	double		biddiff			;
+	double		bidrate			;
+	int			biddirf			;
+	char		offerex			[ 1];	// OFFER 원천 : 'S'MBS/'K'MBS/E'MBS/'C'MBS
+	double		offeropen		;
+	double		offerhigh		;
+	double		offerlow		;
+	double		offerlast		;
+	double		offerbest		;
+	double		preoffer		;
+	double		offervol		;
+	double		offerbestvol	;
+	int			offersign		;
+	double		offerdiff		;
+	double		offerrate		;
+	int			offerdirf		;
+	double		midopen			;
+	double		midhigh			;
+	double		midlow			;
+	double		midlast			;
+	double		midbest			;
+	double		midvol			;
+	int			midsign			;
+	double		middiff			;
+	double		midrate			;
+	int			middirf			;
+//	} quot;
+} MDFOLD;
+#define		SZ_MDFOLD		sizeof(MDFOLD)
+
+
+//################################################################################################
+// FUNC.C
+//################################################################################################
+// QUEUE
+//static int _kba_mds_que_push(key_t mkey, char *sbuf, int dlen);
+int KBA_MDS_QUE_PUSH(key_t ipck, int seqn, char *sbuf, int dlen);
+int KBA_MDS_QUE_POP(key_t ipck, int idx, char *rbuf, int buflen);
+int mds_send_alarm(char *mcod, char *msg);
+
+// BUSINESS BASE
+int get_diff_rate(double pric, double base, double *diff, double *rate);
+int color(double val, double base);
+
+// SYSTEM
+key_t get_ipck(int exid);
+void mds_log(MARKET *market, int level, const char *format, ...);
+void mds_procname(char *procname);
+
+//################################################################################################
+// MDS2.C
+//################################################################################################
+// RESOURCE
+void mds_setenv();
+void mds_time(MARKET *market, time_t clock, uint32_t *xymd, uint32_t *xhms, uint32_t *kymd, uint32_t *khms);
+void mds_timezone(MARKET *market);
+void mds_lock(MARKET *market);
+void mds_unlock(MARKET *market);
+//static int cmpindex(INDEX *i1, INDEX *i2);
+INDEX *mds_shmget(MARKET *market, const char *symbol);
+int mds_shmidxsort(MARKET *market);
+void *mds_getfolder(MARKET *market, const char *symb);
+void *mds_popfolder(MARKET *market);
+
+// MDS INITIALIZE
+int exchange_get2(const char *exnm, XCHG *xchg);
+MARKET *mds_market_alloc2();
+int mds_shminit2(MARKET *market, XCHG *xchg);
+MARKET *mds_open2(const char *exnm, int flag);
+
+// PACKET
+int make_ap_sise(MARKET *market, MDFOLD *pfold, MDFOLD *pusdkrw, MDSSISE *psise, APSISE *preal);
+int make_cust_sise(MARKET *market, MDFOLD *pfold, MDSSISE *psise, CUSTSISE *preal);
+int make_cust_xsise(MARKET *market, MDFOLD *pfold, MDSSISE *psise, CUSTXSISE *preal);
+
+// BUSINESS
+int iscrosstarget(char *basesymb);
+int update_master(MARKET *market, MDFOLD *pfold, MDSSISE *psise);
+int update_best(MARKET *market, MDFOLD *pfold, MDSSISE *psise);
+int mds_sise_valid(MARKET *m, MDFOLD *pfold, MDSSISE *psise);
+
+//################################################################################################
+// RDB.SQC
+//################################################################################################
+int LoadMaster(MARKET *m);
+int InsertTrdTick(MDSSISE *psise);
+int InsertTick(MDSSISE *psise, MDFOLD *pfold);
+int InsertTick_Fincl(MDSSISE *psise, MDFOLD *pfold, MDFOLD *pusdkrw);
+int UpsertMin(MDSSISE *psise, MDFOLD *pfold);
+int UpsertMin_Fincl(MDSSISE *psise, MDFOLD *pfold, MDFOLD *pusdkrw);
+int UpsertDay(MDSSISE *psise, MDFOLD *pfold);
+int UpsertDay_Fincl(MDSSISE *psise, MDFOLD *pfold, MDFOLD *pusdkrw);
+int SetCustFeed(MARKET *m, MDFOLD *pfold);
+int UpsertMU59(MDSSISE *psise, MDFOLD *pfold);
+
+//################################################################################################
+// MDSAP.C
+//################################################################################################
+// STRING
+void str2s(char *ts, int tl, char *fs, int fl);
+int str2i(char *s, int l);
+float str2f(char *s, int l);
+double str2d(char *s, int l);
+double str2p(char *s, int l, int denominator, int with_sign);
+//static char *getwords(char *istr, char *word);
+int str2words(char *lineB, char *wordB[], int wordN);
+
+// LIBRARY
+//static int mds_attach(int mode, char *msg);
+MDFOLD *mds_getfold(char *exnm, char *symb, char *msg);
+int mds_getbestfold(MDFOLD *pbest, char *msg);
+MDARCH *mds_getarch(int mode, char *exnm, char *msg);
+int mds_make_custsise(char *symb, double bid, double offer, char *msg);
+int mds_updt_prcstat(char *exnm, char *symb, int ival, char *msg);
+int mds_updt_trdf(char *exnm, char *symb, int ival, char *msg);
+int mds_updt_spotdate(char *exnm, char *symb, char *sval, char *msg);
+int mds_send_rfq(char *sbuf, int dlen, char *rejmsg);
+int mds_send_mast(char *exnm, char *symb, char *msg);
+int mds_set_updt_mu59(char flag, char *rejmsg);
+
+#endif

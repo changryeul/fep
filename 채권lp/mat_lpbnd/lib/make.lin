@@ -1,0 +1,17 @@
+LIB_HOME	= /fsfxwin/fep/mat
+DIR			= $(LIB_HOME)/lib
+LIBDIR		= $(DIR)
+LIBTARGET	= $(DIR)/libmats.a
+LIB_NAME	= $(DIR)/libmats.a
+INCDIR		= $(DIR)/include
+SRCDIR		= $(MAT_SRC)
+LIBS		= -L$(LIBDIR) -lmats -lm
+INCS		= -I$(INCDIR)
+CC			= gcc
+LD			= gcc
+AR			= ar
+CFLAGS		= -c -m64 -Wall -g -D_GNU_SOURCE
+CPPFLAGS	= -c -m64 -g
+LDFLAGS		= -g -m64
+ARFLAGS		= rucs
+

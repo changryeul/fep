@@ -1,0 +1,271 @@
+#define		_GLOBAL
+/*------------------------------------------------------------------------
+#	Module	: 시세Real & Udp 송신
+#			  모든 시세처리함 (지수선물/Call옵션/Put옵션)
+#	File	: pa_7500_us.c
+------------------------------------------------------------------------*/
+
+/*------------------------------------------------------------------------
+	Header Files
+------------------------------------------------------------------------*/
+#include	"fep_fepp.h"
+#include	"pa_struct.h"
+
+#if defined A7103||A7203|A7303			// M4
+#define     DATA_SIZE       100
+#elif defined A7102
+#define     DATA_SIZE       700
+#elif defined A7201||A7301
+#define     DATA_SIZE      1400
+#elif defined A7202||A7302
+#define     DATA_SIZE       500
+#endif
+#include    "buf_struct.h"
+/*------------------------------------------------------------------------
+	Constants and Structures
+------------------------------------------------------------------------*/
+#define		DATA_TIME		(60 * 1000)
+// 포트정보 재설정해야한다. 2025
+#if defined A7102
+#define     SVR_PORT_NO     60631
+#elif defined A7103
+#define     SVR_PORT_NO     60632
+
+#elif defined A7201||A7301
+#define     SVR_PORT_NO     60641
+#elif defined A7202||A7302
+#define     SVR_PORT_NO     60642
+#elif defined A7203||A7303
+#define     SVR_PORT_NO     60643
+#endif
+
+/*------------------------------------------------------------------------
+	Global Variables
+------------------------------------------------------------------------*/
+int			sleep_speed;
+int			Sockfd[4], id = -1, Max_IP_Addr;
+char		Svr_IP[20*4];
+struct		sockaddr_in Svr_Addr[4], Clnt_Addr[4];
+
+/*------------------------------------------------------------------------
+	Function Prototypes
+------------------------------------------------------------------------*/
+void	PA_7500_US (int, char **);
+void	Set_Curr (char *);
+void	Set_Sise (char *);
+void	Microsec_Sleep (int);
+int     Socket_Connect (void);
+
+/*----------------------------------------------------------------------*/
+int		main (int argc, char *argv[])
+/*----------------------------------------------------------------------*/
+{
+	Init_Proc (argc, argv);
+	PA_7500_US (argc, argv);
+	Exit_Process ();
+}	/* End of main ()	*/
+
+/*----------------------------------------------------------------------*/
+void	PA_7500_US (int argc, char **argv)
+/*----------------------------------------------------------------------*/
+{
+	int		i, idx, rt, len, R_Cnt, flag, start_flag, sltime, sd_size;
+	int		FIFO_fd, FIFO_fd1;
+	char    fifo_name[100], fifo_name1[100], tmp[128], bumun[4], send_data[1000];
+	char 	r_buf[1024];
+	double	recv_sec, befo_sec;
+	FILE_BUFF_FORMAT    R_Fmt[1];
+
+	/* open FIFO    */
+	sprintf (bumun, "%s", _SubSystem_Name);
+	LtoU (bumun, 2);
+
+	Max_IP_Addr = 1;
+// 수신받을 서버 or PC Setting
+	//sprintf (Svr_IP, "172.21.155.7");
+//	sprintf (Svr_IP, "227.10.20.10");
+	sprintf (Svr_IP, "224.0.0.1");
+
+	rt = Socket_Connect ();
+
+	start_flag = 0;
+
+	while (START_S != JOB_END)
+	{
+		Stat_Save ();
+
+		while (WRITE_CNT > R_CNT(0,1))
+		{
+			R_Cnt = F_R(PS_R_2, (void *)R_Fmt, 1);
+			if (R_Cnt < 0)
+       		{
+           		Log (SAM_FATAL, "cannot read file[%s,%d:%s]",
+               		IFN(D_K,P_K,0), SYS_NO, SYS_STR);
+           		sleep (1);
+           		Exit_Process ();
+       		}
+       		else if (R_Cnt == 0)
+           		break;
+
+			memset(send_data, 0x00, sizeof(send_data));
+#if defined A7102
+			/* 시세 A3/B6/G7 만 송신 */
+			if (memcmp (R_Fmt[0].Data, "B601K", 5) == 0)				// 우선호가(채권)
+				memcpy(send_data, R_Fmt[0].Data, sizeof (CO_B601K));
+			else if (memcmp (R_Fmt[0].Data, "A301K", 5) == 0)			// 체결(채권)
+				memcpy(send_data, R_Fmt[0].Data, sizeof (CO_A301K));
+			else if (memcmp (R_Fmt[0].Data, "G701K", 5) == 0)			// 체결우선호가(채권)
+				memcpy(send_data, R_Fmt[0].Data, sizeof (CO_G701K));
+			else if (memcmp (R_Fmt[0].Data, "A601K", 5) == 0)			// 종목마감(채권)
+				memcpy(send_data, R_Fmt[0].Data, sizeof (CO_A601K));
+#elif defined A7103
+			if (memcmp (R_Fmt[0].Data, "M401K", 5) == 0)				// 전체장운영정보(채권)
+				memcpy(send_data, R_Fmt[0].Data, sizeof (CO_M401K));
+#elif defined A7201
+			if (memcmp (R_Fmt[0].Data, "A006F", 5) == 0)				// 종목정보(금융파생)
+				memcpy(send_data, R_Fmt[0].Data, sizeof (CO_A001F));
+			else if (memcmp (R_Fmt[0].Data, "H306F", 5) == 0)			// 정산가(금융파생)
+				memcpy(send_data, R_Fmt[0].Data, 173);
+#elif defined A7202
+			if (memcmp (R_Fmt[0].Data, "A306F", 5) == 0)				// 체결(금융파생)
+				memcpy(send_data, R_Fmt[0].Data, sizeof (CO_A301F));
+			else if (memcmp (R_Fmt[0].Data, "G706F", 5) == 0)			// 체결우선호가(금융파생)
+				memcpy(send_data, R_Fmt[0].Data, sizeof (CO_G701F));
+			else if (memcmp (R_Fmt[0].Data, "B606F", 5) == 0)			// 우선호가(금융파생)
+				memcpy(send_data, R_Fmt[0].Data, sizeof (CO_B601F));
+			else if (memcmp (R_Fmt[0].Data, "A606F", 5) == 0)			// 종목마감(금융파생)
+				memcpy(send_data, R_Fmt[0].Data, sizeof (CO_A601F));
+			else if (memcmp (R_Fmt[0].Data, "A706F", 5) == 0)			// 장운영TS(금융파생)
+				memcpy(send_data, R_Fmt[0].Data, sizeof (CO_A701A));
+			else if (memcmp (R_Fmt[0].Data, "R106F", 5) == 0)			// 장운영TS+호가(금융파생)
+				memcpy(send_data, R_Fmt[0].Data, sizeof (CO_R101F));
+#elif defined A7203
+			if (memcmp (R_Fmt[0].Data, "M406F", 5) == 0)				// 전체장운영정보(금융파생)
+				memcpy(send_data, R_Fmt[0].Data, sizeof (CO_M401F));
+#elif defined A7301
+			if (memcmp (R_Fmt[0].Data, "A006V", 5) == 0)				// 종목정보(금융파생야간)
+				memcpy(send_data, R_Fmt[0].Data, sizeof (CO_A001F));
+			else if (memcmp (R_Fmt[0].Data, "H306V", 5) == 0)			// 정산가(금융파생야간)
+				memcpy(send_data, R_Fmt[0].Data, 173);
+#elif defined A7302
+			if (memcmp (R_Fmt[0].Data, "A306V", 5) == 0)				// 체결(금융파생야간)
+				memcpy(send_data, R_Fmt[0].Data, sizeof (CO_A301F));
+			else if (memcmp (R_Fmt[0].Data, "G706V", 5) == 0)			// 체결우선호가(금융파생야간)
+				memcpy(send_data, R_Fmt[0].Data, sizeof (CO_G701F));
+			else if (memcmp (R_Fmt[0].Data, "B606V", 5) == 0)			// 우선호가(금융파생야간)
+				memcpy(send_data, R_Fmt[0].Data, sizeof (CO_B601F));
+			else if (memcmp (R_Fmt[0].Data, "A606V", 5) == 0)			// 종목마감(금융파생야간)
+				memcpy(send_data, R_Fmt[0].Data, sizeof (CO_A601F));
+			else if (memcmp (R_Fmt[0].Data, "A706V", 5) == 0)			// 장운영TS(금융파생야간)
+				memcpy(send_data, R_Fmt[0].Data, sizeof (CO_A701A));
+			else if (memcmp (R_Fmt[0].Data, "R106V", 5) == 0)			// 장운영TS+호가(금융파생야간)
+				memcpy(send_data, R_Fmt[0].Data, sizeof (CO_R101F));
+#elif defined A7303
+			if (memcmp (R_Fmt[0].Data, "M406V", 5) == 0)				// 전체장운영정보(금융파생야간)
+				memcpy(send_data, R_Fmt[0].Data, sizeof (CO_M401F));
+#endif
+			if (strlen(send_data) > 10)		// 처리할게 있으면.
+			{
+				len = sizeof (Svr_Addr[0]);
+
+				for (i = 0; i < Max_IP_Addr; i++)
+				{
+					rt = sendto (Sockfd[i], send_data, strlen(send_data),
+							0, (struct sockaddr *)&Svr_Addr[i], len);
+					if (rt < 0)
+					{
+						Log (UDP_FATAL, "Data Send Error [%d:%s] Sockfd [%d]", SYS_NO, SYS_STR, Sockfd[i]);
+						break;
+					}
+
+#if (1)
+/* Test Log	*/
+					Log (USR_OK, "UDP S [%.100s](%d)", send_data, strlen(send_data));
+#endif
+				}
+			}
+
+			Add_Count (PS_R_2, 1);
+		}
+
+		rt = Poll_File (DATA_TIME);
+		if (rt == 1)
+			Log (USR_OK, "poll timeout <%d>", INT_SEQ);
+		else if (rt == -1)
+			continue;
+	}
+
+	return;
+}	/* End of PA_7500_US ()	*/
+
+/*----------------------------------------------------------------------*/
+int     Socket_Connect (void)
+/*----------------------------------------------------------------------*/
+{
+	int     rt, i=0, j=0, bufflen, oplen;
+
+	bufflen = 1024 * 64;										/* 64k	*/
+	oplen   = sizeof(bufflen);
+
+	for (i = 0; i < Max_IP_Addr; i++)
+	{
+		Sockfd[i] = socket (AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+		if (Sockfd[i] < 0)
+		{
+			Log (UDP_FATAL, "Socket Open Error[%d:%s]", SYS_NO, SYS_STR);
+			return 0;
+		}
+		Svr_Addr[i].sin_family         = AF_INET;
+		Svr_Addr[i].sin_addr.s_addr    = inet_addr (&Svr_IP[20*i]);
+		Svr_Addr[i].sin_port           = htons (SVR_PORT_NO);
+
+		Log (UDP_OK, "socket %d created [%s:%d]", i, &Svr_IP[20*i], SVR_PORT_NO);
+
+		Clnt_Addr[i].sin_family       = AF_INET;
+		Clnt_Addr[i].sin_addr.s_addr  = htonl (INADDR_ANY);
+		Clnt_Addr[i].sin_port         = htons (0);
+
+		setsockopt (Sockfd[i],SOL_SOCKET,SO_SNDBUF, (void *)&bufflen, oplen);
+		setsockopt (Sockfd[i],SOL_SOCKET,SO_RCVBUF, (void *)&bufflen, oplen);
+
+#if (0)
+		setsockopt (Sockfd[i],SOL_SOCKET,SO_BROADCAST, (void *)&bufflen, oplen);
+#endif
+		rt = bind (Sockfd[i], (struct sockaddr *)&Clnt_Addr[i],
+				sizeof (Clnt_Addr[i]));
+		if (rt < 0)
+		{
+			Log (UDP_FATAL, "ELW Socket Bind Error[%d:%s]", SYS_NO, SYS_STR);
+			return (NOTOK);
+		}
+	}
+
+	return 1;
+}
+
+/*************************************************************************
+	Function		: . Microsec_Sleep
+	Parameters IN	: . msec	: sleep time (in microsec)
+	Parameters OUT	: .
+	Return Code		: . void
+	Comment			: . sleep for microsec
+*************************************************************************/
+void	Microsec_Sleep (int msec)
+{
+	int				rt;
+	struct timespec	ts;
+
+	ts.tv_sec = 0;
+	ts.tv_nsec = msec * 1000;
+
+	rt = nanosleep (&ts, NULL);
+
+	if (rt == -1)
+		Log (SYS_ERROR, "nanosleep fail {%d:%s}", SYS_NO, SYS_STR);
+
+	return;
+}	/* End of Microsec_Sleep ()	*/
+
+/*************************************************************************
+	End of program (pa_7500_us.c)
+*************************************************************************/ 

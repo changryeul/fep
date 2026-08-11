@@ -1,0 +1,165 @@
+##################################################################################################################
+# TEST CONFIG FILE
+##################################################################################################################
+# config file
+# name = value							# '=' name 변수에 value 값 입력
+# name = "this is" 'string'				# string = "", ''로 표시
+#										# 개행문자 혹은 comment까지 값으로 인식
+# 특수 문자  \a \b \f \n \r \t \v \\ \' \" \? \$ \xHEX \0OCT \DEC \BBIT
+# $ - 변수에 저장된 값을 가져온다. ( 1 환경변수,  2 cfg내 선언변수, 3 현재 section 선언변수)
+###################################################################################################################
+# name1		= value										# comment
+# name2		= "this is string"	' continue'				# "string" 'string'
+# name3		= "특수문자 \B110010 \x00000032 \062 \50" 	# comment
+# name4		= "환경변수 $HOME $name3"					# $환경변수, $변수
+# section												# section 
+# {
+#	s_m1	= sv1 
+#	s2		{m1=v1 s3{m2=v2}}							# deep section
+# }
+# [win_section]											# win section
+# win_name1	= win_value1
+###################################################################################################################
+# field format
+###################################################################################################################
+# 각 필드는 strtok로 불러오기 때문에 데이타가 없는 필드라도 
+#  구분자(:) 사이에 스페이스(' ')나 도트('.')가 꼭 있어야 한다.
+# field number
+# field name
+# x position
+# y position
+# view size
+# data size : malloc 되는 size
+# attribute 
+#    WIN_ATTR_BLACK              0
+#    WIN_ATTR_RED                1
+#    WIN_ATTR_GREEN              2
+#    WIN_ATTR_YELLOW             3
+#    WIN_ATTR_BLUE               4
+#    WIN_ATTR_MAGENTA            5
+#    WIN_ATTR_CYAN               6
+#    WIN_ATTR_WHITE              7
+#    WIN_ATTR_BRIGHT             8
+#         u    
+#         n    
+#      r  dcc  
+#      e ieord 
+#      v trnoeb
+#    fbebalcsll
+#    oaroliosei
+#    rcslinaetn
+#    ekedceldek
+#	:7010000000:
+#
+#
+# type : field type
+#        cp 
+#     s  oo 
+#     ei mi 
+#    mln pnt
+#    eepmaty
+#    ncuarep
+#    uttpere
+#	:0001000:
+#
+#   type = 
+#   INT            '1'
+#   FLOAT          '2'
+#   LONG           '3'
+#   LONG_LONG      '4'
+#   DOUBLE         '5'
+# format : data를 표시하기위한 printf 포맷
+# filler : 모양 맞추기 위한 field ...
+# initial data
+#	"base	:name		:pos_x	:pos_y	:"     - base 아래 필드의 상대 x,y 위치를 세팅: x + pos_x, y + pos_y
+#
+#	"line	:start		:s_y	:e_y	:gap"  - 라인 반복 시작 - s_y(start y),e_y(end y) name=name_y gap(증가값)
+#	"line	:end		:		:		:"     - 라인 반복 끝   
+#	-----> name=name_순번, id=(id*1000)+순번
+###################################################################################################################
+map
+{
+	win_size	= 0, 0, 120, 68							# x, y, size_x, size_y
+	timeout		= 250000								# select timeout (micro second)
+}
+
+screen
+{
+"                                                                                                                   "
+"+-------------------------------------------------------------------------------------------------------------------+"
+"|                                                                                                                   |"
+"|                                                                                                                   |"
+"|                                                                                                                   |"
+"|                                                                                                                   |"
+"|                                                                                                                   |"
+"|                                                                                                                   |"
+"|                                                                                                                   |"
+"|                                                                                                                   |"
+"|                                                                                                                   |"
+"|                                                                                                                   |"
+"|                                                                                                                   |"
+"|                                                                                                                   |"
+"|                                                                                                                   |"
+"|                                                                                                                   |"
+"|                                                                                                                   |"
+"|                                                                                                                   |"
+"|                                                                                                                   |"
+"|                                                                                                                   |"
+"|                                                                                                                   |"
+"|                                                                                                                   |"
+"|                                                                                                                   |"
+"|                                                                                                                   |"
+"|                                                                                                                   |"
+"|                                                                                                                   |"
+"|                                                                                                                   |"
+"|                                                                                                                   |"
+"|                                                                                                                   |"
+"|                                                                                                                   |"
+"|                                                                                                                   |"
+"|                                                                                                                   |"
+"|                                                                                                                   |"
+"|                                                                                                                   |"
+"|                                                                                                                   |"
+"|                                                                                                                   |"
+"+-------------------------------------------------------------------------------------------------------------------+"
+}
+
+field
+{
+# title bar
+#    no 	 name        x   y   vsz sz  attr     type   i          format	data
+#                                              u             
+#                                              n                 
+#                                           r  dcc       cp 
+#                                          be ieord   s  oo 
+#                                          rv trnoeb  ei mi 
+#                                        fbiebalcsll mln pnt
+#                                        oagroliosei eepmaty
+#                                        rchslinaetn ncuarep
+#                                        ektedceldek uttpere
+	"base	:name		:0	:0	:"
+	"00		:name		:2	:1	:120:150:60100000000:0001000:%-115s:	:  채권호가조성 전략 Monitor  :"
+	"00		:time		:96	:1	:20	:20	:70100000000:0000000:%s:		: :"
+
+    "base   :name       :0  :1  :"
+    "00     :name       :2  :2  :115:130:87010000000:0000000:%s:        : no po item_code    mode     stat     cnt     seq bi    time                        ab bb  전략번호  te  :"
+#    no      name        x   y   vsz sz  attr       type     format   data
+    "line   :start      :3  :35 :1 "
+    "100    :sis_no     :3  :0  :2  :20 :70000000000:0000001:%2d:    : :"
+    "101    :sis_pos    :6  :0  :2  :20 :70000000000:0000001:%2d:    : :"
+    "102    :sis_item   :9  :0  :12 :20 :70000000000:1000000:%.12s:  : :"
+    "103    :sis_mode   :22 :0  :8  :20 :70000000000:0000000:%s:     : :"
+    "104    :sis_stat   :31 :0  :4  :20 :70000000000:0000000:%s:     : :"
+    "105    :sis_cnt    :36 :0  :7  :20 :70000000000:0000001:%7d:    : :"
+    "106    :sis_seq    :44 :0  :7  :20 :70000000000:0000001:%7d:    : :"
+    "107    :sis_bi     :52 :0  :2  :20 :70000000000:0000000:%.2s:   : :"
+    "108    :sis_time   :58 :0  :26 :30 :70000000000:0000000:%26s:    : :"
+    "109    :sis_ab     :86 :0  :3  :20 :70000000000:0000001:%2d:    : :"
+    "110    :sis_bb     :89 :0  :3  :20 :70000000000:0000001:%2d:    : :"
+    "200    :sis_stg	:93 :0  :10 :20 :70000000000:0000000:%s:    : :"
+    "201    :sis_t		:103:0  :1	:20 :70000000000:1000000:%s:    :.:"
+    "202    :sis_v		:104:0  :1	:20 :70000000000:1000000:%s:    :.:"
+    "line   :end        :   :   :  "
+
+}
+

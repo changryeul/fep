@@ -1,0 +1,1884 @@
+#ifndef		__SHM_MEMORY_H
+#define		__SHM_MEMORY_H
+/*------------------------------------------------------------------------
+#	Module	: shared memory management
+#	File	: shm_memory.h
+------------------------------------------------------------------------*/
+
+/*------------------------------------------------------------------------
+  시장별 종목 건수
+------------------------------------------------------------------------*/
+/* 파생 */
+#define		ACC_NO_CNT			20						/* 사용계좌수	*/
+#define		ACC_NO_BASE			31						/* 계좌기준수	*/
+#define		FILE_NO_BASE		30						/* 파일기준수	*/
+
+/* 현물(ELW) */
+#define		ELW_ACC_NO_CNT		10						/* 사용계좌수	*/
+#define		ELW_ACC_NO_BASE		61						/* 계좌기준수	*/
+#define		ELW_FILE_NO_BASE	60						/* 파일기준수	*/
+
+#define		KOSPI200			200					/* Kospi200 종목수	*/
+#define		ELW_MAX_CNT			20000					/* ELW 종목수량	*/
+
+/*------------------------------------------------------------------------
+	Constants and Structures
+------------------------------------------------------------------------*/
+typedef struct {
+	u_short	port_no;				/* master port number				*/
+	u_short	service_port_no[10];	/* service port number				*/
+	int  	service_count[10];		/* service count					*/
+	u_char	ip_addr[4];				/* ip address						*/
+	u_char	port_status;			/* port status (0:off 1:on)			*/
+	u_char	service_status[10];		/* service status (0:off 1:on 9:N/A)*/
+	char	tcp_info[40]; 			/* tcp1 information					*/
+}	TCP1_INFO;	/* TCP/IP 1 (TCP1)	*/
+
+typedef struct {
+	short	dup_id;					/* line distinction (to avoid dup)	*/
+	u_short	port_no;				/* port number						*/
+	u_char	ip_addr[4]; 			/* ip address						*/
+	u_char	proc_status;			/* process status (0:init/off 1:on)	*/
+	u_char	line_status;			/* line status (0:off 1:on)			*/
+	u_char	network_status;	/* network status (0:init/off 1:on 2:end)	*/
+	char	tcp_info[40]; 			/* tcp2 information					*/
+}	TCP2_INFO;	/* TCP/IP 2 (TCP2)	*/
+
+typedef struct {
+	short	dup_id;					/* line distinction (to avoid dup)	*/
+	u_short	port[20];				/* server port no					*/
+	u_char	ip_addr[20][4]; 		/* server ip address				*/
+	u_char	port_status;			/* port status (0:off 1:on)			*/
+	u_char	service_status;		  	/* 0:off 1:on						*/
+	char	info[40];				/* infomation						*/
+}	UDPIP_INFO;	/* UDP/IP (UDPIP)	*/
+
+typedef struct {
+	char	file_name[20];			/* file name						*/
+	int 	w_cnt[2];				/* write count						*/
+	int 	r_cnt[9];				/* read count						*/
+	u_char	fifo_count;				/* number of fifo in use (1 ~ 9)	*/
+	short	record_size;			/* record size						*/
+	char	file_info[40];			/* file information					*/
+}	FILE_INFO;	/* File (FILEM)	*/
+
+typedef struct {
+	char	data_name[12];			/* data SHM base name				*/
+	char	key_info[12];	/* base key(4)+','+section(1)+','+format(1)	*/
+	u_char	fifo_count;				/* number of fifo in use (1 ~ 9)	*/
+	short	data_size;				/* data size						*/
+	int		max_rec;				/* max record						*/
+	int		offset;					/* offset							*/
+	int 	w_cnt[2];				/* write count						*/
+	int 	r_cnt[9];				/* read count						*/
+	int 	sm_r_cnt;				/* sync manager read count			*/
+	char	info[40];				/* information						*/
+}	DSHM_INFO;	/* data SHM (DSHM)	*/
+
+#if defined ISAM_INCL
+typedef struct {
+	char	file_name[20];			/* file name						*/
+	short	key_size;			  	/* key size							*/
+	short	record_size;			/* record size						*/
+	char	file_info[40];			/* file information					*/
+}	CISAM_INFO;	/* C-ISAM (CISAM)	*/
+#endif
+
+typedef struct {
+	char	tr[6];
+	short	length;
+	short	queue;
+	int		count;
+	int		dd_count;
+	int		as_count;
+	int		mp_count;
+	int		ms_count;
+	int		us_count;
+	int		ur_count;
+	int		fo_count;
+	char	tr_info[40];			/* sise tr infomation				*/
+}	SISETR_INFO;	/* sise TR (SISETR)	*/
+
+typedef	union {
+	struct {
+		u_char	line_gubun;	/* line type (1,3...:primary 2,4...:backup)	*/
+		u_char	port_type;		/* port type (0:master 1~9:service)		*/
+		u_char	network_status; /* network status(0:init/off 1:on 2:end)*/
+	}		t1;						/* tcp1								*/
+	struct {
+		u_char	line_gubun;		/* line type (0:primary 1:backup)		*/
+		u_char	connect_status;	/* connect status (0:off 1:connected)	*/
+		u_short	l[2];			/* line									*/
+	}		t2;						/* tcp2								*/
+	short	u;					/* udpip port index						*/
+}	LINE_INFO;	/* Line	*/
+
+typedef struct {
+	int 		process_no; 		/* process number (pid)				*/
+	char		process_path[100];	/* process path						*/
+	char		process_id[20]; 	/* process id (name)				*/
+	u_char		process_status; /*process status(1:run 2:stop 9:not run)*/
+	char		process_info[40];	/* process information				*/
+	int 		in_FIFO_fd[3];	 	/* fd of in-data FIFO				*/
+	u_char		start_status;/*start status(0:init 1:start 2:end 3:stop)*/
+	short		timeout;			/* timeout							*/
+	short		delay;				/* PS delay time (millisec)			*/
+	char		start_time[6];		/* process start time (hhmm)		*/
+	char		end_time[6];		/* process end time (hhmm)			*/
+	u_char		backup;				/* backup (0:no 1:yes)				*/
+	u_char		dr_flag;			/* flag of dr system change			*/
+					/* 0:init 1:make dr data 2:make end 3:end dr change	*/
+	char		process_type[4];	/* process type (PS, TR2, DD, ...)	*/
+	int 		if_seq; 			/* interface sequence number		*/
+	int 		counter_seq; 		/* counter sequence (for DR use)	*/
+	u_char		type;		/* type (1:mp 2:dd 3:x.25 4:tcp1 5:tcp2)	*/
+	LINE_INFO	l;					/* line information					*/
+	short		in_f[3];			/* input file position				*/
+	short		out_f[99]; 			/* output file position				*/
+	short		in_d[3];			/* input data SHM position			*/
+	short		out_d[99]; 			/* output data SHM position			*/
+#if defined ISAM_INCL
+	short		in_c[3];			/* input c-isam file position		*/
+	short		out_c[3]; 			/* output c-isam file position		*/
+#endif
+	char		fifo_f[3][20];		/* fifo file name					*/
+	char		date[10];			/* business date (yyyymmdd)			*/
+	char		tr_s_tm[6];			/* first transaction time (hhmmss)	*/
+	char		tr_e_tm[6];			/* last transaction time (hhmmss)	*/
+	char		error_cd[4];		/* last error code					*/
+	char		error_tm[6];		/* last error time (hhmmss)			*/
+	char		ip[20];				/* client IP (TCP1)					*/
+    char        last_tr[11];        /* Last Send,Recv TR Code Copy      */
+    char        logon_id[10];       /* Logon ID                         */
+    char        logon_pw[30];       /* Logon Password                   */
+    short       session_stat;       /* Session, En/Decrypt Routine Status   */
+                                    /* 0 : Nomal                        */
+                                    /* 2 : Session Key X, En/Decrypt:X  */
+	u_short		port;				/* client port (TCP1)				*/
+	u_char		data_flag;			/* use SHM data buffer (0:no 1:yes)	*/
+	u_char		data_cnt;			/* number of SHM data buffer		*/
+	char 		*data;				/* SHM data							*/
+}	PROCESS_INFO;	/* Process (PROC)	*/
+
+typedef struct {
+	int 	process_no; 			/* process number (pid)				*/
+	char	process_id[20]; 		/* process id (name)				*/
+	char	start_time[6];			/* process start time (hhmm)		*/
+	char	end_time[6];			/* process end time (hhmm)			*/
+	u_char	system_status;			/* system status (0:off 1:on)		*/
+	u_char	process_status;			/* running status					*/
+									/* (0:not run 1:run	2:end 3:stop)	*/
+	u_char	check_status; 			/* check status (1:SHM re-created)	*/
+	char	start_FIFO_name[20];	/* start FIFO (e.g. ja_FIFO)		*/
+	char	exit_FIFO_name[20];		/* exit FIFO (e.g. ja_FIFO_exit)	*/
+	char	daemon_FIFO_name[20];	/* daemon FIFO (e.g. ja_FIFO_ctrl)	*/
+	short	process_count;			/* process count					*/
+	short	file_count; 			/* file count						*/
+	short	dshm_count; 			/* data SHM count					*/
+#if defined ISAM_INCL
+	short	cisam_count;			/* cisam count						*/
+#endif
+	short	tcp1_count;				/* tcp1 count						*/
+	short	tcp2_count;				/* tcp2 count						*/
+	short  	udpip_count;			/* udpip count						*/
+	short	sisetr_count;			/* sisetr count						*/
+	short	accno_count;			/* account count					*/
+	short	data_count;	/* number of processes to use SHM data buffer	*/
+	char	date[10];				/* work date (yyyymmdd)				*/
+	u_char	date_flag;				/* work date flag (아래 참조)		*/
+	u_char	compact_days;			/* compact days						*/
+	u_char	shm_log;				/* 1:use SHM (delayed) log			*/
+}	ALL_DAEMON_INFO;	/* All Daemon (INFO)	*/
+
+/*----------------------------------------------------------------------*/
+/* date_flag (1:D~D 2:D~D+1 3:D+1~D+1 4:D-1~D 5:D-1~D-1)				*/
+/*																		*/
+/* D = work date														*/
+/*   00:00              00:00               00:00               00:00	*/
+/*     |     < D - 1 >    |       < D >       |     < D + 1 >     |  	*/
+/* ----+------------------+-------------------+-------------------+----	*/
+/*                          |_______1_______|							*/
+/*                |_______4_______|   |_______2_______|					*/
+/*       |_______5_______|                      |_______3_______|		*/
+/*----------------------------------------------------------------------*/
+typedef struct {
+	int 	process_no; 			/* process number (pid)				*/
+	char	process_path[100];		/* process path						*/
+	char	process_id[20]; 		/* process id						*/
+	char	start_time[6];			/* process start time (hhmm)		*/
+	char	end_time[6];			/* process end time (hhmm)			*/
+	u_char	system_status; 			/* system mode (0:off 1:on)			*/
+	u_char	process_status;			/* running status					*/
+									/* (0:not run 1:run	2:end 3:stop)	*/
+	char	start_FIFO_name[20];	/* start FIFO name					*/
+	char	exit_FIFO_name[20];		/* exit FIFO name					*/
+	char	daemon_FIFO_name[20];	/* daemon FIFO name					*/
+	short	process_count;			/* process count					*/
+	short	p_count;				/* number of processes				*/
+	size_t	Shmsize;				/* process SHM size					*/
+	short	file_count; 			/* file count						*/
+	short	f_count;				/* number of files					*/
+	size_t	FShmsize;				/* file SHM size					*/
+	short	dshm_count; 			/* data SHM count					*/
+	short	d_count;				/* number of data SHM				*/
+	size_t	DShmsize;				/* data SHM size					*/
+#if defined ISAM_INCL
+	short	cisam_count; 			/* cisam count						*/
+	short	c_count;				/* number of files					*/
+	size_t	CShmsize;				/* cisam file SHM size				*/
+#endif
+	short	tcp1_count;				/* tcp1 count						*/
+	short	t1_count;				/* number of tcp1					*/
+	size_t	T1Shmsize;				/* tcp1 SHM size					*/
+	short	tcp2_count;				/* tcp2 count						*/
+	short	t2_count;				/* number of tcp2					*/
+	size_t	T2Shmsize;				/* tcp2 SHM size					*/
+	short	udpip_count;			/* udpip count						*/
+	short	u_count;				/* number of udpip					*/
+	size_t	UShmsize;				/* udpip SHM size					*/
+	short	sisetr_count;			/* sisetr count						*/
+	short	s_count;				/* number of sisetr					*/
+	size_t	SShmsize;				/* sisetr SHM size					*/
+	short	accno_count;			/* account count					*/
+	short	a_count;				/* number of account				*/
+	size_t	AShmsize;				/* account SHM size					*/
+	char	process_info[40];		/* daemon information				*/
+	short	data_count;	/* number of processes to use SHM data buffer	*/
+	char	date[10];				/* work date (yyyymmdd)				*/
+	u_char	date_flag;				/* work date flag (위 참조)			*/
+	u_char	compact_days;			/* compact days						*/
+	u_char	shm_log;				/* 1:use SHM (delayed) log			*/
+	int		w_cnt;					/* log write count					*/
+	int		r_cnt;					/* log read count					*/
+}	SUB_DAEMON_INFO;	/* Sub Daemon (DAEMON)	*/
+
+/*************************************************************************
+	계좌정보
+*************************************************************************/
+typedef struct
+{
+	char	aptype_code[2];			/* ApType의 대표 값 (2)				*/
+	char	acc_no[9];				/* 계좌번호 (9)						*/
+	char	login_pwd[8];			/* Login 비밀번호					*/
+	char	athrty[3];	/* 사용자권한(D:Dealer M:Manager)+ApTypeCode(2)	*/
+	char	ip_addr[12];			/* 자동주문송신시사용				*/
+	char	auto_man_cnt[22];		/* 자동주문권한						*/
+	char	auto_use_cnt[22];		/* 자동주문사용현황					*/
+
+	int		js_order_no_band;		/* 자동주문용지수선물번호			*/
+	int		js_order_no_band_b;		/* 자동주문용지수선물번호Client통보	*/
+	int		acc_order_no;			/* 계좌주문번호최종값				*/
+									/* Login시 OutPut값으로 활용		*/
+
+	int		acc_risk_max;			/* 계좌별 손실 한도액				*/
+	int		js_order_maxcnt;		/* 선물최대수량						*/
+	int		jo_order_maxcnt;		/* 옵션최대수량						*/
+/* MM 200809 */
+	int		medo_man_cnt;			/* 매도수량 관리용 지정	수량		*/
+	int		medo_use_cnt;			/* 매도수량 사용자 사용 수량		*/
+	int		mesu_man_cnt;			/* 매수수량 관리용 지정	수량		*/
+	int		mesu_use_cnt;			/* 매수수량 사용자 사용 수량		*/
+
+	int		medo_man_money;			/* 매도 총 관리용 보유 금액(단위 백원)*/
+	int		medo_use_money;			/* 매도 총 사용자 보유 금액(단위 백원)*/
+	int		mesu_man_money;			/* 매수 총 관리용 보유 금액(단위 백원)*/
+	int		mesu_use_money;			/* 매수 총 사용자 보유 금액(단위 백원)*/
+
+	int		over_acc_ver_prft;		/* OverNight 보유종목의 평가손익	*/
+	int		over_medo_cnt;			/* OverNight 매도 Count				*/
+	int		over_mesu_cnt;			/* OverNight 매수 Count				*/
+	int		over_medo_money;		/* OverNight 매수 보유금액(단위 백원)*/
+	int		over_mesu_money;		/* OverNight 매수 보유금액(단위 백원)*/
+/* MM 200809 */
+
+	int		acc_real_prft;			/* 실질순익(부호있음)				*/
+	int		acc_fee;				/* 계좌수수료						*/
+	int		acc_ver_prft;			/* 평가손익(부호있음)				*/
+					/* Curr의 현재가-이전현재가의 계산된 값만 증감처리  */
+
+	int		risk_flag;	/* 계좌별한도발생여부이력('0':초기값 '1':발생)	*/
+/* MM 200809 */
+	int		etc_risk_flag;			/* 기타 한도 Check 처리(초기값:'0')	*/
+									/* 1:매도수량, 2:매수수량			*/
+									/* 3:매도금액, 4:매수금액			*/
+/* MM 200809 */
+/* 2010 4월 미체결내역관리 추가 */
+	int		miche_cnt;				/* 미체결내역 건수(계좌별)			*/
+/* 2010 4월 미체결내역관리 추가 */
+	char	filler[2];				/* 예비								*/
+	char	info[40];				/* information						*/
+}   ACCNO_INFO;	/* 계좌정보	*/
+
+typedef struct {
+	int				start_FIFO_fd;	/* file descriptor of start FIFO	*/
+	int				exit_FIFO_fd;	/* file descriptor of exit FIFO		*/
+	int				daemon_FIFO_fd;	/* file descriptor of daemon FIFO	*/
+	SUB_DAEMON_INFO	*Daemon;		/* address of daemon SHM			*/
+	PROCESS_INFO	*Proc;			/* address of process SHM			*/
+	FILE_INFO		*File;			/* address of file SHM				*/
+	DSHM_INFO		*DShm;			/* address of data SHM				*/
+#if defined ISAM_INCL
+	CISAM_INFO		*Cisam;			/* address of cisam SHM				*/
+#endif
+	TCP1_INFO		*Tcp1;			/* address of tcp1 SHM				*/
+	TCP2_INFO		*Tcp2;			/* address of tcp2 SHM				*/
+	UDPIP_INFO		*Udpip;			/* address of udpip SHM				*/
+	SISETR_INFO		*Sisetr;		/* address of sisetr SHM			*/
+	ACCNO_INFO		*Accno;			/* address of account SHM			*/
+}	SHM_MEMORY;	/* Shared Memory	*/
+
+/*************************************************************************
+	유가증권 지수
+*************************************************************************/
+/* A0011 : 유가증권 종목배치 ********************************************/
+/* A0012 : 코스닥   종목배치 ********************************************/
+typedef struct
+{
+	char	tr_gbn[5];					/* A0011(유가증권), A0012(코스닥) */
+	char	stock_code[12];         	/* 종목코드 (국제표준코드)      */
+	char    seq_no[8];                  /* 일련번호                     */
+	char    compress_code[9];           /* 단축코드:'XXXXXX   '         */
+	char    name[40];                   /* 종목한글약명                 */
+	char    english_name[40];           /* 종목영문약명                 */
+	char    sales_date[8];              /* 영업일자                     */
+	char    group_no[5];                /* 정보분배그룹번호             */
+	char    group_id[2];                /* 증권그룹ID                   */
+	char    trading_unit[1];            /* 단위매매체결여부             */
+	char    dividend_stock[2];          /* 락구분                       */
+	char    list_price_gubun[2];        /* 액면가변경구분               */
+	char    open_st_price[1];           /* 시가기준가격종목여부         */
+	char    revaluation_gubun[2];       /* 재평가종목사유코드           */
+	char    st_price_gubun[1];          /* 기준가격변경여부             */
+	char    option_cloase_gubun[1];     /* 임의종료가능여부             */
+	char    alram_notice_gubun[1];      /* 시장경보위험예고여부         */
+	char    alram_gubun[2];             /* 시장경보구분코드             */
+	char    governance_gubun[1];        /* 지배구조우량여부             */
+	char    admin_gubun[1];             /* 관리종목여부                 */
+	char    unfaithful_notice[1];       /* 불성실공시지정여부           */
+	char    backdoor_listing[1];        /* 우회상장여부                 */
+	char    trade_stop[1];              /* 거래정지여부                 */
+	char    index_upjong_1[3];          /* 지수업종대분류               */
+	char    index_upjong_2[3];          /* 지수업종중분류               */
+	char    index_upjong_3[3];          /* 지수업종소분류               */
+	char    sanup_upjong[6];            /* 표준산업코드                 */
+	char    kospi200_upjong[1];         /* KOSPI200세부업종             */
+	char    market_capital[1];          /* 시가총액규모코드             */
+	char    gubun_1[1];                 /* (유가)제조업여부             */
+										/* (코스닥)중소기업여부         */
+	char    krx100_stock[1];            /* KRX100종목여부               */
+	char    gubun_2[1];                 /* (유가)배당지수종목여부       */
+										/* (코스닥)KOSTAR지수종목여부   */
+	char    gubun_3[1];                 /* (유가)지배구조지수종목여부   */
+										/* (코스닥)벤처기업여부         */
+	char    investment_agency[2];       /* 투자기구구분코드             */
+	char    kospi_gubun[1];             /* KOSPI여부                    */
+	char    kospi100_gubun[1];          /* KOSPI100여부                 */
+	char    kospi50_gubun[1];           /* KOSPI50여부                  */
+	char    krx_sector_car[1];          /* KRX섹터지수자동차여부        */
+	char    krx_sector_semicon[1];      /* KRX섹터지수반도체여부        */
+	char    krx_sector_bio[1];          /* KRX섹터지수바이오여부        */
+	char    krx_sector_finance[1];      /* KRX섹터지수금융여부          */
+	char    krx_sector_inform[1];       /* KRX섹터지수정보통신여부      */
+	char    krx_sector_energy[1];       /* KRX섹터지수에너지화학여부    */
+	char    krx_sector_steel[1];        /* KRX섹터지수철강여부          */
+	char    krx_sector_consumer[1];     /* KRX섹터지수필수소비재여부    */
+	char    krx_sector_media[1];        /* KRX섹터지수미디어통신여부    */
+	char    krx_sector_construct[1];    /* KRX섹터지수건설여부          */
+	char    krx_sector_service[1];      /* KRX섹터지수금융서비스여부    */
+	char    krx_sector_stock[1];        /* KRX섹터지수증권여부          */
+	char    krx_sector_ship[1];         /* KRX섹터지수선박여부          */
+	char    standard_price[9];          /* 기준가                       */
+	char    prev_cprc_gbn[1];           /* 전일종가구분코드             */
+	char    prev_cprc[9];               /* 전일종가                     */
+	char    prev_trading_shares[12];    /* 전일거래량                   */
+	char    prev_trading_amt[18];       /* 전일거래대금                 */
+	char    high_limit_price[9];        /* 상한가                       */
+	char    low_limit_price[9];         /* 하한가                       */
+	char    replace_price[9];           /* 대용가격                     */
+	char    list_price[12];             /* 액면가 9(9)V9(3)             */
+	char    issue_price[9];             /* 발행가격                     */
+	char    list_date[8];               /* 상장일자                     */
+	char    listed_stock[15];           /* 상장주식수                   */
+	char    clear_gubun[1];             /* 정리매매여부                 */
+	char    eps_sign[1];                /* EPS부호                      */
+	char    eps[9];                     /* EPS                          */
+	char    per_sign[1];                /* PER부호                      */
+	char    per[6];                     /* PER 9(4)V9(2)                */
+	char    eps_except[1];              /* EPS산출제외여부              */
+	char    bps_sign[1];                /* BPS부호                      */
+	char    bps[9];                     /* BPS                          */
+	char    pbr_sign[1];                /* PBR부호                      */
+	char    pbr[6];                     /* PBR 9(4)V9(2)                */
+	char    bps_except[1];              /* BPS산출제외여부              */
+	char    loss_gubun[1];              /* 결손여부                     */
+	char    dividend[8];                /* 주당배당금                   */
+	char    dividend_except[1];         /* 주당배당금산출제외여부       */
+	char    dividend_rate[7];           /* 배당수익율                   */
+	char    exist_start_date[8];        /* 존립개시일자                 */
+	char    exist_end_date[8];          /* 존립종료일자                 */
+	char    use_start_date[8];          /* 행사기간개시일자             */
+	char    use_end_date[8];            /* 행사기간종료일자             */
+	char    striking_price[12];         /* ELW신주인수권증권행사가격    */
+	char    capital[21];                /* 자본금 9(18)V9(3)            */
+	char    credit_order[1];            /* 신용주문가능여부             */
+	char    limits_order[1];            /* 지정가호가조건구분코드       */
+	char    market_order[1];            /* 시장가호가조건구분코드       */
+	char    condition_order[1];         /* 조건부지정가호가조건구분코드 */
+	char    advantage_order[1];         /* 최유리지정가호가조건구분코드 */
+	char    first_order[1];             /* 최우선지정가호가조건구분코드 */
+	char    increase_gubun[2];          /* 증자구분코드                 */
+	char    preference_shares[1];       /* 우선주구분                   */
+	char    national_stock[1];          /* 국민주여부                   */
+	char    evlt_bid[9];                /* 평가가격                     */
+	char    low_bid[9];                 /* 최저호가가격                 */
+	char    high_bid[9];                /* 최고호가가격                 */
+	char    term_qty_unit[5];           /* 정규장매매수량단위           */
+	char    otm_bns_qty_unit[5];        /* 시간외매매수량단위           */
+	char    reits_gubun[1];             /* 리츠종류코드                 */
+	char    obj_stock[12];              /* 목적주권종목코드             */
+	char    etf_market_gubun[1];        /* ETF대상지수소속시장구분코드  */
+	char    eft_idx[3];                 /* ETF대상지수업종코드          */
+	char    etf_float_stock[10];        /* ETF유통주식수                */
+	char    etf_float_net_asset[15];    /* ETF유통순자산총액            */
+	char    etf_net_asset[15];          /* ETF순자산총액                */
+	char    etf_nav[9];                 /* ETF최종순자산가치            */
+	char    etf_for_float_net_asset[15];/* ETF외화유통순자산총액        */
+	char    etf_foreign_net_asset[15];  /* ETF외화순자산총액            */
+	char    etf_fore_nav[9];            /* ETF외화최종순자산가치        */
+	char    etf_gubun[1];               /* ETF구분코드                  */
+	char    etf_cu_unit[8];             /* ETFCU수량                    */
+	char    eft_stock_cnt[4];           /* ETF구성종목수                */
+	char    etf_idx_rate[11];           /* ETF대상지수대비비율          */
+	char    currency_iso[3];            /* 통화ISO코드                  */
+	char    nation[3];                  /* 국가코드                     */
+	char    lp_order[1];                /* LP주문가능여부               */
+	char    otm_trade[1];               /* 시간외매매가능여부           */
+	char    before_otm_close_price[1];  /* 장개시전시간외종가여부       */
+	char    before_otm_block_trade[1];  /* 장개시전시간외대량매매가능   */
+	char    before_otm_basket_trade[1]; /* 장개시전시간외바스켓가능여부 */
+	char    expect_price_open[1];       /* 예상체결가공개여부           */
+	char    short_stock_selling[1];     /* 공매도가능여부               */
+	char	etf_trace_under_asset[3];   /* ETF추척기초자산단위코드      */
+	char	etf_trace_earn_rate_sign[1];/* ETF추척수익률배수부호        */
+	char	etf_trace_earn_rate[11];    /* ETF추척수익률배수            */
+	char	etf_derivatives[1];         /* ETF장외파생상품편입여부      */
+	char	etf_trace_under_asset_1[1]; /* ETF추척기초자산국내외구분코드*/
+	char	sri_flag[1]; 				/* SRI지수여부					*/
+	char	etf_ref_idx_market_gubun[1];/* ETF참고지수소속시장구분코드	*/
+	char	etf_ref_idx[3]; 			/* ETF참고지수업종코드			*/
+	char    krx_sector_insurance[1];    /* KRX섹터지수보험여부          */
+	char    krx_sector_transport[1];    /* KRX섹터지수운송여부          */
+	char    regulation_s_flag[1];       /* Regulation S적용종목여부     */
+	char    spac_flag[1];               /* 기업인수목적회사여부         */
+    char    pdy_asm_std_price[9];       /* 전일과표기준가격             */
+    char    pdy_allotment_asm_std_price[9];/* 전일배당전과표기준가격    */
+    char    pdy_cash_dividend[12];      /* 전일현금배당금액             */
+    char    tdy_asm_std_price[9];       /* 전전일과표기준가격           */
+    char    asm_type[1];                /* 과세유형코드                 */
+    char    replace_price_rate[11];     /* 대용가격사정비율             */
+	char    filler[108];                /* Filler                       */
+}   STOCK_A0;
+
+/************************************************************************/
+/* A1011 : 유가증권 ELW 종목배치 ****************************************/
+/************************************************************************/
+typedef struct
+{
+	char	tr_gbn[5];					/* A1011(ELW)					*/
+	char	stock_code[12];         	/* 종목코드 (국제표준코드)      */
+    char    seq_no[8];                  /* 일련번호                     */
+    char    elw_entry_name[80];         /* ELW발행시장참가자한글명      */
+    char    elw_entry_eng_name[80];     /* ELW발행시장참가자영문명      */
+    char    elw_entry_no[5];            /* ELW발행시장참가자번호        */
+    struct ARRAY1{
+        char   elw_under_asset[12];     /* ELW기초자산종목코드          */
+    } under[5];
+    struct ARRAY2{
+        char   elw_under_asset_rate[12];/* ELW기초자산구성비            */
+    } rate[5];
+    char    elw_market_gubun[1];        /* ELW기초자산시장구분코드      */
+    char    elw_idx[3];                 /* ETF지수업종코드              */
+    char    elw_right[1];               /* ELW권리유형코드              */
+    char    elw_right_use_code[1];      /* ELW권리행사유형코드          */
+    char    elw_last_payment[1];        /* ELW최종결제방법코드          */
+    char    elw_last_trade_date[8];     /* ELW최종거래일자              */
+    char    elw_payment_date[8];        /* ELW지급일자                  */
+    char    elw_under_asset_price[12];  /* ELW기초자산기초가격          */
+    char    elw_right_use[200];         /* ELW권리행사내용              */
+    char    elw_conversion_rate[12];    /* ELW전환비율 9(6)V9(6)        */
+    char    elw_price_up_rate[8];       /* ELW가격상승참가율 9(6)V9(2)  */
+    char    elw_compensation_rate[8];   /* ELW보상율율 9(6)V9(2)        */
+    char    elw_allowance[21];          /* ELW확정지급액 9(18)V9(3)     */
+    char    elw_payment_name[80];       /* ELW지급대리인명              */
+    char    elw_expiration_value[200];  /* ELW만기평가가격방식          */
+    char    elw_different_option[1];    /* ELW이색옵션구분코드          */
+    char    elw_lp_holding_cnt[15];     /* ELW LP보유수량               */
+    char    filler[9];                  /* FILLER                       */
+}   STOCK_A1;
+/* A1011 : 유가증권 ELW 종목배치 ****************************************/
+
+/************************************************************************/
+/* A3011 : 유가증권 체결 ************************************************/
+/* A3021 : ELW 체결 *****************************************************/
+/* A3012 : 코스닥   체결 ************************************************/
+/************************************************************************/
+typedef struct
+{
+	char	tr_gbn[5];					/* A3011(유가증권), A3012(코스닥) */
+	char	stock_code[12];         	/* 종목코드 (국제표준코드)      */
+	char	formal_otm_gubun[1];        /* 정규시간외구분코드           */
+	char	up_down_flag[1];            /* 전일대비구분                 */
+	char	raising_differ[9];          /* 전일대비                     */
+	char	current_price[9];           /* 체결가격                     */
+	char	trade_qty[10];              /* 체결수량                     */
+	char	trade_code[2];              /* 체결유형코드                 */
+	char	opening_price[9];           /* 시가                         */
+	char	highest_price[9];           /* 고가                         */
+	char	lowest_price[9];            /* 저가                         */
+	char	accum_trade_qty[12];        /* 누적체결수량 (단위:1주)      */
+	char	accum_trade_amt[18];        /* 누적거래대금 (단위:1원)      */
+	char	trade_gubun[1];             /* 최종매도매수구분코드         */
+	char	contract_price_agree[1];    /* 체결가와1호가일치여부        */
+	char	contract_time[6];           /* 체결시각                     */
+	char	lp_holding_cnt[15];         /* LP보유수량                   */
+    char    best_offer[9];              /* 매도1호가                    */
+    char    best_bid[9];                /* 매수1호가                    */
+    char    filler[2];                  /* FILLER                       */
+}   STOCK_A3;
+/* A3011 : 유가증권 체결 ************************************************/
+/* A3012 : 코스닥   체결 ************************************************/
+
+/************************************************************************/
+/* B7011 : 유가증권 ELW 호가잔량 ****************************************/
+/************************************************************************/
+typedef struct
+{
+	char	tr_gbn[5];					/* B7011(ELW)					*/
+	char	stock_code[12];         	/* 종목코드 (국제표준코드)      */
+	char    accum_trade_qty[12];        /* 누적체결수량 (단위:주)       */
+	struct  ELW_ARRY
+	{
+		char    offer[9];               /* 매도호가 (단위:원)           */
+		char    bid[9];                 /* 매수호가 (단위:원)           */
+		char    offer_qty[12];          /* 매도호가잔량 (단위:주)       */
+		char    bid_qty[12];            /* 매수호가잔량 (단위:주)       */
+		char    LP_offer_qty[12];       /* LP 매도호가잔량 (단위:주)    */
+		char    LP_bid_qty[12];         /* LP 매수호가잔량 (단위:주)    */
+	}	hoga[10];
+	char    tot_offer_qty[12];          /* 총매도호가잔량 (단위:주)     */
+	char    tot_bid_qty[12];            /* 총매수호가잔량 (단위:주)     */
+	char	filler1[12];                /* FILLER                       */
+	char	filler2[12];                /* FILLER                       */
+	char	after_otm_offer_qty[12];    /* 장종료후시간외매도총호가잔량 */
+	char	after_otm_bid_qty[12];      /* 장종료후시간외매수총호가잔량 */
+	char    gbn[2];                     /* 장상태구분                   */
+	char    otm_gbn[1];                 /* 정규시간외구분코드           */
+	char    expect_price[9];            /* 예상체결가격                 */
+	char    expect_qty[12];             /* 예상체결수량                 */
+	char    filler[4];                  /* FILLER                       */
+}   STOCK_B7;
+/* B7011 : 유가증권 ELW 호가잔량 ****************************************/
+
+typedef struct
+{
+	char    filler[1];                  /* 예비1                        */
+	int     check_cnt;                  /* 보유여부 확인(평가금액용)    */
+	int     acc_ver_prft[ACC_NO_CNT];   /* 종목별 평가손익(부호있음)    */
+                                        /* 1000을 나눈값으로 보관       */
+	int     getcnt[ACC_NO_CNT];         /* ELW 보유종목수량(부호있음) */
+	int     get_avr_price_jisu[ACC_NO_CNT];
+                                        /* ELW 종목별 평균매입단가 */
+                                        /* 지수 6자리만 보유            */
+                                        /* middle값, 평가손익과 같은 단위 */
+	int     get_avr_price_sosu[ACC_NO_CNT]; /* ELW 종목별 평균매입단가 */
+                                        /* 소숫점 8자리임 v99999999     */
+	int     tick_cnt;                   /* 60초간 tick count            */
+	int     uptick_cnt;                 /* 60초간 uptick count          */
+	int     downtick_cnt;               /* 60초간 downtick count        */
+/*  시세 Auto 주문 Setting Values   */
+	int     auto_run;                   /* 0:종료, 1:기동               */
+	int     auto_seq;                   /* elw 주문 Seq                 */
+	int     auto_socket_chk;            /* 후처리 주문 Check Process no */
+	int     auto_write;                 /* 미리 저장할 곳을 할당해 둔곳 */
+	char    auto_set[40];               /* 자동주문 설정값              */
+                                        /* 0 : 1~6, 콜풋 구분           */
+                                        /* 1 : 0~7, 8가지 경우의수      */
+/*  시세 Auto 주문 Setting Values   */
+	char    filler1[1];                 /* 예비1                        */
+
+    char    tr_gbn[5];                  /* A3011(유가증권), A3012(코스닥) */
+    char    stock_code[12];             /* 종목코드 (국제표준코드)      */
+
+    char    formal_otm_gubun[1];        /* 정규시간외구분코드           */
+    char    up_down_flag[1];            /* 전일대비구분                 */
+    char    raising_differ[9];          /* 전일대비                     */
+    char    current_price[9];           /* 체결가격                     */
+    char    trade_qty[10];              /* 체결수량                     */
+    char    trade_code[2];              /* 체결유형코드                 */
+    char    opening_price[9];           /* 시가                         */
+    char    highest_price[9];           /* 고가                         */
+    char    lowest_price[9];            /* 저가                         */
+    char    accum_trade_qty[12];        /* 누적체결수량 (단위:1주)      */
+    char    accum_trade_amt[18];        /* 누적거래대금 (단위:1원)      */
+    char    trade_gubun[1];             /* 최종매도매수구분코드         */
+    char    contract_price_agree[1];    /* 체결가와1호가일치여부        */
+    char    contract_time[6];           /* 체결시각                     */
+    char    lp_holding_cnt[15];         /* LP보유수량                   */
+    char    best_offer[9];              /* 매도1호가                    */
+    char    best_bid[9];                /* 매수1호가                    */
+    char    filler2[2];                 /* FILLER                       */
+
+/* 체결에 있는 항목과 중복이니 앞에 체결에 있는 값을 사용 */
+/*
+    char    accum_trade_qty[12];      *//* 누적체결수량 (단위:주)       */
+    struct  ELW_CURR_ARRY
+    {
+        char    offer[9];               /* 매도호가 (단위:원)           */
+        char    bid[9];                 /* 매수호가 (단위:원)           */
+        char    offer_qty[12];          /* 매도호가잔량 (단위:주)       */
+        char    bid_qty[12];            /* 매수호가잔량 (단위:주)       */
+        char    LP_offer_qty[12];       /* LP 매도호가잔량 (단위:주)    */
+        char    LP_bid_qty[12];         /* LP 매수호가잔량 (단위:주)    */
+    }   hoga[10];
+    char    tot_offer_qty[12];          /* 총매도호가잔량 (단위:주)     */
+    char    tot_bid_qty[12];            /* 총매수호가잔량 (단위:주)     */
+    char    filler3[12];                /* FILLER                       */
+    char    filler4[12];                /* FILLER                       */
+    char    after_otm_offer_qty[12];    /* 장종료후시간외매도총호가잔량 */
+    char    after_otm_bid_qty[12];      /* 장종료후시간외매수총호가잔량 */
+    char    gbn[2];                     /* 장상태구분                   */
+    char    otm_gbn[1];                 /* 정규시간외구분코드           */
+    char    expect_price[9];            /* 예상체결가격                 */
+    char    expect_qty[12];             /* 예상체결수량                 */
+    char    filler5[4];                 /* FILLER                       */
+}	ELW_CURR;
+
+/************************************************************************/
+/* 20100930 */
+/* A0 + A1 + I7의 조합으로 처리 */
+/************************************************************************/
+typedef struct
+{
+	char	seq_no[7];                  /* 일련번호(종목일련번호)       */
+    char    remain_day[3];              /* 잔존일수                     */
+										/* ELW최종거래일자 - 현재일자	*/
+
+	/* A0에서 정보 채집 */
+	char	stock_code[12];         	/* 종목코드 (국제표준코드)      */
+	char    compress_code[9];           /* 단축코드:'XXXXXX   '         */
+	char    name[40];                   /* 종목한글약명                 */
+	char    standard_price[9];          /* 기준가                       */
+	char    prev_trading_shares[12];    /* 전일거래량                   */
+	char    prev_trading_amt[18];       /* 전일거래대금                 */
+	char    high_limit_price[9];        /* 상한가                       */
+	char    low_limit_price[9];         /* 하한가                       */
+	char    issue_price[9];             /* 발행가격                     */
+	char    list_date[8];               /* 상장일자                     */
+	char    listed_stock[15];           /* 상장주식수                   */
+	char    striking_price[12];         /* ELW신주인수권증권행사가격    */
+
+	/* A1에서 정보채집 */
+    char    elw_entry_name[80];         /* ELW발행시장참가자한글명      */
+    char    elw_entry_no[5];            /* ELW발행시장참가자번호        */
+    char    elw_right[1];               /* ELW권리유형코드              */
+    char    elw_last_trade_date[8];     /* ELW최종거래일자              */
+    char    elw_conversion_rate[12];    /* ELW전환비율 9(6)V9(6)        */
+    char    elw_lp_holding_cnt[15];     /* ELW LP보유수량               */
+
+	/* I7에서 정보채집 */
+    char    entry_no[5];            	/* 시장참가자번호        		*/
+	char	min_multiple[11];			/* 최소호가수량배수				*/
+	char	max_multiple[11];			/* 최대호가수량배수				*/
+	char	hoga_spread[21];			/* 호가스프레드값				*/
+	char	duty_timeterm[6];			/* 의무호가제출시간간격			*/
+}	ELW_MASTER;
+
+/************************************************************************/
+/* 지수/예상지수 SPEC ***************************************************/
+/************************************************************************/
+/* C8:KRX100 지수, D0:KOSPI 지수, D2:KOSPI200 지수, D4:KOSPI100/50 지수 */
+/* 01:주식, 1:유가증권, 2:코스닥 ****************************************/
+/************************************************************************/
+/* ex) KRX100 => C8011, KOSPI200지수 => D2011							*/
+/************************************************************************/
+typedef struct
+{
+	char	tr_gbn[5];					/* 								*/
+	char	up_gbn[3];					/* 업종코드(01~06등)			*/
+	char    time[6];                    /* 시각 (PREJJJ:장전예상지수종료,
+                                            HHMMSS:장중, JUNJJJ:장종료/
+                                            장종료예상지수종료,
+                                            EXTJJJ:시간외종료)          */
+    char    idx[8];                     /* 지수 (6V2)                   */
+    char    sign[1];                    /* 부호 ('+':상승, "-":하락,
+                                            " ":보합)                   */
+    char    dif[8];                     /* 대비 (6V2)                   */
+    char    qty[8];                     /* 거래량, 체결량 (단위:천주)   */
+    char    amt[8];                     /* 거래대금 (단위:백만원)       */
+}   STOCK_JISU; /* 거래소,코스닥 지수 */
+
+typedef struct
+{
+	int				total_stock_cnt;		/* 종목수					*/
+	int				total_elw_cnt;			/* ELW 종목수				*/
+	int				kospi_bi[KOSPI200];		/* KOSPI 유동비율(Kospi 용)	*/
+	int				kospi_tot_jisu;			/* KOSPI200 지수 총자산합	*/
+	int				kospi_tot_sosu;			/* KOSPI200 지수 총자산합	*/
+	int				kospi_jisu;				/* KOSPI200 지수 (x10000)	*/
+
+/* 201006 ELW 신규 */
+	int             CURR_Arry_Key;          /* 최근 시세내역 30개의 Key */
+	int             Befor_CURR_Arry_Key;    /* CURR_Arry_Key 직전값기억 */
+/* 201006 ELW 신규 */
+
+	char			listed_stock[KOSPI200][15];		/* 상장주식수				*/
+	char			stock_code[KOSPI200][12];		/* 종목코드 (국제표준코드)	*/
+	STOCK_A0		Stock_A0[KOSPI200];				/* 유가증권종목배치(Kospi용)*/
+	STOCK_A3		Stock_A3[KOSPI200];				/* 유가증권체결				*/
+	STOCK_A0		KStock_A0;						/* 코스닥 종목배치			*/
+	STOCK_A3		KStock_A3;						/* 코스닥 체결				*/
+/* 201006 ELW 신규 */
+	ELW_MASTER		Elw_Master[ELW_MAX_CNT];		/* Elw Master File	*/
+													/* A0+A1+I7의 조합	*/
+	STOCK_A1        Stock_Elw_A1[ELW_MAX_CNT];		/* A1(ELW) 종목배치 */
+	STOCK_A3        Stock_Elw_A3[ELW_MAX_CNT];		/* A3021(ELW) 체결  */
+	STOCK_B7        Stock_Elw_B7[ELW_MAX_CNT];		/* A7011(ELW) 호가  */
+	ELW_CURR        Elw_Curr[ELW_MAX_CNT];			/* ELW CURR Data    */
+	ELW_CURR        Elw_Curr_Arry[ELW_MAX_CNT][30];	/* ELW CURR Data    */
+                                        /* A3021(체결) + A7011(호가)    */
+/* 201006 ELW 신규 */
+}	SHM_STOCK;	/* 거래소 (장내) 시세 Shared Memory */
+
+typedef struct
+{
+	int 			D2_Arry_Key;					/* 			D2 Key	*/
+	int 			D2Be_Arry_Key;					/* D2 Befor Key 	*/
+	int				kjisu[10];						/* KOSPI지수 		*/
+	char			filler[2];						/* 예비				*/
+	/* 현물 지수시세	*/
+	STOCK_JISU      Stock_D0;     	 				/* KOSPI지수		*/
+											/* 01 종합주가지수만 사용	*/
+	STOCK_JISU      Stock_D2;						/* KOSPI200지수		*/
+											/* 01 종합주가지수만 사용	*/
+	STOCK_JISU      Stock_D2_Arry[100];				/* KOSPI200지수		*/
+	/* 미사용 */
+	STOCK_JISU      Stock_C8;       				/* KOSPI100지수		*/
+	STOCK_JISU      Stock_D4;						/* KOSPI100/50지수	*/
+	STOCK_JISU      KStock_E5;						/* KOSDAQ100/50지수	*/
+}	SHM_JISU;	/* 거래소 (장내) 시세 Shared Memory */
+
+/*************************************************************************
+        선물옵션 시세
+*************************************************************************/
+/* A0014 : 지수선물 *****************************************************/
+/* A0034 : 지수옵션 *****************************************************/
+typedef struct
+{
+	char    filler1[1];                 /* 예비1                        */
+	int     check_cnt;                  /* 최초값 0, 자동주문조건 만족시
+											1씩 증가                    */
+    char    filler2[1];                 /* 예비2                        */
+
+	char	tr_gbn[5];					/* A0014(선물), A0034(옵션) 	*/
+    char    cnt[5];                     /* 종목수                       */
+    char    date[8];                    /* 영업일자                     */
+    char    item_code[12];				/* 종목코드                     */
+    char    seq_no[6];                  /* 종목SEQ                      */
+    char    derivation_id[10];          /* 파생품목ID                   */
+    char    compress_code[9];           /* 선물종목단축코드             */
+    char    kor_nm[80];                 /* 종목한글명                   */
+    char    kor_nm_abbr[40];            /* 종목한글약명                 */
+    char    elan_nm[80];                /* 종목영문명                   */
+    char    elan_nm_abbr[40];           /* 종목영문약명                 */
+    char    list_date[8];               /* 상장일자                     */
+    char    delist_date[8];             /* 상장폐지일자                 */
+    char    spread_basis[1];            /* 스프레드기준종목구분코드     */
+    char    last_setl_code[1];          /* 최종결제방법코드             */
+    char    sign_1[1];                  /* Sign부호1                    */
+    char    hlprc[12];                  /* 상한가 (10V2)                */
+    char    sign_2[1];                  /* Sign부호2                    */
+    char    llprc[12];                  /* 하한가 (10V2)                */
+    char    stprc[12];                  /* 기준가 (10V2)                */
+    char    underlying_id[3];           /* 기초자산ID                   */
+    char    kyun_event_kind_gbn[1];     /* 권리행사유형코드             */
+    char    spread_kind_gbn[2];         /* 스프레드유형코드             */
+    char    int_std_cd1[12];            /* 스프레드근월물표준코드       */
+    char    int_std_cd2[12];            /* 스프레드원월물표준코드       */
+    char    last_trade_date[8];         /* 최종거래일자                 */
+    char    last_settle_date[8];        /* 최종결제일자                 */
+    char    gubun_code[1];              /* 월물구분코드                 */
+    char    maturity_date[8];           /* 만기일자                     */
+    char    striking_price[17];         /* 행사가격 9(9)V9(8)           */
+    char    control_gbn[1];             /* 조정구분                     */
+    char    trade_unit[17];             /* 거래단위 9(9)V9(8)           */
+    char    trade_multi[21];            /* 거래승수 9(13)V9(8)          */
+    char    marketcontrol_code[1];      /* 시장조성구분코드             */
+    char    normal_gubun[1];            /* 상장유형코드                 */
+    char    equal_price[12];            /* 등가격 9(10)V9(2)            */
+    char    adjustment_reason[2];       /* 조정사유코드                 */
+    char    underlying_code[12];        /* 기초자산종목코드             */
+    char    underlying_close_price[12]; /* 기초자산종가                 */
+    char    remain_day[7];              /* 잔존일수                     */
+    char    adjustment_basis_price[17]; /* 조정기준가격 9(9)V9(8)       */
+    char    basis_price_gubun[2];       /* 기준가격구분코드             */
+    char    trade_basis_price_gubun[1]; /* 매매용기준가격구분코드       */
+    char    sign_3[1];                  /* Sign부호3                    */
+    char    pdy_adjust_close_price[17]; /* 전일조정종가격 9(9)V9(8)     */
+    char    discuss_large_trade[1];     /* 협의대량매매대상여부         */
+    char    pdy_deposit_stand_prc[17];  /* 전일증거금기준가격 9(9)V9(8) */
+    char    pdy_deposit_stand_prc_cd[2];/* 전일증거금기준가격코드       */
+    char    settle_theory_price[15];    /* 정산이론가격 9(9)V9(6)       */
+    char    standrd_theory_price[15];   /* 기준이론가격 9(9)V9(6)       */
+    char    pdy_settle_price[17];       /* 전일정산가격 9(9)V9(8)       */
+    char    trade_stop[1];              /* 거래정지여부                 */
+    char    cb_appl_hprc[12];           /* C.B.적용상한가 (10V2)        */
+    char    cb_appl_lprc[12];           /* C.B.적용하한가 (10V2)        */
+    char    inquiry_striking_price[17]; /* 조회용행사가격 9(9)V9(8)     */
+    char    atm_gubun[1];               /* atm구분코드                  */
+    char    last_trade_day_gubun[1];    /* 최종거래일여부               */
+    char    allotment_value[15];        /* 배당가치 9(9)V9(6)           */
+    char    sign_4[1];                  /* Sign부호4                    */
+    char    pdy_cprc[12];               /* 전일종가 (10V2)              */
+    char    pdy_cprc_gubun[1];          /* 전일종가구분코드             */
+    char    sign_5[1];                  /* Sign부호5                    */
+    char    pdy_oprc[12];               /* 전일시가 (10V2)              */
+    char    sign_6[1];                  /* Sign부호6                    */
+    char    pdy_hprc[12];               /* 전일고가 (10V2)              */
+    char    sign_7[1];                  /* Sign부호7                    */
+    char    pdy_lprc[12];               /* 전일저가 (10V2)              */
+    char    first_contract_date[8];     /* 최초체결일자                 */
+    char    pdy_last_contract_time[8];  /* 전일최종체결시각             */
+    char    pdy_slmt_gbn[2];            /* 전일정산가격구분             */
+    char    sign_8[1];                  /* Sign부호8                    */
+    char    disparate_ratio[12];        /* 정산가격이론가격괴리율(6V6)  */
+    char    pdy_usetl_engg_qty[10];     /* 전일미결제약정수량           */
+    char    sign_9[1];                  /* Sign부호9                    */
+    char    pdy_sel_prmbid[12];         /* 전일매도우선호가 (10V2)      */
+    char    sign_10[1];                 /* Sign부호10                   */
+    char    pdy_buy_prmbid[12];         /* 전일매수우선호가 (10V2)      */
+    char    inhrc_chdps[10];            /* 내재변동성 (6V4)             */
+    char    fluctuation_range_code[1];  /* 최대변동폭유형코드           */
+    char    fluctuation_range[6];       /* 최대변동폭 (4V2)             */
+    char    sign_11[1];                 /* Sign부호11                   */
+    char    tmp_high_pr[12];            /* 상장중최고가 (10V2)          */
+    char    sign_12[1];                 /* Sign부호12                   */
+    char    tmp_low_pr[12];             /* 상장중최저가 (10V2)          */
+    char    sign_13[1];                 /* Sign부호13                   */
+    char    year_high_pr[12];           /* 연중최고가 (10V2)            */
+    char    sign_14[1];                 /* Sign부호14                   */
+    char    year_low_pr[12];            /* 연중최저가 (10V2)            */
+    char    tmp_high_dt[8];             /* 상장중최고가일자             */
+    char    tmp_low_dt[8];              /* 상장중최저가일자             */
+    char    year_high_dt[8];            /* 연중최고가일자               */
+    char    year_low_dt[8];             /* 연중최저가일자               */
+    char    year_standard_day[8];       /* 연간기준일수                 */
+    char    month_trade_day[8];         /* 월간거래일수                 */
+    char    year_trade_day[8];          /* 연간거래일수                 */
+    char    pdy_tr_cnt[16];             /* 전일체결건수                 */
+    char    pdy_tr_qty[12];             /* 전일체결수량                 */
+    char    pdy_tr_mny[22];             /* 전일거래대금                 */
+    char    pdy_large_qty[12];          /* 전일협의대량매매체결수량     */
+    char    pdy_large_mny[22];          /* 전일협의대량매매거래대금     */
+    char    cd_price_rate[6];           /* CD금리 (3V3)                 */
+    char    unsettle_hando[8];          /* 미결제한도계약수             */
+    char    position_goods[4];          /* 소속상품군                   */
+    char    goods_opset[5];             /* 상품군옵셋율 9(3)V9(2)       */
+    char    limits_order[1];            /* 지정가호가조건구분코드       */
+    char    market_order[1];            /* 시장가호가조건구분코드       */
+    char    condition_order[1];         /* 조건부지정가호가조건구분코드 */
+    char    advantage_order[1];         /* 최유리지정가호가조건구분코드 */
+	char	efp_trade[1];               /* EFP 거래대상여부             */
+	char	flex_trade[1];              /* FLEX 거래대상여부            */
+	char	pdy_efp_tr_qty[12];         /* 전일EFP체결수량              */
+	char	pdy_efp_tr_mny[22];         /* 전일EFP거래대금              */
+	char	filler[134];                /* Filler                       */
+}   SIF_A0; 
+
+typedef struct
+{
+	char	tr_gbn[5];					/* B6014						*/
+    char    item_code[12];				/* 종목코드                     */
+    char    seq_no[2];                  /* 종목일련번호                 */
+    char    market_state_gubun[2];      /* 장상태구분코드               */
+    char    buy_tot_best_qty[6];        /* 매수총호가잔량               */
+    char    buy_1_sign[1];              /* 매수1단계부호                */
+    char    buy_1_prmbid[5];            /* 매수1단계우선호가격 (3V2)    */
+    char    buy_1_prmbid_qty[6];        /* 매수1단계우선호가잔량        */
+    char    buy_2_sign[1];              /* 매수2단계부호                */
+    char    buy_2_prmbid[5];            /* 매수2단계우선호가격 (3V2)    */
+    char    buy_2_prmbid_qty[6];        /* 매수2단계우선호가잔량        */
+    char    buy_3_sign[1];              /* 매수3단계부호                */
+    char    buy_3_prmbid[5];            /* 매수3단계우선호가격 (3V2)    */
+    char    buy_3_prmbid_qty[6];        /* 매수3단계우선호가잔량        */
+    char    buy_4_sign[1];              /* 매수4단계부호                */
+    char    buy_4_prmbid[5];            /* 매수4단계우선호가격 (3V2)    */
+    char    buy_4_prmbid_qty[6];        /* 매수4단계우선호가잔량        */
+    char    buy_5_sign[1];              /* 매수5단계부호                */
+    char    buy_5_prmbid[5];            /* 매수5단계우선호가격 (3V2)    */
+    char    buy_5_prmbid_qty[6];        /* 매수5단계우선호가잔량        */
+    char    sel_tot_best_qty[6];        /* 매도총호가잔량               */
+    char    sel_1_sign[1];              /* 매도1단계부호                */
+    char    sel_1_prmbid[5];            /* 매도1단계우선호가격 (3V2)    */
+    char    sel_1_prmbid_qty[6];        /* 매도1단계우선호가잔량        */
+    char    sel_2_sign[1];              /* 매도2단계부호                */
+    char    sel_2_prmbid[5];            /* 매도2단계우선호가격 (3V2)    */
+    char    sel_2_prmbid_qty[6];        /* 매도2단계우선호가잔량        */
+    char    sel_3_sign[1];              /* 매도3단계부호                */
+    char    sel_3_prmbid[5];            /* 매도3단계우선호가격 (3V2)    */
+    char    sel_3_prmbid_qty[6];        /* 매도3단계우선호가잔량        */
+    char    sel_4_sign[1];              /* 매도4단계부호                */
+    char    sel_4_prmbid[5];            /* 매도4단계우선호가격 (3V2)    */
+    char    sel_4_prmbid_qty[6];        /* 매도4단계우선호가잔량        */
+    char    sel_5_sign[1];              /* 매도5단계부호                */
+    char    sel_5_prmbid[5];            /* 매도5단계우선호가격 (3V2)    */
+    char    sel_5_prmbid_qty[6];        /* 매도5단계우선호가잔량        */
+    char    buy_tot_best_cnt[5];        /* 매수유효호가건수             */
+    char    buy_1_best_cnt[4];          /* 매수1단계우선호가건수        */
+    char    buy_2_best_cnt[4];          /* 매수2단계우선호가건수        */
+    char    buy_3_best_cnt[4];          /* 매수3단계우선호가건수        */
+    char    buy_4_best_cnt[4];          /* 매수4단계우선호가건수        */
+    char    buy_5_best_cnt[4];          /* 매수5단계우선호가건수        */
+    char    sel_tot_best_cnt[5];        /* 매도유효호가건수             */
+    char    sel_1_best_cnt[4];          /* 매도1단계우선호가건수        */
+    char    sel_2_best_cnt[4];          /* 매도2단계우선호가건수        */
+    char    sel_3_best_cnt[4];          /* 매도3단계우선호가건수        */
+    char    sel_4_best_cnt[4];          /* 매도4단계우선호가건수        */
+    char    sel_5_best_cnt[4];          /* 매도5단계우선호가건수        */
+	char	best_amt_accept_tm[8];		/* 호가접수시각					*/
+}   SIF_B6;
+/* B6014 : 지수선물 우선호가 ********************************************/
+
+typedef struct
+{
+	char	tr_gbn[5];					/* A3014						*/
+    char    item_code[12];              /* 종목코드                     */
+    char    seq_no[2];                  /* 종목일련번호                 */
+    char    crprc_sign[1];              /* 현재가격부호                 */
+    char    crprc[5];                   /* 현재가 (3V2)                 */
+    char    chekyul_qty[6];             /* 체결수량                     */
+    char    chekyul_type_code[2];       /* 체결유형코드                 */
+    char    chekyul_tm[8];            /* 체결시각                     */
+    char    fiction_crprc1[5];          /* 최근월물의제약정가격 (3V2)   */
+    char    fiction_crprc2[5];          /* 원월물의제약정가격 (3V2)     */
+    char    oprc_sign[1];               /* 시가부호                     */
+    char    oprc[5];                    /* 시가 (3V2)                   */
+    char    hprc_sign[1];               /* 고가부호                     */
+    char    hprc[5];                    /* 고가 (3V2)                   */
+    char    lprc_sign[1];               /* 저가부호                     */
+    char    lprc[5];                    /* 저가 (3V2)                   */
+    char    before_crprc_sign[1];       /* 직전가격부호                 */
+    char    before_crprc[5];            /* 직전가격 (3V2)               */
+    char    tot_con_qty[7];             /* 누적체결수량                 */
+    char    tot_con_amt[11];            /* 누적거래대금 (단위:천원)     */
+}   SIF_A3;
+/* A3014 : 지수선물 체결     ********************************************/
+
+typedef struct
+{
+	char	tr_gbn[5];					/* G7014						*/
+    char    item_code[12];              /* 종목코드                     */
+    char    seq_no[2];                  /* 종목일련번호                 */
+    char    crprc_sign[1];              /* 현재가격부호                 */
+    char    crprc[5];                   /* 현재가 (3V2)                 */
+    char    chekyul_qty[6];             /* 체결수량                     */
+    char    chekyul_type_code[2];       /* 체결유형코드                 */
+    char    chekyul_tm[8];              /* 체결시각                     */
+    char    fiction_crprc1[5];          /* 최근월물의제약정가격 (3V2)   */
+    char    fiction_crprc2[5];          /* 원월물의제약정가격 (3V2)     */
+    char    oprc_sign[1];               /* 시가부호                     */
+    char    oprc[5];                    /* 시가 (3V2)                   */
+    char    hprc_sign[1];               /* 고가부호                     */
+    char    hprc[5];                    /* 고가 (3V2)                   */
+    char    lprc_sign[1];               /* 저가부호                     */
+    char    lprc[5];                    /* 저가 (3V2)                   */
+    char    before_crprc_sign[1];       /* 직전가격부호                 */
+    char    before_crprc[5];            /* 직전가격 (3V2)               */
+    char    tot_con_qty[7];             /* 누적체결수량                 */
+    char    tot_con_amt[11];            /* 누적거래대금 (단위:천원)     */
+    char    market_state_gubun[2];      /* 장상태구분코드               */
+    char    buy_tot_best_qty[6];        /* 매수총호가잔량               */
+    char    buy_1_sign[1];              /* 매수1단계부호                */
+    char    buy_1_prmbid[5];            /* 매수1단계우선호가격 (3V2)    */
+    char    buy_1_prmbid_qty[6];        /* 매수1단계우선호가잔량        */
+    char    buy_2_sign[1];              /* 매수2단계부호                */
+    char    buy_2_prmbid[5];            /* 매수2단계우선호가격 (3V2)    */
+    char    buy_2_prmbid_qty[6];        /* 매수2단계우선호가잔량        */
+    char    buy_3_sign[1];              /* 매수3단계부호                */
+    char    buy_3_prmbid[5];            /* 매수3단계우선호가격 (3V2)    */
+    char    buy_3_prmbid_qty[6];        /* 매수3단계우선호가잔량        */
+    char    buy_4_sign[1];              /* 매수4단계부호                */
+    char    buy_4_prmbid[5];            /* 매수4단계우선호가격 (3V2)    */
+    char    buy_4_prmbid_qty[6];        /* 매수4단계우선호가잔량        */
+    char    buy_5_sign[1];              /* 매수5단계부호                */
+    char    buy_5_prmbid[5];            /* 매수5단계우선호가격 (3V2)    */
+    char    buy_5_prmbid_qty[6];        /* 매수5단계우선호가잔량        */
+    char    sel_tot_best_qty[6];        /* 매도총호가잔량               */
+    char    sel_1_sign[1];              /* 매도1단계부호                */
+    char    sel_1_prmbid[5];            /* 매도1단계우선호가격 (3V2)    */
+    char    sel_1_prmbid_qty[6];        /* 매도1단계우선호가잔량        */
+    char    sel_2_sign[1];              /* 매도2단계부호                */
+    char    sel_2_prmbid[5];            /* 매도2단계우선호가격 (3V2)    */
+    char    sel_2_prmbid_qty[6];        /* 매도2단계우선호가잔량        */
+    char    sel_3_sign[1];              /* 매도3단계부호                */
+    char    sel_3_prmbid[5];            /* 매도3단계우선호가격 (3V2)    */
+    char    sel_3_prmbid_qty[6];        /* 매도3단계우선호가잔량        */
+    char    sel_4_sign[1];              /* 매도4단계부호                */
+    char    sel_4_prmbid[5];            /* 매도4단계우선호가격 (3V2)    */
+    char    sel_4_prmbid_qty[6];        /* 매도4단계우선호가잔량        */
+    char    sel_5_sign[1];              /* 매도5단계부호                */
+    char    sel_5_prmbid[5];            /* 매도5단계우선호가격 (3V2)    */
+    char    sel_5_prmbid_qty[6];        /* 매도5단계우선호가잔량        */
+    char    buy_tot_best_cnt[5];        /* 매수유효호가건수             */
+    char    buy_1_best_cnt[4];          /* 매수1단계우선호가건수        */
+    char    buy_2_best_cnt[4];          /* 매수2단계우선호가건수        */
+    char    buy_3_best_cnt[4];          /* 매수3단계우선호가건수        */
+    char    buy_4_best_cnt[4];          /* 매수4단계우선호가건수        */
+    char    buy_5_best_cnt[4];          /* 매수5단계우선호가건수        */
+    char    sel_tot_best_cnt[5];        /* 매도유효호가건수             */
+    char    sel_1_best_cnt[4];          /* 매도1단계우선호가건수        */
+    char    sel_2_best_cnt[4];          /* 매도2단계우선호가건수        */
+    char    sel_3_best_cnt[4];          /* 매도3단계우선호가건수        */
+    char    sel_4_best_cnt[4];          /* 매도4단계우선호가건수        */
+    char    sel_5_best_cnt[4];          /* 매도5단계우선호가건수        */
+	char	best_amt_accept_tm[8];		/* 호가접수시각					*/
+}   SIF_G7;
+/* G7014 : 지수선물 체결+우선호가 ***************************************/
+
+typedef struct
+{
+	char    filler[1];                  /* 예비1                        */
+	int     check_cnt;                  /* 보유여부 확인(평가금액용)    */
+	int     acc_ver_prft[ACC_NO_CNT];   /* 종목별 평가손익(부호있음)    */
+										/* 1000을 나눈값으로 보관       */
+	int     getcnt[ACC_NO_CNT];         /* 통합선물 보유종목수량(부호있음) */
+	int     get_avr_price_jisu[ACC_NO_CNT];
+										/* 통합선물 종목별 평균매입단가 */
+										/* 지수 6자리만 보유            */
+										/* middle값, 평가손익과 같은 단위 */
+	int     get_avr_price_sosu[ACC_NO_CNT]; /* 통합선물 종목별 평균매입단가 */
+										/* 소숫점 8자리임 v99999999     */
+	int		tick_cnt;					/* 60초간 tick count			*/
+	int		uptick_cnt;					/* 60초간 uptick count			*/
+	int		downtick_cnt;				/* 60초간 downtick count		*/
+/*	시세 Auto 주문 Setting Values	*/
+	int		auto_run;					/* 0:종료, 1:기동				*/
+	int		auto_opseq;					/* 옵션주문 Seq					*/
+	int		auto_socket_chk;			/* 후처리 주문 Check Process no	*/
+	int		auto_write;					/* 미리 저장할 곳을 할당해 둔곳	*/
+	char	auto_set[40];				/* 자동주문 설정값				*/
+										/* 0 : 1~6, 콜풋 구분			*/
+										/* 1 : 0~7, 8가지 경우의수		*/
+/*	시세 Auto 주문 Setting Values	*/
+
+	char    filler1[1];                 /* 예비1                        */
+	char    recv_time[12];              /* 수신시간                     */
+										/* FMS_CURR[0].recv_time에만
+										   값을 넣고 비교한다.(key값)   */
+
+	char	tr_gbn[5];					/* SPACE						*/
+    char    item_code[12];              /* 종목코드                     */
+    char    seq_no[2];                  /* 종목일련번호                 */
+    char    crprc_sign[1];              /* 현재가격부호                 */
+    char    crprc[5];                   /* 현재가 (3V2)                 */
+    char    chekyul_qty[6];             /* 체결수량                     */
+    char    chekyul_type_code[2];       /* 체결유형코드                 */
+    char    chekyul_tm[8];              /* 체결시각                     */
+    char    fiction_crprc1[5];          /* 최근월물의제약정가격 (3V2)   */
+    char    fiction_crprc2[5];          /* 원월물의제약정가격 (3V2)     */
+    char    oprc_sign[1];               /* 시가부호                     */
+    char    oprc[5];                    /* 시가 (3V2)                   */
+    char    hprc_sign[1];               /* 고가부호                     */
+    char    hprc[5];                    /* 고가 (3V2)                   */
+    char    lprc_sign[1];               /* 저가부호                     */
+    char    lprc[5];                    /* 저가 (3V2)                   */
+    char    before_crprc_sign[1];       /* 직전가격부호                 */
+    char    before_crprc[5];            /* 직전가격 (3V2)               */
+    char    tot_con_qty[7];             /* 누적체결수량                 */
+    char    tot_con_amt[11];            /* 누적거래대금 (단위:천원)     */
+    char    market_state_gubun[2];      /* 장상태구분코드               */
+    char    buy_tot_best_qty[6];        /* 매수총호가잔량               */
+    char    buy_1_sign[1];              /* 매수1단계부호                */
+    char    buy_1_prmbid[5];            /* 매수1단계우선호가격 (3V2)    */
+    char    buy_1_prmbid_qty[6];        /* 매수1단계우선호가잔량        */
+    char    buy_2_sign[1];              /* 매수2단계부호                */
+    char    buy_2_prmbid[5];            /* 매수2단계우선호가격 (3V2)    */
+    char    buy_2_prmbid_qty[6];        /* 매수2단계우선호가잔량        */
+    char    buy_3_sign[1];              /* 매수3단계부호                */
+    char    buy_3_prmbid[5];            /* 매수3단계우선호가격 (3V2)    */
+    char    buy_3_prmbid_qty[6];        /* 매수3단계우선호가잔량        */
+    char    buy_4_sign[1];              /* 매수4단계부호                */
+    char    buy_4_prmbid[5];            /* 매수4단계우선호가격 (3V2)    */
+    char    buy_4_prmbid_qty[6];        /* 매수4단계우선호가잔량        */
+    char    buy_5_sign[1];              /* 매수5단계부호                */
+    char    buy_5_prmbid[5];            /* 매수5단계우선호가격 (3V2)    */
+    char    buy_5_prmbid_qty[6];        /* 매수5단계우선호가잔량        */
+    char    sel_tot_best_qty[6];        /* 매도총호가잔량               */
+    char    sel_1_sign[1];              /* 매도1단계부호                */
+    char    sel_1_prmbid[5];            /* 매도1단계우선호가격 (3V2)    */
+    char    sel_1_prmbid_qty[6];        /* 매도1단계우선호가잔량        */
+    char    sel_2_sign[1];              /* 매도2단계부호                */
+    char    sel_2_prmbid[5];            /* 매도2단계우선호가격 (3V2)    */
+    char    sel_2_prmbid_qty[6];        /* 매도2단계우선호가잔량        */
+    char    sel_3_sign[1];              /* 매도3단계부호                */
+    char    sel_3_prmbid[5];            /* 매도3단계우선호가격 (3V2)    */
+    char    sel_3_prmbid_qty[6];        /* 매도3단계우선호가잔량        */
+    char    sel_4_sign[1];              /* 매도4단계부호                */
+    char    sel_4_prmbid[5];            /* 매도4단계우선호가격 (3V2)    */
+    char    sel_4_prmbid_qty[6];        /* 매도4단계우선호가잔량        */
+    char    sel_5_sign[1];              /* 매도5단계부호                */
+    char    sel_5_prmbid[5];            /* 매도5단계우선호가격 (3V2)    */
+    char    sel_5_prmbid_qty[6];        /* 매도5단계우선호가잔량        */
+    char    buy_tot_best_cnt[5];        /* 매수유효호가건수             */
+    char    buy_1_best_cnt[4];          /* 매수1단계우선호가건수        */
+    char    buy_2_best_cnt[4];          /* 매수2단계우선호가건수        */
+    char    buy_3_best_cnt[4];          /* 매수3단계우선호가건수        */
+    char    buy_4_best_cnt[4];          /* 매수4단계우선호가건수        */
+    char    buy_5_best_cnt[4];          /* 매수5단계우선호가건수        */
+    char    sel_tot_best_cnt[5];        /* 매도유효호가건수             */
+    char    sel_1_best_cnt[4];          /* 매도1단계우선호가건수        */
+    char    sel_2_best_cnt[4];          /* 매도2단계우선호가건수        */
+    char    sel_3_best_cnt[4];          /* 매도3단계우선호가건수        */
+    char    sel_4_best_cnt[4];          /* 매도4단계우선호가건수        */
+    char    sel_5_best_cnt[4];          /* 매도5단계우선호가건수        */
+	char	best_amt_accept_tm[8];		/* 호가접수시각					*/
+}   SIF_CURR;
+/* G7014 : 지수선물 체결+우선호가 ***************************************/
+
+typedef  struct
+{
+	int			CHE_Cnt;				/* CHE가 1000이 넘으면 1씩 증가	*/
+	int 		CHE_Arry_Key;			/* 최근 체결내역 100개의 Key	*/
+										/* 체결세내역 100개 기억에만사용*/
+	int 		Befor_CHE_Arry_Key;		/* CURR_Arry_Key 이전값 기억	*/
+	int 		CURR_Arry_Key;			/* 최근 시세내역 30개의 Key     */
+										/* 시세내역 30개 기억에만 사용  */
+	int 		Befor_CURR_Arry_Key;	/* CURR_Arry_Key 이전값 기억	*/
+	char		filler[2];				/* 예비							*/
+	char		ordertime[10];			/* 주문응답 시간				*/
+	char		chetime[10];			/* 주문체결 시간				*/
+	SIF_A0      Futures_A0;         	/* 기본                         */
+	SIF_B6      Futures_B6;         	/* 호가                         */
+	SIF_A3      Futures_A3;         	/* 체결                         */
+	SIF_G7      Futures_G7;         	/* 체결 + 호가                  */
+	SIF_CURR	Futures_CURR;       	/* 선물현재가 메모리값          */
+	SIF_G7		Futures_CURR_Arry[30];  /* 최근 시세내역 30개 기억      */
+	SIF_G7      Futures_CHE_Arry[1000];	/* 체결(G7+A3를 Curr로 기억)	*/
+}	SHM_FUTURES;	/* 선물 시세 Shared Memory  */
+
+/*************************************************************************
+        지수옵션 시세
+*************************************************************************/
+typedef struct
+{
+	char	tr_gbn[5];					/* B6034						*/
+    char    item_code[12];              /* 종목코드                     */
+    char    seq_no[3];                  /* 종목일련번호                 */
+    char    market_state_gubun[2];      /* 장상태구분코드               */
+    char    buy_tot_best_qty[7];        /* 매수총호가잔량               */
+    char    buy_1_prmbid[5];            /* 매수1단계우선호가격 (3V2)    */
+    char    buy_1_prmbid_qty[7];        /* 매수1단계우선호가잔량        */
+    char    buy_2_prmbid[5];            /* 매수2단계우선호가격 (3V2)    */
+    char    buy_2_prmbid_qty[7];        /* 매수2단계우선호가잔량        */
+    char    buy_3_prmbid[5];            /* 매수3단계우선호가격 (3V2)    */
+    char    buy_3_prmbid_qty[7];        /* 매수3단계우선호가잔량        */
+    char    buy_4_prmbid[5];            /* 매수4단계우선호가격 (3V2)    */
+    char    buy_4_prmbid_qty[7];        /* 매수4단계우선호가잔량        */
+    char    buy_5_prmbid[5];            /* 매수5단계우선호가격 (3V2)    */
+    char    buy_5_prmbid_qty[7];        /* 매수5단계우선호가잔량        */
+    char    sel_tot_best_qty[7];        /* 매도총호가잔량               */
+    char    sel_1_prmbid[5];            /* 매도1단계우선호가격 (3V2)    */
+    char    sel_1_prmbid_qty[7];        /* 매도1단계우선호가잔량        */
+    char    sel_2_prmbid[5];            /* 매도2단계우선호가격 (3V2)    */
+    char    sel_2_prmbid_qty[7];        /* 매도2단계우선호가잔량        */
+    char    sel_3_prmbid[5];            /* 매도3단계우선호가격 (3V2)    */
+    char    sel_3_prmbid_qty[7];        /* 매도3단계우선호가잔량        */
+    char    sel_4_prmbid[5];            /* 매도4단계우선호가격 (3V2)    */
+    char    sel_4_prmbid_qty[7];        /* 매도4단계우선호가잔량        */
+    char    sel_5_prmbid[5];            /* 매도5단계우선호가격 (3V2)    */
+    char    sel_5_prmbid_qty[7];        /* 매도5단계우선호가잔량        */
+    char    buy_tot_best_cnt[5];        /* 매수유효호가건수             */
+    char    buy_1_best_cnt[4];          /* 매수1단계우선호가건수        */
+    char    buy_2_best_cnt[4];          /* 매수2단계우선호가건수        */
+    char    buy_3_best_cnt[4];          /* 매수3단계우선호가건수        */
+    char    buy_4_best_cnt[4];          /* 매수4단계우선호가건수        */
+    char    buy_5_best_cnt[4];          /* 매수5단계우선호가건수        */
+    char    sel_tot_best_cnt[5];        /* 매도유효호가건수             */
+    char    sel_1_best_cnt[4];          /* 매도1단계우선호가건수        */
+    char    sel_2_best_cnt[4];          /* 매도2단계우선호가건수        */
+    char    sel_3_best_cnt[4];          /* 매도3단계우선호가건수        */
+    char    sel_4_best_cnt[4];          /* 매도4단계우선호가건수        */
+    char    sel_5_best_cnt[4];          /* 매도5단계우선호가건수        */
+	char	best_amt_accept_tm[8];		/* 호가접수시각					*/
+}   SIO_B6;
+/* B6034 : 지수옵션 우선호가 ********************************************/
+
+/************************************************************************/
+/* A3034 : 지수옵션 체결     ********************************************/
+/************************************************************************/
+typedef struct
+{
+	char	tr_gbn[5];					/* A3034						*/
+    char    item_code[12];              /* 종목코드                     */
+    char    seq_no[3];                  /* 종목일련번호                 */
+    char    crprc[5];                   /* 현재가 (3V2)                 */
+    char    chekyul_qty[7];             /* 체결수량                     */
+    char    chekyul_type_code[2];       /* 체결유형코드                 */
+    char    chekyul_tm[8];              /* 체결시각                     */
+    char    oprc[5];                    /* 시가 (3V2)                   */
+    char    hprc[5];                    /* 고가 (3V2)                   */
+    char    lprc[5];                    /* 저가 (3V2)                   */
+    char    before_crprc[5];            /* 직전가격 (3V2)               */
+    char    tot_con_qty[8];             /* 누적체결수량                 */
+    char    tot_con_amt[11];            /* 누적거래대금 (단위:천원)     */
+}   SIO_A3;
+/* A3034 : 지수옵션 체결     ********************************************/
+
+/************************************************************************/
+/* G7034 : 지수옵션 체결+우선호가 ***************************************/
+/************************************************************************/
+typedef struct
+{
+	char	tr_gbn[5];					/* G7034						*/
+    char    item_code[12];              /* 종목코드                     */
+    char    seq_no[3];                  /* 종목일련번호                 */
+    char    crprc[5];                   /* 현재가 (3V2)                 */
+    char    chekyul_qty[7];             /* 체결수량                     */
+    char    chekyul_type_code[2];       /* 체결유형코드                 */
+    char    chekyul_tm[8];              /* 체결시각                     */
+    char    oprc[5];                    /* 시가 (3V2)                   */
+    char    hprc[5];                    /* 고가 (3V2)                   */
+    char    lprc[5];                    /* 저가 (3V2)                   */
+    char    before_crprc[5];            /* 직전가격 (3V2)               */
+    char    tot_con_qty[8];             /* 누적체결수량                 */
+    char    tot_con_amt[11];            /* 누적거래대금 (단위:천원)     */
+    char    market_state_gubun[2];      /* 장상태구분코드               */
+    char    buy_tot_best_qty[7];        /* 매수총호가잔량               */
+    char    buy_1_prmbid[5];            /* 매수1단계우선호가격 (3V2)    */
+    char    buy_1_prmbid_qty[7];        /* 매수1단계우선호가잔량        */
+    char    buy_2_prmbid[5];            /* 매수2단계우선호가격 (3V2)    */
+    char    buy_2_prmbid_qty[7];        /* 매수2단계우선호가잔량        */
+    char    buy_3_prmbid[5];            /* 매수3단계우선호가격 (3V2)    */
+    char    buy_3_prmbid_qty[7];        /* 매수3단계우선호가잔량        */
+    char    buy_4_prmbid[5];            /* 매수4단계우선호가격 (3V2)    */
+    char    buy_4_prmbid_qty[7];        /* 매수4단계우선호가잔량        */
+    char    buy_5_prmbid[5];            /* 매수5단계우선호가격 (3V2)    */
+    char    buy_5_prmbid_qty[7];        /* 매수5단계우선호가잔량        */
+    char    sel_tot_best_qty[7];        /* 매도총호가잔량               */
+    char    sel_1_prmbid[5];            /* 매도1단계우선호가격 (3V2)    */
+    char    sel_1_prmbid_qty[7];        /* 매도1단계우선호가잔량        */
+    char    sel_2_prmbid[5];            /* 매도2단계우선호가격 (3V2)    */
+    char    sel_2_prmbid_qty[7];        /* 매도2단계우선호가잔량        */
+    char    sel_3_prmbid[5];            /* 매도3단계우선호가격 (3V2)    */
+    char    sel_3_prmbid_qty[7];        /* 매도3단계우선호가잔량        */
+    char    sel_4_prmbid[5];            /* 매도4단계우선호가격 (3V2)    */
+    char    sel_4_prmbid_qty[7];        /* 매도4단계우선호가잔량        */
+    char    sel_5_prmbid[5];            /* 매도5단계우선호가격 (3V2)    */
+    char    sel_5_prmbid_qty[7];        /* 매도5단계우선호가잔량        */
+    char    buy_tot_best_cnt[5];        /* 매수유효호가건수             */
+    char    buy_1_best_cnt[4];          /* 매수1단계우선호가건수        */
+    char    buy_2_best_cnt[4];          /* 매수2단계우선호가건수        */
+    char    buy_3_best_cnt[4];          /* 매수3단계우선호가건수        */
+    char    buy_4_best_cnt[4];          /* 매수4단계우선호가건수        */
+    char    buy_5_best_cnt[4];          /* 매수5단계우선호가건수        */
+    char    sel_tot_best_cnt[5];        /* 매도유효호가건수             */
+    char    sel_1_best_cnt[4];          /* 매도1단계우선호가건수        */
+    char    sel_2_best_cnt[4];          /* 매도2단계우선호가건수        */
+    char    sel_3_best_cnt[4];          /* 매도3단계우선호가건수        */
+    char    sel_4_best_cnt[4];          /* 매도4단계우선호가건수        */
+    char    sel_5_best_cnt[4];          /* 매도5단계우선호가건수        */
+	char	best_amt_accept_tm[8];		/* 호가접수시각					*/
+}   SIO_G7;
+/* G7034 : 지수옵션 체결+우선호가 ***************************************/
+
+typedef struct
+/************************************************************************/
+/* G7034 : 지수옵션 체결+우선호가 ***************************************/
+/************************************************************************/
+{
+	char    filler[1];                  /* 예비1                        */
+	int     check_cnt;                  /* 보유여부 확인(평가금액용)    */
+	int     acc_ver_prft[ACC_NO_CNT];   /* 종목별 평가손익(부호있음)    */
+                                        /* 1000을 나눈값으로 보관       */
+	int     getcnt[ACC_NO_CNT];         /* 통합선물 보유종목수량(부호있음) */
+	int     get_avr_price_jisu[ACC_NO_CNT];
+                                        /* 통합선물 종목별 평균매입단가 */
+                                        /* 지수 6자리만 보유            */
+                                        /* middle값, 평가손익과 같은 단위 */
+	int     get_avr_price_sosu[ACC_NO_CNT]; /* 통합선물 종목별 평균매입단가 */
+                                        /* 소숫점 8자리임 v99999999     */
+	int		tick_cnt;					/* 60초간 tick count			*/
+	int		uptick_cnt;					/* 60초간 uptick count			*/
+	int		downtick_cnt;				/* 60초간 downtick count		*/
+/*	시세 Auto 주문 Setting Values	*/
+	int		auto_run;					/* 0:종료, 1:기동				*/
+	int		auto_opseq;					/* 옵션주문 Seq					*/
+	int		auto_socket_chk;			/* 후처리 주문 Check Process no	*/
+	int		auto_write;					/* 미리 저장할 곳을 할당해 둔곳	*/
+	char	auto_set[40];				/* 자동주문 설정값				*/
+										/* 0 : 1~6, 콜풋 구분			*/
+										/* 1 : 0~7, 8가지 경우의수		*/
+/*	시세 Auto 주문 Setting Values	*/
+
+	char    filler1[1];                 /* 예비1                        */
+	char    recv_time[12];              /* 수신시간                     */
+                                        /* FMS_CURR[0].recv_time에만
+                                           값을 넣고 비교한다.(key값)   */
+
+	char	tr_gbn[5];					/* SPACE						*/
+	char	item_code[12];				/* 종목코드						*/
+	char    seq_no[3];                  /* 종목일련번호                 */
+	char    crprc[5];                   /* 현재가 (3V2)                 */
+	char    chekyul_qty[7];             /* 체결수량                     */
+	char    chekyul_type_code[2];       /* 체결유형코드                 */
+	char    chekyul_tm[8];              /* 체결시각                     */
+	char    oprc[5];                    /* 시가 (3V2)                   */
+	char    hprc[5];                    /* 고가 (3V2)                   */
+	char    lprc[5];                    /* 저가 (3V2)                   */
+	char    before_crprc[5];            /* 직전가격 (3V2)               */
+	char    tot_con_qty[8];             /* 누적체결수량                 */
+	char    tot_con_amt[11];            /* 누적거래대금 (단위:천원)     */
+	char    market_state_gubun[2];      /* 장상태구분코드               */
+	char    buy_tot_best_qty[7];        /* 매수총호가잔량               */
+	char    buy_1_prmbid[5];            /* 매수1단계우선호가격 (3V2)    */
+	char    buy_1_prmbid_qty[7];        /* 매수1단계우선호가잔량        */
+	char    buy_2_prmbid[5];            /* 매수2단계우선호가격 (3V2)    */
+	char    buy_2_prmbid_qty[7];        /* 매수2단계우선호가잔량        */
+	char    buy_3_prmbid[5];            /* 매수3단계우선호가격 (3V2)    */
+	char    buy_3_prmbid_qty[7];        /* 매수3단계우선호가잔량        */
+	char    buy_4_prmbid[5];            /* 매수4단계우선호가격 (3V2)    */
+	char    buy_4_prmbid_qty[7];        /* 매수4단계우선호가잔량        */
+	char    buy_5_prmbid[5];            /* 매수5단계우선호가격 (3V2)    */
+	char    buy_5_prmbid_qty[7];        /* 매수5단계우선호가잔량        */
+	char    sel_tot_best_qty[7];        /* 매도총호가잔량               */
+	char    sel_1_prmbid[5];            /* 매도1단계우선호가격 (3V2)    */
+	char    sel_1_prmbid_qty[7];        /* 매도1단계우선호가잔량        */
+	char    sel_2_prmbid[5];            /* 매도2단계우선호가격 (3V2)    */
+	char    sel_2_prmbid_qty[7];        /* 매도2단계우선호가잔량        */
+	char    sel_3_prmbid[5];            /* 매도3단계우선호가격 (3V2)    */
+	char    sel_3_prmbid_qty[7];        /* 매도3단계우선호가잔량        */
+	char    sel_4_prmbid[5];            /* 매도4단계우선호가격 (3V2)    */
+	char    sel_4_prmbid_qty[7];        /* 매도4단계우선호가잔량        */
+	char    sel_5_prmbid[5];            /* 매도5단계우선호가격 (3V2)    */
+	char    sel_5_prmbid_qty[7];        /* 매도5단계우선호가잔량        */
+	char    buy_tot_best_cnt[5];        /* 매수유효호가건수             */
+	char    buy_1_best_cnt[4];          /* 매수1단계우선호가건수        */
+	char    buy_2_best_cnt[4];          /* 매수2단계우선호가건수        */
+	char    buy_3_best_cnt[4];          /* 매수3단계우선호가건수        */
+	char    buy_4_best_cnt[4];          /* 매수4단계우선호가건수        */
+	char    buy_5_best_cnt[4];          /* 매수5단계우선호가건수        */
+	char    sel_tot_best_cnt[5];        /* 매도유효호가건수             */
+	char    sel_1_best_cnt[4];          /* 매도1단계우선호가건수        */
+	char    sel_2_best_cnt[4];          /* 매도2단계우선호가건수        */
+	char    sel_3_best_cnt[4];          /* 매도3단계우선호가건수        */
+	char    sel_4_best_cnt[4];          /* 매도4단계우선호가건수        */
+	char    sel_5_best_cnt[4];          /* 매도5단계우선호가건수        */
+	char	best_amt_accept_tm[8];		/* 호가접수시각					*/
+}	SIO_CURR;
+
+typedef struct {
+	int			CHE_Cnt;				/* CHE가 1000이 넘으면 1씩 증가	*/
+	int 		CHE_Arry_Key;			/* 최근 체결내역 100개의 Key	*/
+										/* 체결세내역 100개 기억에만사용*/
+	int 		Befor_CHE_Arry_Key;		/* CURR_Arry_Key 이전값 기억	*/
+	int 		CURR_Arry_Key;			 /* 최근 시세내역 30개의 Key    */
+										 /* 시세내역 30개 기억에만 사용 */
+	int 		Befor_CURR_Arry_Key;	 /* CURR_Arry_Key 이전값 기억	*/
+	char		filler[2];				/* 예비							*/
+	char		ordertime[10];			/* 주문응답 시간				*/
+	char		chetime[10];			/* 주문체결 시간				*/
+	SIF_A0      Options_A0;         	/* 기본                         */
+	SIO_B6      Options_B6;         	/* 호가                         */
+	SIO_A3      Options_A3;         	/* 체결                         */
+	SIO_G7      Options_G7;         	/* 체결 + 호가                  */
+	SIO_CURR	Options_CURR;       	/* 선물현재가 메모리값          */
+	SIO_G7		Options_CURR_Arry[30];  /* 최근 시세내역 30개 기억      */
+	SIO_G7      Options_CHE_Arry[1000]; /* 체결(A3형태로만 기억)		*/
+}	SHM_OPTIONS;	/* 지수옵션 시세 Shared Memory  */
+
+/*************************************************************************
+	BackOffice Data
+*************************************************************************/
+typedef struct {
+	char    band_gbn[1];        		/* 0 : Call 매도				*/
+										/* 1 : Call 매수				*/
+										/* 2 : Put  매도				*/
+										/* 3 : Put  매수				*/
+	char    cost[10];        			/* 소수점 없음(*100)			*/
+	char	time[6];					/* 시분초 "091010"				*/
+	char	future[10];					/* 선물가격						*/
+	char	itemcode[8];				/* 종목코드						*/
+}   MM_COST;   /* 지수옵션 현재가 CURR */
+
+typedef struct {
+	char    band_gbn[1];        		/* 0 : Call 매도				*/
+										/* 1 : Call 매수				*/
+										/* 2 : Put  매도				*/
+										/* 3 : Put  매수				*/
+	char	coieff_a[12];				/* 계수 A 10^8					*/
+	char	coieff_b[12];				/* 계수 B 10^8					*/
+	char	coieff_c[12];				/* 계수 C 10^8					*/
+	char	coieff_d[12];				/* 계수 D 10^8					*/
+	char	currentfutprc[5];			/* 선물현재가					*/
+	char	compfutprc[5];				/* 합성선물현재가				*/
+	char	srup[5];					/* SR 상한치 10^2				*/
+	char	srdn[5];					/* SR 하한치 10^2				*/
+}   MMCO_COST;   /* 지수옵션 현재가 CURR */
+
+/*************************************************************************
+	BackOffice Data
+*************************************************************************/
+typedef struct {
+	STOCK_JISU      Stock_D0;       /* KOSPI                            */
+	STOCK_JISU      Stock_D2;       /* KOSPI200지수                     */
+	STOCK_JISU      Stock_C8;		/* KOSPI100지수						*/
+	STOCK_JISU      Stock_D4;       /* KOSPI100/50지수                  */
+	STOCK_JISU      KStock_E5;      /* KOSDAQ100/50지수                 */
+	SIF_G7	    	Futures_CURR;   /* 선물현재가 메모리값          	*/
+	SIO_G7	    	Options_CURR;   /* 옵션현재가 메모리값             	*/
+	MM_COST			M_Cost;			/* Market Marking 변동성 정보		*/
+	MMCO_COST		MCo_Cost;		/* Market Marking 계수값 정보		*/
+}	SHM_BACKOFFICE; /* 전일자 BackOffice Memory */
+
+/*************************************************************************
+	MiChe Data Struct
+*************************************************************************/
+typedef struct {
+	int     Jan_Cnt;                   			/* 주문잔량             */
+
+	char    AccountNo[9];                       /* 계좌번호             */
+	char    Item_Cd[8];                         /* 종목코드             */
+	char    OrderNo[7];                         /* 주문번호             */
+	char    OriginalOrderNo[7];                 /* 원주문번호           */
+	char    PriceFlag[1];                       /* 정정취소구분         */
+                                            /* (0:신규,1:정정,2:취소)   */
+	char    TradeFlag[2];                       /* 매도매수구분         */
+                                                /* 01 ,신규매도         */
+                                                /* 02 ,신규매수         */
+                                                /* 03 ,전매도           */
+                                                /* 04 ,환매수           */
+                                                /* 05 ,최종만기매도     */
+                                                /* 06 ,최종만기매수     */
+                                                /* 07 ,권리행사         */
+                                                /* 08 ,권리배정         */
+                                                /* 09 ,옵션매도소멸     */
+                                                /* 10 ,옵션매수소멸     */
+	char    Order_Cnt[8];                       /* 주문수량             */
+	char    Order_Jan_Cnt[8];                  	/* 주문잔량             */
+	char    Order_Price[9];                     /* 주문가격             */
+	char    JumunFlag[1];                       /* 주문조건             */
+                                                /* F ,FOK               */
+                                                /* I ,IOC               */
+                                                /* X ,없음              */
+	char    OrderType[1];                       /* 주문유형             */
+                                                /* 'B', '최유리지정가'  */
+                                                /* 'C', '조건부지정가'  */
+                                                /* 'L', '지정가'        */
+                                                /* 'M', '시장가'        */
+                                                /* '0' ,원주문이 있을때 */
+}	MICHE;
+
+/*************************************************************************
+	MM Jumun Data Struct
+*************************************************************************/
+typedef struct {
+	int		auto_run;							/* 자동기동여부			*/
+	int		tot_money;							/* 총한도금액			*/
+	int		tot_op_cnt;							/* 옵션종목 총 수량		*/
+	int		fu_dan_cnt;							/* 선물 단위 수량		*/
+	int		curr_op_or;							/* 현재 옵션주문현황	*/
+
+	/* 총주문 = 체결수량 + 미체결수량 + 잔주문수량						*/
+    struct  MM_ARRY
+    {
+		int		Jong_Seq;						/* 종목 일련번호		*/
+		int		Meme_Flg;						/* 매매구분				*/
+												/* 1:매도, 2:매수		*/
+		int		Tot_Order_Cnt;					/* 총주문수량			*/
+		int		Nu_Che_Cnt;						/* 누적체결수량			*/
+		/* 지금은 사용하지 않지만 나중에(분산주문시) 사용할수도 있다)	*/
+		int		Jan_Cnt;						/* 잔주문수량			*/
+		/* 지금은 사용하지 않지만 나중에(분산주문시) 사용할수도 있다)	*/
+		int		Ju_Gum;							/* 주문금액				*/
+												/* 예, 222.22 => 22222	*/
+		int		F_Che_Ga;						/* 선물체결가격(종목별)	*/	
+												/* 예, 222.22 => 22222	*/
+		int		Che_Gum;						/* 체결금액				*/
+												/* 예, 222.22 => 22222	*/
+		int		Avg_Che_Ga;						/* 해당종목 평균 체결가격	*/
+		char	End_Flag[1];					/* Sub Set End 여부 	*/
+												/* 0:신규주문대상,		*/
+												/* 1:자동정정주문대상	*/
+												/* 5:주문나간상태(미응답)	*/
+												/*   정정주문 내면안됨	*/
+												/* 1과 5가 페어임.		*/
+												/* 2:SUB종료			*/
+												/* 3:자동정정만 종료	*/
+												/* 9:전체종료			*/
+   	 	char    Item_Cd[8];                     /* 종목코드             */
+   	 	char    OrderNo[7];                     /* 주문번호             */
+   	 	char    OriginalOrderNo[7];             /* 원주문번호           */
+   	 	char    PriceFlag[1];                   /* 정정취소구분         */
+   	                                         	/* (0:신규,1:정정,2:취소)   */
+   	 	char    TradeFlag[1];                   /* 매도매수구분         */
+                                                /* 1 ,매도              */
+                                                /* 2 ,매수              */
+		char	Order_Cnt[8];					/* 주문수량				*/
+		char    Order_Price[9];                 /* 주문가격             */
+		char	Client_Moniter_Key[4];			/* Client 화면키		*/
+												/* 주문체결에서 사용	*/
+    }   apno[20];								/* 종목수량 선물포함 Max 20	*/
+}   JU_HISTORY;
+
+/*************************************************************************
+	장개시전 Jumun Data Struct
+*************************************************************************/
+typedef struct {
+	int		auto_run;							/* 자동기동여부			*/
+
+	int		order_cnt;							/* 주문수량				*/
+	int		buffer;								/* 100으로 곱해서 수신	*/
+	int		send_cnt;							/* 주문송신 횟수		*/
+	int		curr_s_cnt;							/* 현재 주문송신 횟수	*/
+	int		op_jugum;							/* 매주문시 옵션주문한도 */
+	int		fu_jugum;							/* 매주문시 선물주문한도 */
+
+	/* 총주문 = 체결수량 + 미체결수량 + 잔주문수량						*/
+    struct  BJ_ARRY
+    {
+		int		sub_auto_run;					/* sub 주문상황			*/
+												/* 000 : 0				*/
+												/* 100 : 1				*/
+												/* 911 or 919 : 2		*/
+												/* 010 : 3				*/
+												/* 191 or 199 : 4		*/
+												/* 999 : 9 				*/ 
+		int		hmd;							/* 합성매도 계산값		*/
+		int		hms;							/* 합성매수 계산값		*/
+
+		/* 3번 반복(선물,옵션1콜,옵션2풋) */
+		struct	BJ_J_ARRY
+		{
+			int		Jong_Seq;					/* 종목 일련번호		*/
+			int		Tot_Order_Cnt;				/* 총주문수량			*/
+			int		Nu_Che_Cnt;					/* 누적체결수량			*/
+			char	End_Flag[1];				/* Sub Set End 여부 	*/
+												/* 0:신규주문대상,		*/
+												/* 1:자동정정주문대상	*/
+												/* 5:주문나간상태(미응답)	*/
+												/*   정정주문 내면안됨	*/
+												/* 1과 5가 페어임.		*/
+												/* 9:종료				*/
+   	 		char    Item_Cd[8];                 /* 종목코드             */
+   	 		char    OrderNo[7];                 /* 주문번호             */
+   	 		char    OriginalOrderNo[7];         /* 원주문번호           */
+   	 		char    TradeFlag[1];               /* 매도매수구분         */
+       		                                    /* 1 ,매도              */
+       		                                    /* 2 ,매수              */
+			char	Order_Cnt[8];				/* 주문수량				*/
+			char    Order_Price[9];             /* 주문가격             */
+		}	sub_set[3];
+
+		char	Client_Moniter_Key[4];			/* Client 화면키		*/
+												/* 주문체결에서 사용	*/
+    }   apno[2];								/* 행사가2개(콜2+풋2)	*/
+												/* 총 2개의 SubSet 존재	*/
+}   JU_S_HISTORY;
+
+typedef struct {
+	int			auto_run_cnt;					/* 기동중인 MM의 수량	*/
+	int			recv_seq;						/* 수신받은 구분값		*/
+												/* 선물 : 999			*/
+												/* 옵션 : 수신종목 Seq	*/
+	MICHE			F_MiChe[10000];				/* 미체결 내역조회		*/
+	JU_HISTORY		Ju_History[ACC_NO_CNT];		/* 계좌별 서버 선물N매매 주문	*/
+	JU_HISTORY		Ju_O_History[ACC_NO_CNT];	/* 계좌별 서버 옵션N매매 주문	*/
+	JU_S_HISTORY	Ju_S_History[ACC_NO_CNT];	/* 계좌별 서버 옵션N매매 주문	*/
+}	SHM_DB; /* 전일자 BackOffice Memory */
+
+/*------------------------------------------------------------------------
+	*   queue   =
+		0: 미사용   TR
+		1: 거래소, 거래원정보, OTCBB,   뉴스
+		2: KOSDAQ, 거래소호가
+		3: 선물
+		4: 옵션
+------------------------------------------------------------------------*/
+
+/*------------------------------------------------------------------------
+	Defined Constants
+------------------------------------------------------------------------*/
+#define		JOB_INIT		0						/* job initialized	*/
+#define		JOB_START		1						/* job started		*/
+#define		JOB_END			2						/* job ended		*/
+#define		JOB_STOP		3						/* job stopped		*/
+
+#define		SHM_MAX_SUB		26								/* A ~ Z	*/
+#define		MAX_DSHM_SEG	50		/* max number of data SHM segments	*/
+
+#define		FILE_BUF_LEN	(8*1024)
+#define		SHM_DATA_SIZE	5120
+#define     DATA_BUF_CNT	30
+
+/*------------------------------------------------------------------------
+	환경 SHM key: 0x(1)(2)(3)(4)(5)(6)(7)(8)
+		(1)		- 1:FEP, 2:PK system
+		(2)		- 1:Real, 2:Test
+		(3)(4)	- 부문. e.g. 01:거래소, 02:선물, 03:지수옵션,04:KOSDAQ, ...
+		(5)(6)	- 00:부문 SHM, 01~50:data SHM segment의 base key
+				  51~99:index SHM segment의 base key
+		(7)(8)	- 00:data SHM, 01~99:semaphore
+------------------------------------------------------------------------*/
+#define		BASE_SHM_KEY	0x21000000L					/* base SHM key	*/
+
+/*------------------------------------------------------------------------
+	시세 SHM key: 0x(1)(2)(3)(4)(5)(6)(7)(8)
+		(1)		- 2:PK system
+		(2)		- 1:Real, 2:Test
+		(3)~(6)	- 0000
+		(7)(8)	- 01:지수선물, 02:지수옵션, 03:유가증권, 04:지수
+------------------------------------------------------------------------*/
+#define		F_SHM_KEY		0x21000001L					/* 지수선물		*/
+#define		O_SHM_KEY		0x21000002L					/* 지수옵션		*/
+#define		S_SHM_KEY		0x21000003L					/* 유가증권		*/
+#define		J_SHM_KEY		0x21000004L					/* 현물지수		*/
+#define		B_SHM_KEY		0x21000005L					/* BackOffice	*/
+#define		DB_SHM_KEY		0x21000009L					/* DB처리용		*/
+
+/*------------------------------------------------------------------------
+	시장별 종목 max 건수
+------------------------------------------------------------------------*/
+#define		SHM_MAX_FUTURES		10						/* 지수선물시세	*/
+#define		SHM_MAX_OPTIONS		1000					/* 지수옵션시세	*/
+#define		SHM_MAX_STOCK		1						/* 유가증권시세	*/
+#define		SHM_MAX_JISU		1						/* 현물지수시세	*/
+#define		SHM_MAX_BACKOFFICE	1000				/* BackOffice시세 	*/
+#define		SHM_MAX_DB			1						/* DB처리용		*/
+
+/*------------------------------------------------------------------------
+  수수료 = 체결가격(체결가)*승수*(징수률 + 협회비)
+  선물승수 500,000원, 옵션승수 100,000원
+
+  선물 총 수수료 :    ? = 체결가격*500,000*(징수률 + 협회비)
+  옵션 총 수수료 :    ? = 체결가격*100,000*(징수률 + 협회비)
+
+  선물 : 징수률 : 0.00000513, 협회비 : 0.00000171, 계약당금액 : 500,000
+  옵션 : 징수률 : 0.00021375, 협회비 : 0.00000855, 계약당금액 : 100,000
+--------------------------------------------------------------------------
+(변경 2008.05.12)
+  선물 : 징수률 : 0.000004104, 협회비 : 0.000001368, 계약당금액 : 500,000
+  옵션 : 징수률 : 0.000171,    협회비 : 0.00000684,  계약당금액 : 100,000
+------------------------------------------------------------------------*/
+/* 선물 1계약당 FUTURES_FEE * 거래소 체결가 / (1000) */
+#define		FUTURES_FEE		274
+/* 옵션 1계약당 OPTIONS_FEE * 거래소 체결가 / (1000) */
+#define		OPTIONS_FEE		1779		/* 옵션 1계약당 수수료	*/
+
+#define		INFO(i)			SHM_All_Daemon_Info[i]
+#define		DAEMON(i)		Shm_Mem[i].Daemon[0]
+#define		PROC(i,j)		Shm_Mem[i].Proc[j]
+#define		FILEM(i,j)		Shm_Mem[i].File[j]
+#define		DSHM(i,j)		Shm_Mem[i].DShm[j]
+#define		TCP1(i,j)		Shm_Mem[i].Tcp1[j]
+#define		TCP2(i,j)		Shm_Mem[i].Tcp2[j]
+#define		UDPIP(i,j)		Shm_Mem[i].Udpip[j]
+#define		SISETR(i,j)		Shm_Mem[i].Sisetr[j]
+#define		ACCNO(i,j)		Shm_Mem[i].Accno[j]
+
+#if defined ISAM_INCL
+#define		CISAM(i,j)		Shm_Mem[i].Cisam[j]
+#endif
+
+#define 	IF_SEQ(i,j)				PROC(i,j).if_seq
+#define 	START_STAT(i,j)			PROC(i,j).start_status
+#define		IFIFD(i,j,k)			PROC(i,j).in_FIFO_fd[k]
+#define		FFN(i,j,k)				PROC(i,j).fifo_f[k]
+#define		TIME_VALUE(i,j)			PROC(i,j).timeout
+#define     LAST_TR(i,j)            PROC(i,j).last_tr
+#define     LOGON_ID(i,j)           PROC(i,j).logon_id
+#define     LOGON_PW(i,j)           PROC(i,j).logon_pw
+#define		TCP1_NSTAT(i,j)			PROC(i,j).l.t1.network_status
+#define		TCP2_LINE_GUBUN(i,j)	PROC(i,j).l.t2.line_gubun
+#define		TCP2_CSTAT(i,j)			PROC(i,j).l.t2.connect_status
+#define		DATA_CNT(i,j)			PROC(i,j).data_cnt
+#define		SESSION_STAT(i,j)		PROC(i,j).session_stat
+
+#define	TCP1_PORT(i,j)    TCP1(i,PROC(i,j).l.t1.line_gubun-1).port_no
+#define	TCP1_SPORT(i,j,k) TCP1(i,PROC(i,j).l.t1.line_gubun-1).service_port_no[k]
+#define	TCP1_IP(i,j,k)    TCP1(i,PROC(i,j).l.t1.line_gubun-1).ip_addr[k]
+#define	TCP1_P_ST(i,j)    TCP1(i,PROC(i,j).l.t1.line_gubun-1).port_status
+#define	TCP1_S_ST(i,j,k)  TCP1(i,PROC(i,j).l.t1.line_gubun-1).service_status[k]
+#define	TCP1_S_CT(i,j,k)  TCP1(i,PROC(i,j).l.t1.line_gubun-1).service_count[k]
+#define	TCP1_INFO(i,j)    TCP1(i,PROC(i,j).l.t1.line_gubun-1).tcp_info
+
+#define		TCP2_ID(i,j,k)		TCP2(i,PROC(i,j).l.t2.l[k]-1).dup_id
+#define		TCP2_PORT(i,j,k)	TCP2(i,PROC(i,j).l.t2.l[k]-1).port_no
+#define		TCP2_IP1(i,j,k)		TCP2(i,PROC(i,j).l.t2.l[k]-1).ip_addr[0]
+#define		TCP2_IP2(i,j,k)		TCP2(i,PROC(i,j).l.t2.l[k]-1).ip_addr[1]
+#define		TCP2_IP3(i,j,k)		TCP2(i,PROC(i,j).l.t2.l[k]-1).ip_addr[2]
+#define		TCP2_IP4(i,j,k)		TCP2(i,PROC(i,j).l.t2.l[k]-1).ip_addr[3]
+#define 	TCP2_PSTAT(i,j,k) 	TCP2(i,PROC(i,j).l.t2.l[k]-1).proc_status
+#define 	TCP2_LSTAT(i,j,k) 	TCP2(i,PROC(i,j).l.t2.l[k]-1).line_status
+#define 	TCP2_NSTAT(i,j,k) 	TCP2(i,PROC(i,j).l.t2.l[k]-1).network_status
+#define		TCP2_INFO(i,j,k)	TCP2(i,PROC(i,j).l.t2.l[k]-1).tcp_info
+
+#define		UDP_ID(i,j)			UDPIP(i,PROC(i,j).l.u-1).dup_id
+#define		UDP_PORT(i,j,k)		UDPIP(i,PROC(i,j).l.u-1).port[k]
+#define		UDP_IP1(i,j,k)		UDPIP(i,PROC(i,j).l.u-1).ip_addr[k][0]
+#define		UDP_IP2(i,j,k)		UDPIP(i,PROC(i,j).l.u-1).ip_addr[k][1]
+#define		UDP_IP3(i,j,k)		UDPIP(i,PROC(i,j).l.u-1).ip_addr[k][2]
+#define		UDP_IP4(i,j,k)		UDPIP(i,PROC(i,j).l.u-1).ip_addr[k][3]
+#define		UDP_P_ST(i,j)		UDPIP(i,PROC(i,j).l.u-1).port_status
+#define		UDP_S_ST(i,j)		UDPIP(i,PROC(i,j).l.u-1).service_status
+#define		UDP_INFO(i,j)		UDPIP(i,PROC(i,j).l.u-1).info
+
+/* input files	*/
+#define 	IFN(i,j,k)			FILEM(i,PROC(i,j).in_f[k]-1).file_name
+#define 	IFW(i,j,k,l)		FILEM(i,PROC(i,j).in_f[k]-1).w_cnt[l]
+#define 	IFR(i,j,k,l)		FILEM(i,PROC(i,j).in_f[k]-1).r_cnt[l]
+#define 	IFS(i,j,k)			FILEM(i,PROC(i,j).in_f[k]-1).record_size
+#define 	IFI(i,j,k)			FILEM(i,PROC(i,j).in_f[k]-1).file_info
+#define 	IFC(i,j,k)			FILEM(i,PROC(i,j).in_f[k]-1).fifo_count
+
+/* output files	*/
+#define 	OFN(i,j,k)			FILEM(i,PROC(i,j).out_f[k]-1).file_name
+#define 	OFW(i,j,k,l)		FILEM(i,PROC(i,j).out_f[k]-1).w_cnt[l]
+#define 	OFR(i,j,k,l)		FILEM(i,PROC(i,j).out_f[k]-1).r_cnt[l]
+#define 	OFS(i,j,k)			FILEM(i,PROC(i,j).out_f[k]-1).record_size
+#define 	OFI(i,j,k)			FILEM(i,PROC(i,j).out_f[k]-1).file_info
+#define 	OFC(i,j,k)			FILEM(i,PROC(i,j).out_f[k]-1).fifo_count
+
+/* input data SHM	*/
+#define 	IDN(i,j,k)			DSHM(i,PROC(i,j).in_d[k]-1).data_name
+#define 	IDK(i,j,k)			DSHM(i,PROC(i,j).in_d[k]-1).key_info
+#define 	IDC(i,j,k)			DSHM(i,PROC(i,j).in_d[k]-1).fifo_count
+#define 	IDS(i,j,k)			DSHM(i,PROC(i,j).in_d[k]-1).data_size
+#define 	IDM(i,j,k)			DSHM(i,PROC(i,j).in_d[k]-1).max_rec
+#define 	IDO(i,j,k)			DSHM(i,PROC(i,j).in_d[k]-1).offset
+#define 	IDW(i,j,k,l)		DSHM(i,PROC(i,j).in_d[k]-1).w_cnt[l]
+#define 	IDR(i,j,k,l)		DSHM(i,PROC(i,j).in_d[k]-1).r_cnt[l]
+#define 	IDI(i,j,k)			DSHM(i,PROC(i,j).in_d[k]-1).info
+
+/* output data SHM	*/
+#define 	ODN(i,j,k)			DSHM(i,PROC(i,j).out_d[k]-1).data_name
+#define 	ODK(i,j,k)			DSHM(i,PROC(i,j).out_d[k]-1).key_info
+#define 	ODC(i,j,k)			DSHM(i,PROC(i,j).out_d[k]-1).fifo_count
+#define 	ODS(i,j,k)			DSHM(i,PROC(i,j).out_d[k]-1).data_size
+#define 	ODM(i,j,k)			DSHM(i,PROC(i,j).out_d[k]-1).max_rec
+#define 	ODO(i,j,k)			DSHM(i,PROC(i,j).out_d[k]-1).offset
+#define 	ODW(i,j,k,l)		DSHM(i,PROC(i,j).out_d[k]-1).w_cnt[l]
+#define 	ODR(i,j,k,l)		DSHM(i,PROC(i,j).out_d[k]-1).r_cnt[l]
+#define 	ODI(i,j,k)			DSHM(i,PROC(i,j).out_d[k]-1).info
+
+#if defined ISAM_INCL
+/* input c-isam files	*/
+#define 	ICN(i,j,k)			CISAM(i,PROC(i,j).in_c[k]-1).file_name
+#define 	ICK(i,j,k)			CISAM(i,PROC(i,j).in_c[k]-1).key_size
+#define 	ICS(i,j,k)			CISAM(i,PROC(i,j).in_c[k]-1).record_size
+#define 	ICI(i,j,k)			CISAM(i,PROC(i,j).in_c[k]-1).file_info
+
+/* output c-isam files	*/
+#define 	OCN(i,j,k)			CISAM(i,PROC(i,j).out_c[k]-1).file_name
+#define 	OCK(i,j,k)			CISAM(i,PROC(i,j).out_c[k]-1).key_size
+#define 	OCS(i,j,k)			CISAM(i,PROC(i,j).out_c[k]-1).record_size
+#define 	OCI(i,j,k)			CISAM(i,PROC(i,j).out_c[k]-1).file_info
+#endif
+
+#define		SFIFD(i)			Shm_Mem[i].start_FIFO_fd
+#define		EFIFD(i)			Shm_Mem[i].exit_FIFO_fd
+#define		DFIFD(i)			Shm_Mem[i].daemon_FIFO_fd
+#define		SLOGW(i)			DAEMON(i).w_cnt
+#define		SLOGR(i)			DAEMON(i).r_cnt
+
+/*------------------------------------------------------------------------
+	Global Variables
+------------------------------------------------------------------------*/
+#ifdef	_GLOBAL
+
+size_t			Shmsize;				/* shared memory size			*/
+char			*Shmptr;				/* shared memory pointer		*/
+char			*DShmPtr[MAX_DSHM_SEG];	/* data SHM pointer				*/
+int				D_K = -1;				/* daemon key					*/
+int				DD_K = -1;				/* daemon key					*/
+int				P_K = -1;				/* process key					*/
+int				T_K = -1;				/* sisetr index key				*/
+int				S_K;					/* line key						*/
+int				L_K;				/* line key (after business hours)	*/
+char 		   *Data_Ptr[DATA_BUF_CNT];	/* address of data buffer		*/
+int     		Data_I = 0;				/* data buffer count			*/
+int     		Process_Count = SHM_MAX_SUB;/* maximum No of sub daemon	*/
+int				SHM_Shmid;
+int				SemId[99];
+int 			OD_FIFO_fd[99][9];		/* fd of out-data FIFO			*/
+ALL_DAEMON_INFO	*SHM_All_Daemon_Info;	/* address of daemon SHM		*/
+SUB_DAEMON_INFO	Info[SHM_MAX_SUB];		/* temporary daemon buffer		*/
+int				Mem_Shmid[SHM_MAX_SUB];
+char			*SHM_Mem[SHM_MAX_SUB];	/* address of sub daemon SHM	*/
+SHM_MEMORY		Shm_Mem[SHM_MAX_SUB];	/* sub SHM						*/
+char			*ShmLogPtr;				/* SHM log pointer				*/
+int				ShmLogSemId;			/* semaphore ID for SHM log lock*/
+int				ShmLogFifoFd;			/* fd of SHM log FIFO			*/
+
+int				SISE_F_Shmid;
+SHM_FUTURES		*Shm_Futures;			/* 지수선물시세					*/
+int				SISE_O_Shmid;
+SHM_OPTIONS		*Shm_Options;			/* 지수옵션시세					*/
+int				SISE_S_Shmid;
+SHM_STOCK		*Shm_Stock;				/* 유가증권시세					*/
+int				SISE_J_Shmid;
+SHM_JISU		*Shm_Jisu;				/* 현물지수시세					*/
+int				SISE_B_Shmid;
+SHM_BACKOFFICE	*Shm_BackOffice;		/* BackOffice시세				*/
+int				SISE_DB_Shmid;
+SHM_DB			*Shm_Db;				/* DB사용 						*/
+
+int				P_Semid = -1;
+int				DP_Semid = -1;
+
+#else
+
+extern size_t			Shmsize;
+extern char				*Shmptr;
+extern char				*DShmPtr[MAX_DSHM_SEG];
+extern int				D_K;
+extern int				DD_K;
+extern int				P_K;
+extern int				T_K;
+extern int				S_K;
+extern int				L_K;
+extern char				*Data_Ptr[DATA_BUF_CNT];
+extern int				Data_I;
+extern int				Process_Count;
+extern int				SHM_Shmid;
+extern int				SemId[99];
+extern int 				OD_FIFO_fd[99][9];
+extern ALL_DAEMON_INFO	*SHM_All_Daemon_Info;
+extern SUB_DAEMON_INFO	Info[SHM_MAX_SUB];
+extern int				Mem_Shmid[SHM_MAX_SUB];
+extern char				*SHM_Mem[SHM_MAX_SUB];
+extern SHM_MEMORY		Shm_Mem[SHM_MAX_SUB];
+extern char				*ShmLogPtr;
+extern int				ShmLogSemId;
+extern int				ShmLogFifoFd;
+
+extern int				SISE_F_Shmid;
+extern SHM_FUTURES		*Shm_Futures;
+extern int				SISE_O_Shmid;
+extern SHM_OPTIONS		*Shm_Options;
+extern int				SISE_S_Shmid;
+extern SHM_STOCK		*Shm_Stock;
+extern int				SISE_J_Shmid;
+extern SHM_JISU			*Shm_Jisu;
+extern int				SISE_B_Shmid;
+extern SHM_BACKOFFICE	*Shm_BackOffice;
+extern int				SISE_DB_Shmid;
+extern SHM_DB			*Shm_Db;
+
+extern int				P_Semid;
+extern int				DP_Semid;
+
+#endif
+
+/*************************************************************************
+	End of Program (shm_memory.h)
+*************************************************************************/
+#endif

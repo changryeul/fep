@@ -1,0 +1,1072 @@
+#define		_GLOBAL
+/*------------------------------------------------------------------------
+#	Module	: 금융상품 시세수신 (UDP)
+#	File	: pf_7400_ur.c
+------------------------------------------------------------------------*/
+
+/*------------------------------------------------------------------------
+	Header Files
+------------------------------------------------------------------------*/
+#include    "pa_struct.h"
+#include	"fep_fepp.h"
+#include	"fx.h"
+
+#define     DATA_SIZE       100
+
+#include    "buf_struct.h"
+
+//#include	"agenv.h"
+#ifndef NO_AGXPI
+#include	"agxpi.h"
+#endif
+
+//#define		TESTLOG
+/*------------------------------------------------------------------------
+	Constants and Structures
+------------------------------------------------------------------------*/
+#define		MEMCPY(x, y)		memcpy(x, y, (strlen(y)>sizeof(x)?sizeof(x):strlen(y)))
+
+#define		SVR_PORT_NO		UDP_PORT(D_K,P_K,0)
+#define		READ_BUF_SIZE	2048
+
+/* 시세 Seq 위치 Size */
+#define		S_H_SIZE		5								/* TR(5)	*/
+/* 기본마스터 Seq 위치 Size */
+#define		M_H_SIZE		27	/* TR(5) + SEQ(8) + JCNT(6) + DATE(8)	*/
+
+/*------------------------------------------------------------------------
+	Global Variables
+------------------------------------------------------------------------*/
+struct ip_mreq		mreq;
+struct sockaddr_in	SvrAddr, ClntAddr;
+int		Sockfd, FIFO_fd[MAX_AUTO_PROC];
+int		Idx, Che_Gbn;
+char	ApType[10];
+
+#ifndef NO_AGXPI
+AG_FIX	s_afix;
+Ag_Fix	s_xfix;
+TFILE	s_trcf;
+TFile	_trcf_ = (TFile) &s_trcf;
+#endif
+
+int	Provider = 0;		/* 1:JPM 2:NH 3:SH (runtime, from _Exe_Name) */
+
+/*------------------------------------------------------------------------
+	Function Prototypes
+------------------------------------------------------------------------*/
+extern void	Sise_SHM_Attach(key_t inkey);
+static int	conv_JPM(char *pbuff, int dlen, CO_B6FX *psise);
+static int	conv_NH(char *pbuff, int dlen, CO_B6FX *psise);
+static int	conv_SH(char *pbuff, int dlen, CO_B6FX *psise);
+void	PF_7400_UR (void);
+int     Init_Parameters (void);
+int		Socket_Connect (void);
+int		Recv_Data (char *);
+#if	0	/* HONG */
+int		Add_Count_UR (void);
+#endif	/* HONG */
+int		Add_Count_DD (char *);
+void	Set_Sise (CO_B6FX *);
+void	Attach_FX_SHM (void);
+int	Conv_Dispatch (char *, int, CO_B6FX *);
+void	Write_Read_Fifo (int, int);
+
+/*----------------------------------------------------------------------*/
+int		main (int argc, char *argv[])
+/*----------------------------------------------------------------------*/
+{
+	Init_Proc (argc, argv);
+	PF_7400_UR ();
+	Exit_Process ();
+}	/* End of main ()	*/
+
+/*----------------------------------------------------------------------*/
+void	PF_7400_UR (void)
+/*----------------------------------------------------------------------*/
+{
+	CO_B6FX	r_sise;
+	char 	r_buf[READ_BUF_SIZE];
+	int		i, rt;
+
+	rt = Init_Parameters ( );
+	if (rt == NOTOK)
+		return;
+
+	rt = Socket_Connect ();
+	if (rt == NOTOK)
+		return;
+
+	SLog (USR_OK, "socket connected:port[%d]", SVR_PORT_NO);
+
+	Shm_FX[0].total_item_cnt = SHM_MAX_FX;		/* 최대값으로 설정 */
+	while (START_S != JOB_END)
+	{
+/* 20211022
+		Stat_Save ();
+*/
+		memset (r_buf, 0, sizeof (r_buf));
+		memset (&r_sise, 0x00, sizeof (CO_B6FX));
+
+		rt = Recv_Data (r_buf);
+
+		if (rt == 0)
+		{
+			SLog (USR_OK, "poll timeout");
+			continue;
+		}
+		else if (rt < 0)
+		{
+			SLog (UDP_ERROR, "receive fail {%d:%s}", SYS_NO, SYS_STR);
+			close (Sockfd);
+
+			rt = Socket_Connect ();
+
+			if (rt == NOTOK)
+				return;
+
+			continue;
+		}
+#if	0	// def	TESTLOG
+		Log (USR_OK, "RD [%s]", r_buf);
+#endif
+
+		rt = Conv_Dispatch(r_buf, rt, &r_sise);   /* runtime provider dispatch */
+		if (rt < 0)
+		{
+			SLog (UDP_WARN, "Receive Data Convert Fail (%d)", rt);
+			continue;
+		}
+		else if (rt > 0)
+			continue;
+
+#if	0	/* HONG */
+		memset (TrCode, 0, sizeof (TrCode));			/* TRCODE 저장	*/
+		sprintf (TrCode, "%-5.5s", r_buf);
+#endif	/* HONG */
+
+		Che_Gbn = Idx = 0;
+		Set_Sise (&r_sise);
+		
+		/* 체결관련시 평가손익 && 자동전략 처리위한 전달 */
+		if (Che_Gbn > 0)
+		{
+			for (i = 0; i < MAX_AUTO_PROC; i++)
+			{
+				if (Shm_FX[Idx].auto_use[i] != 0)			/* 기동중인 자동이 해당종목을 설정했을때 전달 */
+				{
+					Write_Read_Fifo (1, i);
+				}
+			}
+		}
+		else if (Che_Gbn < 0)
+		{
+#if 0
+			/* polling data */
+			if (memcmp (r_buf, "I2", 2) == 0)
+			{
+				SLog (USR_OK, "I2 [%.5s]", r_buf);
+			}
+			else
+				SLog (USR_OK, "Other [%.5s]", r_buf);
+#endif
+			continue;
+		}
+
+/* 지금은 필요 없을 듯
+	    len = Add_Count_UR ();
+*/
+
+		/* 운영장비에서는 File Write를 하지않고 개발기나 테스트장비에서 File Write한다.		*/
+		/* 해당 파일은 비상시 또는 장종류후 전략시뮬레이션을 위한 통자료로만 사용을 한다.	*/
+/* 20220222 체결,호가데이터 필요없다하여 저장하는기능 제거
+		if ((memcmp(r_buf, "A0", 2) == 0)	||
+			(Che_Gbn > 0	&& 
+			 (memcmp ((char *)getenv ("_FEP_DIV"), "TEST", 4) == 0)) )
+*/
+/*
+		if (memcmp(r_buf, "A0", 2) == 0)
+		{
+*/
+#if	0
+			/* File Write */
+			memset (&W_Fmt, 0x20, sizeof (FILE_BUFF_FORMAT));
+
+			/* write to DD file	*/
+			ItoAf (O_W_CNT1 + 1, W_Fmt.If_Seq,	sizeof (W_Fmt.If_Seq));
+			memcpy (W_Fmt.ApType, ApType,		sizeof (W_Fmt.ApType));
+			memcpy (W_Fmt.ResponseCode, RES_NORMAL, strlen (RES_NORMAL));
+			memcpy (W_Fmt.RecvTime1, m_time,	sizeof (W_Fmt.RecvTime1));
+			memcpy (W_Fmt.RecvTime2, &m_time[sizeof(W_Fmt.RecvTime1)],
+												sizeof (W_Fmt.RecvTime2));
+
+			memset (W_Fmt.DataHeader, 0x20, 20+DATA_SIZE);
+			memcpy (W_Fmt.Data, r_buf, strlen(r_buf));
+			W_Fmt.LineFeed[0] = '\n';
+
+			rt = F_W (TS_W1_1, (void *)&W_Fmt, 1);
+			if (rt != 1)
+			{
+				SLog (SAM_FATAL, "file write fail[%s] rt[%d]", OFN(D_K,P_K,0), rt);
+					close (Sockfd);
+					return;
+			}
+
+			Add_Count_DD (TrCode);
+#endif
+/*
+		}
+*/
+
+//		Set_TR_Time ();
+//		INT_SEQ ++;
+	}
+
+	return;
+}	/* End of PF_7400_UR ()	*/
+
+/*************************************************************************
+    Function        : . Init_Parameters
+    Parameters IN   : .
+    Parameters OUT  : .
+    Return Code     : . int
+    Comment         : . All Program Parameters Init
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+int    Init_Parameters ()
+/*----------------------------------------------------------------------*/
+{
+	int         i, j, rt, flag;
+	char        item_code[20], memberitem[10], tmp[128];
+	char        d_time[16], head_size[10], cli_orsnd[21];
+	char		fifo_name[100], bumun[4], m_time[24];
+	char		fix_log_dir[256];
+
+	/* FEP: RISK(FX_Sise)/ITEM are attached by Sise_SHM() in Init_Proc. */
+	/* Shm_FX(FX_SHM_KEY, new P4-1) is not in the standard set -> attach locally. */
+	Attach_FX_SHM();
+	Provider = (_Exe_Name[6] >= '1' && _Exe_Name[6] <= '3') ? _Exe_Name[6]-'0' : 1;
+	Log(USR_OK, "Provider=[%d] (1:JPM 2:NH 3:SH)", Provider);
+
+	sprintf (ApType, "%-2.2s%-4.4s%-2.2s", _Exe_Name, _Exe_Name+3, _Exe_Name+8);
+	LtoU (ApType, strlen (ApType));
+
+/* ************************************************************************ */
+/* 7102/7202 : 전략기동중인 시장+종목을 수신했을때 전략에 전달용(Signal용)	*/
+/* ************************************************************************ */
+//	sprintf (fifo_name, "%s/PA/pa_7402_ur1", _FEP_FIFO);
+
+	/* 전략전달용 FIFO */
+	for (i = 0; i < MAX_AUTO_PROC; i++)
+	{
+		memset (fifo_name, 0, sizeof(fifo_name));
+		sprintf (fifo_name, "%s/PO/pf_dbell_%02d", _FEP_FIFO, i);   /* P4-full(d): slot-keyed doorbell */
+
+		/* 전략전달용 FIFO */
+		FIFO_fd[i] = open (fifo_name, O_RDWR|O_NDELAY);
+		if (FIFO_fd[i] < 0)
+			SLog (FIF_FATAL, "cannot open FIFO[%s][%d][%d:%s]", fifo_name, FIFO_fd, SYS_NO, SYS_STR);
+		Log (USR_OK, "fifo_name[%s][%d] FIFO_fd[%d]", fifo_name, strlen(fifo_name), FIFO_fd[i]);
+	}	
+
+#if	0	/* HONG */
+	/* 누적체결수량 */
+	tot_cq = 0;
+#endif	/* HONG */
+
+    /*===============================================================
+	* FIX 전문 변환용 로컬메모리 초기화
+	===============================================================*/
+#ifndef NO_AGXPI
+	// init log file
+	sprintf(fix_log_dir, "%s/%s/00000000", _FEP_LOG, bumun);
+	rt = agxpi_tfile_vinit (_trcf_, fix_log_dir, AG_NULL, AG_HOME, TRC_DIR, AGINI_GID, AGINI_SGI, AGINI_MYI, TDAT, DALL);
+	agtrc_open (AG_NULL, _trcf_);
+
+	// start message
+	//  agtrc_msg (_trcf_, AGINI_GID, AGINI_SGI, AGINI_MYI, 0, 0, TDBG, "fixgetval START\n");
+	mxzinit(s_afix);
+	s_xfix = (Ag_Fix) &s_afix;
+
+	rt = agfix_at (s_xfix, AFIX_MAT_INIT);
+	if (rt)
+	{
+		SLog(UDP_ERROR, "agfix_at ERROR-R:%d E:%d ...", rt, errno);
+		return (NOTOK);
+	}
+#endif	/* NO_AGXPI */
+
+	return (OK);
+}   /* End of Init_Parameters ()    */
+
+/*************************************************************************
+	Function		: . Socket_Connect
+	Parameters IN	: .
+	Parameters OUT	: .
+	Return Code		: . int (0:success, -1:failure)
+	Comment			: . connect to a socket
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+int		Socket_Connect (void)
+/*----------------------------------------------------------------------*/
+{
+	int 	rt, val, len;
+
+	char	ip_addr[16];
+
+	/* P4-full: guard unmapped udpip (l.u<=0) - UDP_IP/UDP_PORT macros would
+	   index UDPIP[-1] and segfault. Fail gracefully if pf_ udpip not mapped. */
+	if (PROC(D_K,P_K).l.u <= 0) {
+		SLog (UDP_FATAL, "Socket_Connect: udpip not mapped (l.u=%d) - check pf_ letter/udpip config", PROC(D_K,P_K).l.u);
+		return (NOTOK);
+	}
+
+	sprintf(ip_addr, "%d.%d.%d.%d", UDP_IP1(D_K,P_K,0), UDP_IP2(D_K,P_K,0),
+									UDP_IP3(D_K,P_K,0), UDP_IP4(D_K,P_K,0));
+
+	SLog(USR_OK, "Ip_Addr -> [%s]", ip_addr);
+
+	bzero ((unsigned char *)&SvrAddr, sizeof (SvrAddr));
+	SvrAddr.sin_family         = AF_INET;
+/* 202108
+    SvrAddr.sin_addr.s_addr    = inet_addr (ip_addr);
+*/
+    inet_pton(AF_INET, ip_addr, &SvrAddr.sin_addr.s_addr);
+	SvrAddr.sin_port           = htons (SVR_PORT_NO);
+
+	bzero ((unsigned char *)&mreq, sizeof (mreq));
+	mreq.imr_multiaddr          = SvrAddr.sin_addr;
+	mreq.imr_interface.s_addr   = htonl(INADDR_ANY);
+
+	Sockfd = socket (AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+
+	if (Sockfd < 0)
+	{
+		SLog (UDP_FATAL, "socket open fail {%d:%s}", SYS_NO, SYS_STR);
+		return (NOTOK);
+	}
+
+	/* 2011.03 시세수신 증속에 따른 버퍼량 증가 */
+	/* val = 262144; 256K, 524288(512K)	*/
+#if 0
+	val = 524288;												/* 512K	*/
+#endif
+	val = 1228800;												/* 1228800K	*/
+	len = sizeof (val);
+
+	//rt = setsockopt (Sockfd, SOL_SOCKET, SO_RCVBUF, (char *)&val, len);
+	rt = setsockopt (Sockfd, SOL_SOCKET, SO_REUSEADDR, (char *)&val, len);
+	if (rt == -1)
+	{
+		SLog (UDP_WARN, "setsockopt (SO_RCVBUF) fail {%d:%s}", SYS_NO, SYS_STR);
+		return (NOTOK);
+	}
+
+	if (bind (Sockfd, (struct sockaddr *)&SvrAddr, sizeof (SvrAddr)) < 0)
+	{
+		SLog (UDP_FATAL, "bind fail {%d:%s}", SYS_NO, SYS_STR);
+		return (NOTOK);
+	}
+#if	0
+	rt = setsockopt(Sockfd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
+	if (rt == -1)
+	{
+		SLog (UDP_WARN, "setsockopt (MULTICAST[%d]) fail {%d:%s}", mreq, SYS_NO, SYS_STR);
+		return (NOTOK);
+	}
+#endif
+
+	return (OK);
+}	/* End of Socket_Connect ()	*/
+
+/*************************************************************************
+	Function		: . Recv_Data
+	Parameters IN	: .
+	Parameters OUT	: . p_str	: receive buffer
+	Return Code		: . int (0:timeout, -1:failure, >0:number of bytes received)
+	Comment			: . receive data
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+int		Recv_Data (char *p_str)
+/*----------------------------------------------------------------------*/
+{
+	int				rt, len;
+#if defined __linux
+	fd_set	read_set;
+#else
+	struct fd_set	read_set;
+#endif
+	struct timeval	timeout;
+
+	len = sizeof (ClntAddr);
+
+	FD_ZERO (&read_set);
+	FD_SET (Sockfd, &read_set);
+	timeout.tv_sec = 70;
+	timeout.tv_usec = 0;
+
+	rt = select (Sockfd+1, &read_set, NULL, NULL, &timeout);
+
+	if (rt < 0)
+	{
+	SLog (SYS_FATAL, "select fail {%d:%s}", SYS_NO, SYS_STR);
+		return (NOTOK);
+	}
+ 
+	if (FD_ISSET (Sockfd, &read_set))
+	{
+#if defined __linux
+		rt = recvfrom (Sockfd, p_str, READ_BUF_SIZE, 0,
+			(struct sockaddr *)&ClntAddr, (socklen_t *)&len);
+#else
+		rt = recvfrom (Sockfd, p_str, READ_BUF_SIZE, NULL,
+			(struct sockaddr *)&ClntAddr, (socklen_t *)&len);
+#endif
+		return (rt);
+	}
+
+	return (OK);
+}	/* End of Recv_Data ()	*/
+
+#if	0	/* HONG */
+/*************************************************************************
+	Function		: . Add_Count_UR
+	Parameters IN	: .
+	Parameters OUT	: .
+	Return Code		: . int (-1:failure, 0:not used, >0:data length)
+	Comment			: . add receive count
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+int		Add_Count_UR (void)
+/*----------------------------------------------------------------------*/
+{
+	int		rt;
+	int		i;
+
+	rt = NOTOK;
+	T_K = NOTOK;
+
+	for (i = 0; i < DAEMON(D_K).sisetr_count; i ++)
+	{
+		if (SISETR(D_K,i).tr[0] == '\0')
+			break;
+
+		if (memcmp (SISETR(D_K,i).tr, TrCode, 5) == 0)
+		{
+			if (SISETR(D_K,i).queue == 0)					/* not used	*/
+			{
+				rt = 0;
+				break;
+			}
+			else
+			{
+				SISETR(D_K,i).ur_count ++;
+
+				T_K = i;
+				rt = SISETR(D_K,T_K).length;
+				break;
+			}
+		}
+	}
+
+	return (rt);
+}	/* End of Add_Count_UR ()	*/
+#endif	/* HONG */
+
+/*************************************************************************
+	Function		: . Add_Count_DD
+	Parameters IN	: . tr	: TR code
+	Parameters OUT	: .
+	Return Code		: . void
+	Comment			: . add divide count
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+int		Add_Count_DD (char *p_tr)
+/*----------------------------------------------------------------------*/
+{
+    int         rt = NOTOK;
+    register int   i;
+
+    for (i = 0; i < DAEMON(D_K).sisetr_count; i ++)
+    {
+        if (SISETR(D_K,i).tr[0] == '\0')
+            break;
+
+        if (memcmp (SISETR(D_K,i).tr, p_tr, strlen (p_tr)) == 0)
+        {
+            SISETR(D_K,i).dd_count ++;
+
+            rt = SISETR(D_K,i).length;
+            break;
+        }
+    }
+
+    return (rt);
+}	/* End of Add_Count_DD ()	*/
+
+/*************************************************************************
+	Function		: . Set_Sise
+	Parameters IN	: . ap : received data
+	Parameters OUT	: .
+	Return Code		: . void
+	Comment			: . set sise data SHM (기본/호가/체결)
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+void	Set_Sise (CO_B6FX *ap)
+/*----------------------------------------------------------------------*/
+{
+	Idx = Key_Search_FX(ap->excode, ap->symb);
+	if (Idx != NOTOK)
+	{
+		/* 거래소 코드 */
+		memcpy (Shm_Risk[0].FX_Sise[0][Idx].m_exch, ap->excode, sizeof (ap->excode));
+		/* 종목코드 */
+		memcpy (Shm_Risk[0].FX_Sise[0][Idx].m_item_cd, ap->symb, sizeof (ap->symb));
+#if defined A7401
+		/* 공용 매도1호가가격 */
+		if (ap->offerprc > 0)
+		{
+			Shm_Risk[0].FX_Sise[0][Idx].sell_1_price = ap->offerprc;
+			Shm_Risk[0].FX_Sise[0][Idx].complete_f[0] |= 0x01;
+#ifdef	TESTLOG
+		Log (USR_OK, "[%d][%.7s][%f]o[%f]", Idx, ap->symb, ap->bidprc, ap->offerprc);
+#endif
+		}
+		/* 공용 매수1호가가격 */
+		else if (ap->bidprc > 0)
+		{
+			Shm_Risk[0].FX_Sise[0][Idx].buy_1_price = ap->bidprc;
+			Shm_Risk[0].FX_Sise[0][Idx].complete_f[0] |= 0x10;
+#ifdef	TESTLOG
+		Log (USR_OK, "[%d][%.7s]b[%f][%f]", Idx, ap->symb, ap->bidprc, ap->offerprc);
+#endif
+		}
+
+		if ((Shm_Risk[0].FX_Sise[0][Idx].complete_f[0] & 0x11) == 0x11)
+		{
+			Shm_Risk[0].FX_Sise[0][Idx].complete_f[0] = 0;
+			Che_Gbn = 1;
+#ifdef	TESTLOG
+		Log (USR_OK, "[%d][%.7s][%f][%f]", Idx, ap->symb, ap->bidprc, ap->offerprc);
+#endif
+		}
+
+#else
+		Shm_Risk[0].FX_Sise[0][Idx].sell_1_price = ap->offerprc;
+		Shm_Risk[0].FX_Sise[0][Idx].buy_1_price = ap->bidprc;
+		if (ap->offerprc > 0 && ap->bidprc > 0)
+			Che_Gbn = 1;
+
+#ifdef	TESTLOG
+		Log (USR_OK, "[%d][%.7s][%f][%f]", Idx, ap->symb, ap->bidprc, ap->offerprc);
+#endif
+
+#if 1        // by lcr quote id
+		memcpy( Shm_Risk[0].FX_Sise[0][Idx].bid_quote_id , ap->bid_quote_id, 30);
+		memcpy( Shm_Risk[0].FX_Sise[0][Idx].ask_quote_id , ap->ask_quote_id, 30);
+#endif 
+
+#ifdef	TESTLOG
+		Log (USR_OK, " [%d][%.7s] shm_risk bid quote_id[%s] ask quote_id[%s]", Idx, ap->symb, ap->bid_quote_id, ap->ask_quote_id);
+#endif
+#endif
+
+//		Shm_FX[Idx].HogaLastGbn = 1;
+		memcpy ((char *)&Shm_FX[Idx].B6, (char *)ap, sizeof (CO_B6FX));
+
+		Shm_FX[Idx].Befor_CURR_Arry_Key = Shm_FX[Idx].CURR_Arry_Key;
+		if ((Shm_FX[Idx].CURR_Arry_Key < 0) ||
+		    (Shm_FX[Idx].CURR_Arry_Key >= 29))
+			Shm_FX[Idx].CURR_Arry_Key = 0;
+		else 
+			Shm_FX[Idx].CURR_Arry_Key++;
+
+		memcpy((char *)&Shm_FX[Idx].CURR_Arry[Shm_FX[Idx].CURR_Arry_Key], (char *)&Shm_FX[Idx].B6, sizeof (CO_B6FX));
+#ifdef TESTLOG
+		Log (USR_OK, "Set_Sise STORED idx[%d] exch[%.1s] item[%.7s] buy[%f] sell[%f] fxbid[%f] bidq[%.30s]",
+			Idx, Shm_Risk[0].FX_Sise[0][Idx].m_exch, Shm_Risk[0].FX_Sise[0][Idx].m_item_cd,
+			Shm_Risk[0].FX_Sise[0][Idx].buy_1_price, Shm_Risk[0].FX_Sise[0][Idx].sell_1_price,
+			Shm_FX[Idx].B6.bidprc, Shm_Risk[0].FX_Sise[0][Idx].bid_quote_id);
+#endif
+	}
+	else
+		Che_Gbn = -1;
+
+	return;
+}	/* End of Set_Sise ()	*/
+
+/*************************************************************************
+	Function		: . Write_Read_Fifo
+	Parameters IN	: . 1 : A3/G7체결, 2 : B6호가
+	Parameters OUT	: . 
+	Comment			: . write to FIFO
+*************************************************************************/
+void		Write_Read_Fifo (int c0h0, int ii)
+{
+	int		rt;
+	char	tmp[128];
+
+	rt = write (FIFO_fd[ii], "1", 1);
+
+	if (rt < 0) 
+	SLog (FIF_FATAL, "cannot write FIFO[%d][%d:%s]",
+		FIFO_fd[ii], SYS_NO, SYS_STR);
+
+#if	0
+	while (1)
+	{
+		rt = read (FIFO_fd, tmp, sizeof(tmp));
+#if defined __linux
+        if (rt == 0 || errno == EAGAIN)
+#else
+        if (rt == 0)
+#endif
+			break;
+	}
+#endif
+
+	return;
+}	/* End of Write_Read_Fifo ()	*/
+
+
+/*----------------------------------------------------------------------*/
+void	Attach_FX_SHM (void)   /* create-or-attach Shm_FX (FX_SHM_KEY) */
+/*----------------------------------------------------------------------*/
+{
+	int	shmid;
+	size_t	sz = sizeof (SHM_FX) * SHM_MAX_FX;
+	shmid = shmget ((key_t)FX_SHM_KEY, sz, 0666);
+	if (shmid < 0)
+		shmid = shmget ((key_t)FX_SHM_KEY, sz, IPC_CREAT | 0666);
+	if (shmid < 0) {
+		SLog (SYS_FATAL, "Attach_FX_SHM: shmget FX_SHM_KEY fail [%d:%s]", SYS_NO, SYS_STR);
+		return;
+	}
+	Shm_FX = (SHM_FX *) shmat (shmid, (void *)0, 0);
+	if (Shm_FX == (SHM_FX *)-1) {
+		Shm_FX = NULL;
+		SLog (SYS_FATAL, "Attach_FX_SHM: shmat FX_SHM_KEY fail [%d:%s]", SYS_NO, SYS_STR);
+		return;
+	}
+	Log (USR_OK, "Attach_FX_SHM: Shm_FX attached key[0x%x] sz[%d]", (unsigned)FX_SHM_KEY, (int)sz);
+}
+
+/*----------------------------------------------------------------------*/
+int	Conv_Dispatch (char *buf, int len, CO_B6FX *s)  /* runtime provider */
+/*----------------------------------------------------------------------*/
+{
+#ifndef NO_AGXPI
+	switch (Provider) {
+		case 1:  return conv_JPM (buf, len, s);
+		case 2:  return conv_NH  (buf, len, s);
+		case 3:  return conv_SH  (buf, len, s);
+		default: return conv_JPM (buf, len, s);
+	}
+#else
+	/* dev(NO_AGXPI): test decode = raw CO_B6FX passthrough (mock sends CO_B6FX bytes) */
+	if (len >= (int)sizeof(CO_B6FX)) {
+		memcpy(s, buf, sizeof(CO_B6FX));
+		return (0);   /* proceed to Set_Sise */
+	}
+	(void)buf;
+	return (1);       /* too short -> skip */
+#endif
+}
+
+#ifndef NO_AGXPI
+/*===============================================================
+ * 수신한 FIX 데이터를 내부 포맷으로 전환
+ * ===============================================================*/
+static int conv_JPM(char *pbuff, int dlen, CO_B6FX *p)
+{
+	int			ii, rc, nrec, tmpi;
+	int			mult;
+	uint32_t	ymd, hms;
+	char		type[DF_2], strval[64], strval2[64];
+	char		symbol[ 7+1];
+	struct tm	*lt;
+
+// ★TODO-08 : 데이터 원천에 따라 FIX패킷 Convert 시 분기로직 추가 : sise_fix2ecm()
+	AFIX_TOK_SETVATINT(s_xfix, MsgSeqNum,               AG_ZERO, (double) EOF);
+	AFIX_TOK_SETVATINT(s_xfix, LastMsgSeqNumProcessed,  AG_ZERO, (double) EOF);
+	AFIX_TOK_SETVATINT(s_xfix, BeginSeqNo,              AG_ZERO, (double) EOF);
+	AFIX_TOK_SETVATINT(s_xfix, EndSeqNo,                AG_ZERO, (double) EOF);
+	AFIX_TOK_SETVATINT(s_xfix, NewSeqNo,                AG_ZERO, (double) EOF);
+
+	agfix_token_cls(s_xfix);
+	agfix_set_define_leg (s_xfix, NoMDEntries, AG_ZERO, (int *) AG_NULL, (int *) AG_NULL, (double) EOF);
+
+	pbuff[dlen] = 0x00;
+	rc = agfix_dec (s_xfix, pbuff, dlen+1, SOH, EQU, AG_ZERO);
+	if (rc)
+	{
+		SLog (UDP_WARN, "agfix_dec error (%d) [%d:%s]", rc, dlen, pbuff);
+		return (-1);
+	}
+
+	memset(strval, 0x00, sizeof(strval));
+	rc = AFIX_TOK_GETSTR (s_xfix, MsgType, AG_ZERO, strval);
+	if (rc != AG_OK)
+	{
+		SLog (UDP_WARN, "AFIX_TOK_GETSTR error.. MsgType 1 (%d) [%d:%s]", rc, dlen, pbuff);
+		return(-1);
+	}
+
+	if (strncmp(strval, "5", strlen(strval)) == 0)
+	{
+		SLog (UDP_WARN, "JPMorgan Market Data FIX Session Logout");
+		return(1);
+	}
+
+	struct timeb itb;
+	ftime(&itb);
+
+	lt = localtime(&itb.time);
+	sprintf (strval, "%04d%02d%02d", lt->tm_year+1900, lt->tm_mon+1, lt->tm_mday);
+	MEMCPY(p->date, strval);
+
+	sprintf (strval, "%02d%02d%02d", lt->tm_hour, lt->tm_min, lt->tm_sec);
+	MEMCPY(p->time, strval);
+	//AFIX_TOK_GETSTR (s_xfix, SendingTime, AG_ZERO, g_time);
+
+	nrec = AG_ZERO;
+	rc = AFIX_TOK_GETINT (s_xfix, NoMDEntries, AG_ZERO, nrec);
+	if (rc != AG_OK)    nrec = AG_ONE;
+
+	p->excode[0] = 'J';
+
+    for (ii = 0; ii < nrec; ii++)
+    {
+        memset(symbol, 0x00, sizeof(symbol));
+        rc = AFIX_TOK_GETSTR (s_xfix, Symbol, ii, symbol);
+        if (rc != AG_OK)
+        {
+			memset(strval, 0x00, sizeof(strval));
+			rc = AFIX_TOK_GETSTR (s_xfix, 279, ii, strval);
+			if (rc != AG_OK || atoi(strval) != 2)			/* 279 = 2 호가 삭제 : 처리안함 */
+			{
+				SLog (UDP_WARN, "AFIX_TOK_GETSTR error  279 (%d) [%d:%s]", rc, dlen, pbuff);
+				return (-1);
+			}
+			else
+				return (1);
+				
+        }
+        sprintf(strval, "%.3s%.3s", symbol, &symbol[4]);
+        MEMCPY(p->symb, strval);
+#if	0	// def	TESTLOG
+		Log (USR_OK, "symbol [%s]", p->symb);
+#endif
+#if	0
+		mult = 1;
+#else
+		if (memcmp(p->symb, "JPY", 3) == 0)
+			mult = 100;
+		else
+			mult = 1;
+#endif
+
+        MXZINIT (type);
+        AFIX_TOK_GETSTR (s_xfix, MDEntryType, ii, type);
+
+        switch (type[0])
+        {
+        case '0' :
+			memset(strval, 0x00, sizeof(strval));
+            AFIX_TOK_GETSTR (s_xfix, MDEntryPx,     ii, strval);
+            p->bidprc = atof(strval) * mult;
+			memset(strval, 0x00, sizeof(strval));
+            AFIX_TOK_GETSTR (s_xfix, MDEntrySize,   ii, strval);
+            p->bidqty = atof(strval) * mult;
+#if	0
+            AFIX_TOK_GETSTR (s_xfix, 9006,          ii, strval);        // YYYY-MM-DD 형태임
+            sprintf(strval2, "%.4s%.2s%.2s", strval, &strval[5], &strval[8]);
+            MEMCPY(p->valuedate, strval2);
+            AFIX_TOK_GETSTR (s_xfix, 6203,          ii, strval);
+            sprintf(strval2, "%.4s%.2s%.2s", strval, &strval[5], &strval[8]);
+            MEMCPY(p->fixingdate, strval2);
+#endif
+
+            break;
+
+        case '1' :
+			memset(strval, 0x00, sizeof(strval));
+            AFIX_TOK_GETSTR (s_xfix, MDEntryPx,     ii, strval);
+            p->offerprc = atof(strval) * mult;
+			memset(strval, 0x00, sizeof(strval));
+            AFIX_TOK_GETSTR (s_xfix, MDEntrySize,   ii, strval);
+            p->offerqty = atof(strval) * mult;
+#if	0
+            AFIX_TOK_GETSTR (s_xfix, 9006,          ii, strval);        // YYYY-MM-DD 형태임
+            sprintf(strval2, "%.4s%.2s%.2s", strval, &strval[5], &strval[8]);
+            MEMCPY(p->valuedate, strval2);
+            AFIX_TOK_GETSTR (s_xfix, 6203,          ii, strval);
+            sprintf(strval2, "%.4s%.2s%.2s", strval, &strval[5], &strval[8]);
+            MEMCPY(p->fixingdate, strval2);
+#endif
+
+            break;
+        }
+#if	0	// def	TESTLOG
+		Log (USR_OK, "nrec [%d] symbol [%s][%f][%f]", nrec, p->symb, p->bidprc, p->offerprc);
+#endif
+    }
+
+    return 0;
+}
+
+static int conv_NH(char *pbuff, int dlen, CO_B6FX *p)
+{
+	int			ii, rc, nrec;
+	uint32_t	ymd, hms;
+	char		type[DF_2], strval[64], strval2[64];
+	char		symbol[ 7+1];
+	struct tm	*lt;
+
+// ★TODO-08 : 데이터 원천에 따라 FIX패킷 Convert 시 분기로직 추가 : sise_fix2ecm()
+	AFIX_TOK_SETVATINT(s_xfix, MsgSeqNum,               AG_ZERO, (double) EOF);
+	AFIX_TOK_SETVATINT(s_xfix, LastMsgSeqNumProcessed,  AG_ZERO, (double) EOF);
+	AFIX_TOK_SETVATINT(s_xfix, BeginSeqNo,              AG_ZERO, (double) EOF);
+	AFIX_TOK_SETVATINT(s_xfix, EndSeqNo,                AG_ZERO, (double) EOF);
+	AFIX_TOK_SETVATINT(s_xfix, NewSeqNo,                AG_ZERO, (double) EOF);
+
+	agfix_token_cls(s_xfix);
+	agfix_set_define_leg (s_xfix, NoMDEntries, AG_ZERO, (int *) AG_NULL, (int *) AG_NULL, (double) EOF);
+
+	pbuff[dlen] = 0x00;
+	rc = agfix_dec (s_xfix, pbuff, dlen+1, SOH, EQU, AG_ZERO);
+	if (rc)
+	{
+		SLog (UDP_WARN, "agfix_dec error (%d) [%d:%s]", rc, dlen, pbuff);
+		return (-1);
+	}
+
+	memset(strval, 0x00, sizeof(strval));
+	rc = AFIX_TOK_GETSTR (s_xfix, MsgType, AG_ZERO, strval);
+	if (rc != AG_OK)
+	{
+		SLog (UDP_WARN, "AFIX_TOK_GETSTR error MsgType 2 (%d) [%d:%s]", rc, dlen, pbuff);
+		return(-1);
+	}
+
+	if (strncmp(strval, "5", strlen(strval)) == 0)
+	{
+		SLog (UDP_WARN, "NH Market Data FIX Session Logout");
+		return(1);
+	}
+
+	struct timeb itb;
+	ftime(&itb);
+
+	lt = localtime(&itb.time);
+	sprintf (strval, "%04d%02d%02d", lt->tm_year+1900, lt->tm_mon+1, lt->tm_mday);
+	MEMCPY(p->date, strval);
+
+	sprintf (strval, "%02d%02d%02d", lt->tm_hour, lt->tm_min, lt->tm_sec);
+	MEMCPY(p->time, strval);
+	//AFIX_TOK_GETSTR (s_xfix, SendingTime, AG_ZERO, g_time);
+
+	p->excode[0] = 'N';
+
+	memset(symbol, 0x00, sizeof(symbol));
+	rc = AFIX_TOK_GETSTR (s_xfix, Symbol, ii, symbol);
+	if (rc != AG_OK)
+	{
+		SLog (UDP_WARN, "AFIX_TOK_GETSTR error Symbol 1 (%d) [%d:%s]", rc, dlen, pbuff);
+		return (-1);
+	}
+	sprintf(strval, "%.3s%.3s", symbol, &symbol[4]);
+	MEMCPY(p->symb, strval);
+
+	nrec = AG_ZERO;
+	rc = AFIX_TOK_GETINT (s_xfix, NoMDEntries, AG_ZERO, nrec);
+	if (rc != AG_OK)    nrec = AG_ONE;
+
+    for (ii = 0; ii < nrec; ii++)
+    {
+        MXZINIT (type);
+        AFIX_TOK_GETSTR (s_xfix, MDEntryType, ii, type);
+
+        switch (type[0])
+        {
+        case '0' :
+			memset(strval, 0x00, sizeof(strval));
+            AFIX_TOK_GETSTR (s_xfix,			270,	ii, strval);
+            p->bidprc = atof(strval);
+			memset(strval, 0x00, sizeof(strval));
+            AFIX_TOK_GETSTR (s_xfix,	MDEntrySize,	ii, strval);
+            p->bidqty = atof(strval);
+#if	0
+            AFIX_TOK_GETSTR (s_xfix, 9006,          ii, strval);        // YYYY-MM-DD 형태임
+            sprintf(strval2, "%.4s%.2s%.2s", strval, &strval[5], &strval[8]);
+            MEMCPY(p->valuedate, strval2);
+            AFIX_TOK_GETSTR (s_xfix, 6203,          ii, strval);
+            sprintf(strval2, "%.4s%.2s%.2s", strval, &strval[5], &strval[8]);
+            MEMCPY(p->fixingdate, strval2);
+#endif
+
+            break;
+
+        case '1' :
+			memset(strval, 0x00, sizeof(strval));
+            AFIX_TOK_GETSTR (s_xfix,			270,	ii, strval);
+            p->offerprc = atof(strval);
+			memset(strval, 0x00, sizeof(strval));
+            AFIX_TOK_GETSTR (s_xfix,	MDEntrySize,	ii, strval);
+            p->offerqty = atof(strval);
+#if	0
+            AFIX_TOK_GETSTR (s_xfix, 9006,          ii, strval);        // YYYY-MM-DD 형태임
+            sprintf(strval2, "%.4s%.2s%.2s", strval, &strval[5], &strval[8]);
+            MEMCPY(p->valuedate, strval2);
+            AFIX_TOK_GETSTR (s_xfix, 6203,          ii, strval);
+            sprintf(strval2, "%.4s%.2s%.2s", strval, &strval[5], &strval[8]);
+            MEMCPY(p->fixingdate, strval2);
+#endif
+
+            break;
+        }
+#if	0	// def	TESTLOG
+		Log (USR_OK, "nrec [%d] symbol [%s][%f][%f]", nrec, p->symb, p->bidprc, p->offerprc);
+#endif
+    }
+
+    return 0;
+}
+
+static int conv_SH(char *pbuff, int dlen, CO_B6FX *p)
+{
+	int			ii, rc, nrec;
+	uint32_t	ymd, hms;
+	char		type[DF_2], strval[64], strval2[64];
+	char		symbol[ 7+1];
+	struct tm	*lt;
+
+// ★TODO-08 : 데이터 원천에 따라 FIX패킷 Convert 시 분기로직 추가 : sise_fix2ecm()
+	AFIX_TOK_SETVATINT(s_xfix, MsgSeqNum,               AG_ZERO, (double) EOF);
+	AFIX_TOK_SETVATINT(s_xfix, LastMsgSeqNumProcessed,  AG_ZERO, (double) EOF);
+	AFIX_TOK_SETVATINT(s_xfix, BeginSeqNo,              AG_ZERO, (double) EOF);
+	AFIX_TOK_SETVATINT(s_xfix, EndSeqNo,                AG_ZERO, (double) EOF);
+	AFIX_TOK_SETVATINT(s_xfix, NewSeqNo,                AG_ZERO, (double) EOF);
+
+	agfix_token_cls(s_xfix);
+	agfix_set_define_leg (s_xfix, NoMDEntries, AG_ZERO, (int *) AG_NULL, (int *) AG_NULL, (double) EOF);
+
+	pbuff[dlen] = 0x00;
+	rc = agfix_dec (s_xfix, pbuff, dlen+1, SOH, EQU, AG_ZERO);
+	if (rc)
+	{
+		SLog (UDP_WARN, "agfix_dec error (%d) [%d:%s]", rc, dlen, pbuff);
+		return (-1);
+	}
+
+	memset(strval, 0x00, sizeof(strval));
+	rc = AFIX_TOK_GETSTR (s_xfix, MsgType, AG_ZERO, strval);
+	if (rc != AG_OK)
+	{
+		SLog (UDP_WARN, "AFIX_TOK_GETSTR error MsgType ..3 (%d) [%d:%s]", rc, dlen, pbuff);
+		return(-1);
+	}
+
+	if (strncmp(strval, "5", strlen(strval)) == 0)
+	{
+		SLog (UDP_WARN, "SH Market Data FIX Session Logout");
+		return(1);
+	}
+
+	struct timeb itb;
+	ftime(&itb);
+
+	lt = localtime(&itb.time);
+	sprintf (strval, "%04d%02d%02d", lt->tm_year+1900, lt->tm_mon+1, lt->tm_mday);
+	MEMCPY(p->date, strval);
+
+	sprintf (strval, "%02d%02d%02d", lt->tm_hour, lt->tm_min, lt->tm_sec);
+	MEMCPY(p->time, strval);
+	//AFIX_TOK_GETSTR (s_xfix, SendingTime, AG_ZERO, g_time);
+
+	p->excode[0] = 'S';
+
+	memset(symbol, 0x00, sizeof(symbol));
+	rc = AFIX_TOK_GETSTR (s_xfix, Symbol, ii, symbol);
+	if (rc != AG_OK)
+	{
+		SLog (UDP_WARN, "AFIX_TOK_GETSTR error. .Symbol 2  (%d) [%d:%s]", rc, dlen, pbuff);
+		return (-1);
+	}
+	sprintf(strval, "%.3s%.3s", symbol, &symbol[4]);
+	MEMCPY(p->symb, strval);
+
+	nrec = AG_ZERO;
+	rc = AFIX_TOK_GETINT (s_xfix, NoMDEntries, AG_ZERO, nrec);
+	if (rc != AG_OK)    nrec = AG_ONE;
+
+    for (ii = 0; ii < nrec; ii++)
+    {
+        MXZINIT (type);
+        AFIX_TOK_GETSTR (s_xfix, MDEntryType, ii, type);
+
+        switch (type[0])
+        {
+        case '0' :
+#if 1  // by lcr QuoteId 추가 
+			memset(strval, 0x00, sizeof(strval));
+			rc = AFIX_TOK_GETSTR (s_xfix, QuoteEntryID , ii, strval);
+			MEMCPY(p->bid_quote_id, strval);
+#endif
+			memset(strval, 0x00, sizeof(strval));
+            AFIX_TOK_GETSTR (s_xfix,			270,	ii, strval);
+            p->bidprc = atof(strval);
+			memset(strval, 0x00, sizeof(strval));
+            AFIX_TOK_GETSTR (s_xfix,	MDEntrySize,	ii, strval);
+            p->bidqty = atof(strval);
+#if	0
+            AFIX_TOK_GETSTR (s_xfix, 9006,          ii, strval);        // YYYY-MM-DD 형태임
+            sprintf(strval2, "%.4s%.2s%.2s", strval, &strval[5], &strval[8]);
+            MEMCPY(p->valuedate, strval2);
+            AFIX_TOK_GETSTR (s_xfix, 6203,          ii, strval);
+            sprintf(strval2, "%.4s%.2s%.2s", strval, &strval[5], &strval[8]);
+            MEMCPY(p->fixingdate, strval2);
+#endif
+
+            break;
+
+        case '1' :
+#if 1  // by lcr QuoteId 추가 
+			memset(strval, 0x00, sizeof(strval));
+			rc = AFIX_TOK_GETSTR (s_xfix, QuoteEntryID , ii, strval);
+			MEMCPY(p->ask_quote_id, strval);
+#endif
+			memset(strval, 0x00, sizeof(strval));
+            AFIX_TOK_GETSTR (s_xfix,			270,	ii, strval);
+            p->offerprc = atof(strval);
+			memset(strval, 0x00, sizeof(strval));
+            AFIX_TOK_GETSTR (s_xfix,	MDEntrySize,	ii, strval);
+            p->offerqty = atof(strval);
+#if	0
+            AFIX_TOK_GETSTR (s_xfix, 9006,          ii, strval);        // YYYY-MM-DD 형태임
+            sprintf(strval2, "%.4s%.2s%.2s", strval, &strval[5], &strval[8]);
+            MEMCPY(p->valuedate, strval2);
+            AFIX_TOK_GETSTR (s_xfix, 6203,          ii, strval);
+            sprintf(strval2, "%.4s%.2s%.2s", strval, &strval[5], &strval[8]);
+            MEMCPY(p->fixingdate, strval2);
+#endif
+
+            break;
+        }
+    }
+#if	1	// def	TESTLOG
+		Log (USR_OK, "nrec [%d] symbol [%s][%f][%f] bid quoteid[%s] ask quote id [%s]", nrec, p->symb, p->bidprc, p->offerprc, p->bid_quote_id, p->ask_quote_id );
+#endif
+
+    return 0;
+}
+#else	/* NO_AGXPI : dev stubs (real FIX decode is production-only) */
+static int conv_JPM(char *pbuff, int dlen, CO_B6FX *p){ (void)pbuff;(void)dlen;(void)p; return 1; }
+static int conv_NH (char *pbuff, int dlen, CO_B6FX *p){ (void)pbuff;(void)dlen;(void)p; return 1; }
+static int conv_SH (char *pbuff, int dlen, CO_B6FX *p){ (void)pbuff;(void)dlen;(void)p; return 1; }
+#endif	/* NO_AGXPI */
+
+/*************************************************************************
+	End of program (pf_7400_ur.c)
+*************************************************************************/ 
+

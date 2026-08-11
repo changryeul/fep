@@ -1,0 +1,1879 @@
+#define		_GLOBAL
+/*------------------------------------------------------------------------
+#	Module	: Server 선물업틱 call매수, 다운틱 put매수
+#	File	: pa_5020_mp.c
+------------------------------------------------------------------------*/
+/* -------------------------------------------------------------------- */
+/* -------------------------------------------------------------------- */
+
+/*------------------------------------------------------------------------
+	Header Files
+------------------------------------------------------------------------*/
+#include	"fep_fepp.h"
+#include	"pa_struct.h"
+
+#define		DATA_SIZE	500
+#include	"buf_struct.h"
+
+/*------------------------------------------------------------------------
+	Constants and Structures
+------------------------------------------------------------------------*/
+#define		DATA_TIME	60 * 1000
+#define		READ_MAX	1
+
+#define     WR_CNT          IDW_CNT(0,0)
+#define     RD_CNT          IDR_CNT(0,0)
+
+/*------------------------------------------------------------------------
+	Global Variables
+------------------------------------------------------------------------*/
+char    Order_Dat[261] = {"00000000001TCHODR10001G100010029991530000001          KR70059300031100000000182400000001230000007050020000000000000    0011030     00            000041010000011720172121276805CAE61CDC202110261317010280101                                                        0"};
+
+int					Pk_mp[2];
+char				ApType[10], Cli_handler[5];
+char				W_DFmt[1024];
+char				Order_St[1024];
+FILE_BUFF_FORMAT	W_Fmt, R_Fmt[READ_MAX];
+struct pollfd       Poll[10];
+int		PollCnt;
+
+/*------------------------------------------------------------------------
+	Function Prototypes
+------------------------------------------------------------------------*/
+void	PA_5020_MP (void);
+int		Init_Parameters (void);
+void	Check_Proc_Status (int);
+int		Write_Data (int, int);
+
+void	Mem_Write_Data_F (int, int, int, int, int, int);
+void	Mem_Write_Data_O (int, int, int, int, int, int);
+void	Poll_Wait (void);
+
+/*----------------------------------------------------------------------*/
+int		main (int argc, char *argv[])
+/*----------------------------------------------------------------------*/
+{
+	Init_Proc (argc, argv);
+	PA_5020_MP ();
+	Exit_Process ();
+}	/* End of main ()	*/
+
+/*----------------------------------------------------------------------*/
+void	PA_5020_MP (void)
+/*----------------------------------------------------------------------*/
+{
+	int		i, j, rt, bi_y, rc, ju_edt;
+	int		as_p, o_price, o_ticks01, o_ticks03;
+	int		call_jan, call_ticks, put_jan, put_ticks, fu_jan, jm_su;
+	int		call_price, put_price, fu_price, for_cnt, op_gbn;
+	int		f_rp_c, f_rp_p, ju_gbn, o_rp;
+	char	t_time[12];
+
+	rt = Init_Parameters ( );
+
+	if (rt == OK)
+		rt = Write_Data (2,1);
+
+	if (rt != OK)
+	{
+		rt = Write_Data (1,2);
+		if (rt != OK)
+			Exit_Process ();	
+
+		rt = Write_Data (10,1);
+		if (rt != OK)
+			Exit_Process ();	
+
+		sleep (1);
+	}
+
+	while (START_S != JOB_END)
+	{
+		Stat_Save ();
+
+		while (START_S != JOB_END)
+		{
+			Poll_Wait ( );
+
+			if ((START_S == JOB_END) ||
+				(AtoIf (Shm_Futures[0].Futures_CURR.tot_con_qty, 7) <= 0))
+				break;
+/* *********************************************************************************** */
+/* 자동로직 시작																	   */
+/* *********************************************************************************** */
+
+			/* 여기서 부터 시세에 의한 처리 */
+			rc = Shm_Db[0].recv_seq;
+			/* ju_gbn, 0:break 1:신규주문(선/옵) 5:정정주문(선/옵)	*/
+			ju_gbn = 1;
+			op_gbn = 9;
+
+			/* 선물 시세시 tot_strike만큼 값처리를 한다 */
+			if (rc == 999)
+			{
+				j = i = 0;
+				ju_gbn = 1;
+				for_cnt = tot_strike;
+			}
+			else
+			{
+				for_cnt = 1;
+
+				for (i = 0; i < tot_strike; i++)
+				{
+					if ((Shm_Db[0].Ju_S_History[ApCh].sub_set[i].ju_set[0].Jong_Seq == rc)	||
+						(Shm_Db[0].Ju_S_History[ApCh].sub_set[i].ju_set[1].Jong_Seq == rc))
+					{
+						if (Shm_Db[0].Ju_S_History[ApCh].sub_set[i].sub_auto_run == 9)
+							ju_gbn = 0;
+						else if (Shm_Db[0].Ju_S_History[ApCh].sub_set[i].sub_auto_run == 0)
+							ju_gbn = 1;
+						else
+							ju_gbn = 5;
+
+						if (Shm_Db[0].Ju_S_History[ApCh].sub_set[i].ju_set[0].Jong_Seq == rc)
+							op_gbn = 0;
+						else
+							op_gbn = 1;
+							
+						j = i;
+
+						break;
+					}
+
+					if (i >= tot_strike - 1)
+						ju_gbn = 0;
+				}
+
+				if (ju_gbn == 0)
+					break;
+
+			}
+Log (USR_OK, "TEST01 ju_gbn[%d] rc[%d] j[%d] for_cnt[%d]", ju_gbn, rc, j, for_cnt);
+
+			/* 1. 나갈 sub_set이 있냐 */
+			/* 2. 수정할 sub_set이 있냐. */
+			if (ju_gbn == 1)
+			{
+				for (j = j; j < for_cnt; j ++)
+				{
+Log (USR_OK, "TEST02 j[%d] sub_auto_run[%d]",
+	j, Shm_Db[0].Ju_S_History[ApCh].sub_set[j].sub_auto_run);
+Log (USR_OK, "TEST03 call_seq[%d] put_seq[%d]", call_seq[j], put_seq[j]);
+
+					if (Shm_Db[0].Ju_S_History[ApCh].sub_set[j].sub_auto_run == 0)
+					{
+						if ((AtoIf (Shm_Options[call_seq[j]].Options_CURR.tot_con_qty, 8) > 0)	&&
+							(AtoIf (Shm_Options[put_seq[j]].Options_CURR.tot_con_qty, 8) > 0))
+						{
+							Shm_Db[0].Ju_S_History[ApCh].sub_set[j].hmd =
+								(AtoIf (Shm_Options[call_seq[j]].Options_A0.striking_price, 11) +
+								 AtoIf (Shm_Options[call_seq[j]].Options_CURR.buy_1_prmbid, 5)  -
+								 AtoIf (Shm_Options[put_seq[j]].Options_CURR.sel_1_prmbid, 5))		-
+								(AtoIf (Shm_Futures[0].Futures_CURR.sel_1_prmbid, 5) - y_bs);
+
+							Shm_Db[0].Ju_S_History[ApCh].sub_set[j].hms =
+								(AtoIf (Shm_Options[call_seq[j]].Options_A0.striking_price, 11) +
+								 AtoIf (Shm_Options[call_seq[j]].Options_CURR.sel_1_prmbid, 5)  -
+								 AtoIf (Shm_Options[put_seq[j]].Options_CURR.buy_1_prmbid, 5))		-
+								(AtoIf (Shm_Futures[0].Futures_CURR.buy_1_prmbid, 5) - y_bs);
+
+Log (USR_OK, "TEST04 j[%d] hmd[%d] hms[%d] trigger[%d] y_bs[%d]",
+	j, Shm_Db[0].Ju_S_History[ApCh].sub_set[j].hmd,
+	Shm_Db[0].Ju_S_History[ApCh].sub_set[j].hms, trigger, y_bs);
+Log (USR_OK, "TEST05 c_st_p[%11.11s] p_st_p[%11.11s] c_b_p[%5.5s] c_s_p[%5.5s] p_b_p[%5.5s] p_s_p[%5.5s] f_p[%5.5s]",
+	Shm_Options[call_seq[j]].Options_A0.striking_price,
+	Shm_Options[put_seq[j]].Options_A0.striking_price,
+	Shm_Options[call_seq[j]].Options_CURR.buy_1_prmbid,
+	Shm_Options[call_seq[j]].Options_CURR.sel_1_prmbid,
+	Shm_Options[put_seq[j]].Options_CURR.buy_1_prmbid,
+	Shm_Options[put_seq[j]].Options_CURR.sel_1_prmbid,
+	Shm_Futures[0].Futures_CURR.buy_1_prmbid);
+
+							if (Shm_Db[0].Ju_S_History[ApCh].sub_set[j].hmd - trigger > 0)
+							{
+								o_price = (Shm_Db[0].Ju_S_History[ApCh].sub_set[j].hmd - inbuf) / 2;
+								if (o_price < 0)
+								{
+									Log (USR_OK, "HMD o_price[%d] Not Case j[%d]", o_price, j);
+									Shm_Db[0].Ju_S_History[ApCh].sub_set[j].sub_auto_run = 9;
+
+									/* 정상종료 처리 */
+									for (i = 0; i < tot_strike; i ++)
+									{
+										if (Shm_Db[0].Ju_S_History[ApCh].sub_set[i].sub_auto_run != 9)
+											break;
+
+										if (i >= tot_strike - 1)
+										{
+											rt = Write_Data (1,2);
+											if (rt != OK)
+												Exit_Process ();
+
+											rt = Write_Data (19,1);
+											if (rt != OK)
+											{
+												Log (USR_ERROR, "OK Write Err 19");
+												Exit_Process ();
+											}
+										}
+									}
+
+									break;
+								}
+
+								if (max_oticks > (o_price / 1))
+									o_ticks01 =  (o_price / 1) / 1;
+								else
+									o_ticks01 = max_oticks;
+
+								if (max_oticks > (o_price / 5))
+									o_ticks03 =  (o_price / 5) / 1;
+								else
+									o_ticks03 = max_oticks;
+
+Log (USR_OK, "hmd max_oticks[%d] o_price[%d] o_ticks01[%d] o_ticks03[%d]",
+	max_oticks, o_price, o_ticks01, o_ticks03);
+
+								/* 콜잔량 누적하기 */
+								if (AtoIf (Shm_Options[call_seq[j]].Options_CURR.sel_5_prmbid, 5) >= 300)
+								{
+									call_ticks = o_ticks03;
+									call_price = - (call_ticks * 5) +
+												 AtoIf (Shm_Options[call_seq[j]].Options_CURR.buy_1_prmbid, 5);
+								}
+								else
+								{
+									call_ticks = o_ticks01;
+									call_price = - call_ticks +
+												 AtoIf (Shm_Options[call_seq[j]].Options_CURR.buy_1_prmbid, 5);
+									if (call_price < 1)
+										call_price = 1;
+
+									if (call_price > 300 && call_price % 5)
+										call_price = call_price + (5 - (call_price % 5));
+								}
+
+								call_jan = 0;
+								for (i = 0; i < call_ticks + 1; i ++)
+								{
+									if (i == 0)
+										call_jan = AtoIf (Shm_Options[call_seq[j]].Options_CURR.buy_1_prmbid_qty, 7);
+									else if (i == 1)
+										call_jan += AtoIf (Shm_Options[call_seq[j]].Options_CURR.buy_2_prmbid_qty, 7);
+									else if (i == 2)
+										call_jan += AtoIf (Shm_Options[call_seq[j]].Options_CURR.buy_3_prmbid_qty, 7);
+									else if (i == 3)
+										call_jan += AtoIf (Shm_Options[call_seq[j]].Options_CURR.buy_4_prmbid_qty, 7);
+									else if (i == 4)
+										call_jan += AtoIf (Shm_Options[call_seq[j]].Options_CURR.buy_5_prmbid_qty, 7);
+									else
+										break;
+								}
+								call_jan = call_jan / 5;
+
+Log (USR_OK, "TEST_hmd call_jan[%d] call_seq[%d] call_ticks[%d] 01[%d] 02[%d] 03[%d] 04[%d] 05[%d]",
+	call_jan, call_seq[j], call_ticks,
+	AtoIf (Shm_Options[call_seq[j]].Options_CURR.buy_1_prmbid_qty, 7),
+	AtoIf (Shm_Options[call_seq[j]].Options_CURR.buy_2_prmbid_qty, 7),
+	AtoIf (Shm_Options[call_seq[j]].Options_CURR.buy_3_prmbid_qty, 7),
+	AtoIf (Shm_Options[call_seq[j]].Options_CURR.buy_4_prmbid_qty, 7),
+	AtoIf (Shm_Options[call_seq[j]].Options_CURR.buy_5_prmbid_qty, 7));
+								
+								/* 풋잔량 누적하기 */
+								if (AtoIf (Shm_Options[put_seq[j]].Options_CURR.sel_1_prmbid, 5) >= 300)
+								{
+									put_ticks = o_ticks03;
+									put_price = (put_ticks * 5) +
+												 AtoIf (Shm_Options[put_seq[j]].Options_CURR.sel_1_prmbid, 5);
+								}
+								else
+								{
+									put_ticks = o_ticks01;
+									put_price = put_ticks +
+												 AtoIf (Shm_Options[put_seq[j]].Options_CURR.sel_1_prmbid, 5);
+
+									if (put_price >= 300 && put_price % 5)
+										put_price = put_price - (put_price % 5);
+								}
+
+								put_jan = 0;
+								for (i = 0; i < put_ticks + 1; i ++)
+								{
+									if (i == 0)
+										put_jan = AtoIf (Shm_Options[put_seq[j]].Options_CURR.sel_1_prmbid_qty, 7);
+									else if (i == 1)
+										put_jan += AtoIf (Shm_Options[put_seq[j]].Options_CURR.sel_2_prmbid_qty, 7);
+									else if (i == 2)
+										put_jan += AtoIf (Shm_Options[put_seq[j]].Options_CURR.sel_3_prmbid_qty, 7);
+									else if (i == 3)
+										put_jan += AtoIf (Shm_Options[put_seq[j]].Options_CURR.sel_4_prmbid_qty, 7);
+									else if (i == 4)
+										put_jan += AtoIf (Shm_Options[put_seq[j]].Options_CURR.sel_5_prmbid_qty, 7);
+									else
+										break;
+								}
+								put_jan = put_jan / 5;
+
+Log (USR_OK, "TEST_hmd put_jan[%d] put_seq[%d] put_ticks[%d] 01[%d] 02[%d] 03[%d] 04[%d] 05[%d]",
+	put_jan, put_seq[j], put_ticks,
+	AtoIf (Shm_Options[put_seq[j]].Options_CURR.sel_1_prmbid_qty, 7),
+	AtoIf (Shm_Options[put_seq[j]].Options_CURR.sel_2_prmbid_qty, 7),
+	AtoIf (Shm_Options[put_seq[j]].Options_CURR.sel_3_prmbid_qty, 7),
+	AtoIf (Shm_Options[put_seq[j]].Options_CURR.sel_4_prmbid_qty, 7),
+	AtoIf (Shm_Options[put_seq[j]].Options_CURR.sel_5_prmbid_qty, 7));
+								
+								fu_jan = 0;
+								/* 선물 잔량누적하기 */
+								for (i = 0; i < o_ticks03 + 1; i ++)
+								{
+									if (i == 0)
+										fu_jan = AtoIf (Shm_Futures[0].Futures_CURR.sel_1_prmbid_qty, 6);
+									else if (i == 1)
+										fu_jan += AtoIf (Shm_Futures[0].Futures_CURR.sel_2_prmbid_qty, 6);
+									else if (i == 2)
+										fu_jan += AtoIf (Shm_Futures[0].Futures_CURR.sel_3_prmbid_qty, 6);
+									else if (i == 3)
+										fu_jan += AtoIf (Shm_Futures[0].Futures_CURR.sel_4_prmbid_qty, 6);
+									else if (i == 4)
+										fu_jan += AtoIf (Shm_Futures[0].Futures_CURR.sel_5_prmbid_qty, 6);
+									else
+										break;
+								}
+
+								fu_price =  (o_ticks03 * 5) +
+											AtoIf (Shm_Futures[0].Futures_CURR.sel_1_prmbid, 5);
+
+Log (USR_OK, "TEST_hmd fu_jan[%d] o_ticks03[%d] 01[%d] 02[%d] 03[%d] 04[%d] 05[%d]",
+	fu_jan, o_ticks03,
+	AtoIf (Shm_Futures[0].Futures_CURR.sel_1_prmbid_qty, 7),
+	AtoIf (Shm_Futures[0].Futures_CURR.sel_2_prmbid_qty, 7),
+	AtoIf (Shm_Futures[0].Futures_CURR.sel_3_prmbid_qty, 7),
+	AtoIf (Shm_Futures[0].Futures_CURR.sel_4_prmbid_qty, 7),
+	AtoIf (Shm_Futures[0].Futures_CURR.sel_5_prmbid_qty, 7));
+								
+								if (put_jan > call_jan)
+									jm_su = call_jan;
+								else
+									jm_su = put_jan;
+
+								if (jm_su > fu_jan)
+									jm_su = fu_jan;
+
+								if (jm_su > max_su)
+									jm_su = max_su;
+
+								jm_su = (jm_su * ju_biyul) / 100;
+
+								if (jm_su <= 0)
+								{
+									Log (USR_OK, "HMD jm_su Not Case j[%d] jm_su[%d]", j, jm_su);
+									Shm_Db[0].Ju_S_History[ApCh].sub_set[j].sub_auto_run = 9;
+
+									/* 정상종료 처리 */
+									for (i = 0; i < tot_strike; i ++)
+									{
+										if (Shm_Db[0].Ju_S_History[ApCh].sub_set[i].sub_auto_run != 9)
+											break;
+
+										if (i >= tot_strike - 1)
+										{
+											rt = Write_Data (1,2);
+											if (rt != OK)
+												Exit_Process ();
+
+											rt = Write_Data (19,1);
+											if (rt != OK)
+											{
+												Log (USR_ERROR, "OK Write Err 19");
+												Exit_Process ();
+											}
+										}
+									}
+									break;
+								}
+Log (USR_OK, "TEST_hmd jm_su[%d] call_jan[%d] max_su[%d] put_jan[%d] fu_jan[%d] ju_biyul[%d] E[%1.1s][%1.1s][%1.1s]",
+	jm_su, call_jan, max_su, put_jan, fu_jan, ju_biyul,
+	Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[0].End_Flag,
+	Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[1].End_Flag,
+	Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[2].End_Flag);
+
+								if (put_jan > call_jan)
+								{
+									/* call, futures, put순 */
+									Mem_Write_Data_O (1, 1, j, 0, call_price, jm_su * 5);
+									Mem_Write_Data_F (1, 2, j, 2, fu_price, jm_su);
+									Mem_Write_Data_O (1, 2, j, 1, put_price, jm_su * 5);
+								}
+								else
+								{
+									/* put, futures, call순 */
+									Mem_Write_Data_O (1, 2, j, 1, put_price, jm_su * 5);
+									Mem_Write_Data_F (1, 2, j, 2, fu_price, jm_su);
+									Mem_Write_Data_O (1, 1, j, 0, call_price, jm_su * 5);
+								}
+Log (USR_OK, "TEST E[%1.1s][%1.1s][%1.1s]",
+	Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[0].End_Flag,
+	Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[1].End_Flag,
+	Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[2].End_Flag);
+
+							}
+							else if (Shm_Db[0].Ju_S_History[ApCh].sub_set[j].hms + trigger < 0)
+							{
+								o_price = (Shm_Db[0].Ju_S_History[ApCh].sub_set[j].hms + inbuf) / 2;
+								o_price = -1 * o_price;
+
+								if (o_price < 0)
+								{
+									Log (USR_OK, "HMS o_price[%d] Not Case j[%d]", o_price, j);
+									Shm_Db[0].Ju_S_History[ApCh].sub_set[j].sub_auto_run = 9;
+
+									/* 정상종료 처리 */
+									for (i = 0; i < tot_strike; i ++)
+									{
+										if (Shm_Db[0].Ju_S_History[ApCh].sub_set[i].sub_auto_run != 9)
+											break;
+
+										if (i >= tot_strike - 1)
+										{
+											rt = Write_Data (1,2);
+											if (rt != OK)
+												Exit_Process ();
+
+											rt = Write_Data (19,1);
+											if (rt != OK)
+											{
+												Log (USR_ERROR, "OK Write Err 19");
+												Exit_Process ();
+											}
+										}
+									}
+
+									break;
+								}
+
+								if (max_oticks > (o_price / 1))
+									o_ticks01 =  (o_price / 1);
+								else
+									o_ticks01 = max_oticks;
+
+								if (max_oticks > (o_price / 5))
+									o_ticks03 =  (o_price / 5);
+								else
+									o_ticks03 = max_oticks;
+
+Log (USR_OK, "hms max_oticks[%d] o_price[%d] o_ticks01[%d] o_ticks03[%d] inbuf[%d]",
+	max_oticks, o_price, o_ticks01, o_ticks03, inbuf);
+
+								/* 콜잔량 누적하기 */
+								if (AtoIf (Shm_Options[call_seq[j]].Options_CURR.sel_1_prmbid, 5) >= 300)
+								{
+									call_ticks = o_ticks03;
+									call_price = (call_ticks * 5) +
+												 AtoIf (Shm_Options[call_seq[j]].Options_CURR.sel_1_prmbid, 5);
+								}
+								else
+								{
+									call_ticks = o_ticks01;
+									call_price = call_ticks +
+												 AtoIf (Shm_Options[call_seq[j]].Options_CURR.sel_1_prmbid, 5);
+
+									if (call_price >= 300 && call_price % 5)
+										call_price = call_price - (call_price % 5);
+								}
+
+								call_jan = 0;
+								for (i = 0; i < call_ticks + 1; i ++)
+								{
+									if (i == 0)
+										call_jan = AtoIf (Shm_Options[call_seq[j]].Options_CURR.sel_1_prmbid_qty, 7);
+									else if (i == 1)
+										call_jan += AtoIf (Shm_Options[call_seq[j]].Options_CURR.sel_2_prmbid_qty, 7);
+									else if (i == 2)
+										call_jan += AtoIf (Shm_Options[call_seq[j]].Options_CURR.sel_3_prmbid_qty, 7);
+									else if (i == 3)
+										call_jan += AtoIf (Shm_Options[call_seq[j]].Options_CURR.sel_4_prmbid_qty, 7);
+									else if (i == 4)
+										call_jan += AtoIf (Shm_Options[call_seq[j]].Options_CURR.sel_5_prmbid_qty, 7);
+									else
+										break;
+								}
+								call_jan = call_jan / 5;
+								
+Log (USR_OK, "TEST_hms call_jan[%d] call_seq[%d] call_ticks[%d] 01[%d] 02[%d] 03[%d] 04[%d] 05[%d]",
+	call_jan, call_seq[j], call_ticks,
+	AtoIf (Shm_Options[call_seq[j]].Options_CURR.sel_1_prmbid_qty, 7),
+	AtoIf (Shm_Options[call_seq[j]].Options_CURR.sel_2_prmbid_qty, 7),
+	AtoIf (Shm_Options[call_seq[j]].Options_CURR.sel_3_prmbid_qty, 7),
+	AtoIf (Shm_Options[call_seq[j]].Options_CURR.sel_4_prmbid_qty, 7),
+	AtoIf (Shm_Options[call_seq[j]].Options_CURR.sel_5_prmbid_qty, 7));
+								
+								/* 풋잔량 누적하기 */
+								if (AtoIf (Shm_Options[put_seq[j]].Options_CURR.buy_5_prmbid, 5) >= 300)
+								{
+									put_ticks = o_ticks03;
+									put_price = - (put_ticks * 5) +
+												 AtoIf (Shm_Options[put_seq[j]].Options_CURR.buy_1_prmbid, 5);
+								}
+								else
+								{
+									put_ticks = o_ticks01;
+									put_price = - put_ticks +
+												 AtoIf (Shm_Options[put_seq[j]].Options_CURR.buy_1_prmbid, 5);
+									if (put_price < 1)
+										put_price = 1;
+
+									if (put_price > 300 && put_price % 5)
+										put_price = put_price + (5 - (put_price % 5));
+								}
+
+								put_jan = 0;
+								for (i = 0; i < put_ticks + 1; i ++)
+								{
+									if (i == 0)
+										put_jan = AtoIf (Shm_Options[put_seq[j]].Options_CURR.buy_1_prmbid_qty, 7);
+									else if (i == 1)
+										put_jan += AtoIf (Shm_Options[put_seq[j]].Options_CURR.buy_2_prmbid_qty, 7);
+									else if (i == 2)
+										put_jan += AtoIf (Shm_Options[put_seq[j]].Options_CURR.buy_3_prmbid_qty, 7);
+									else if (i == 3)
+										put_jan += AtoIf (Shm_Options[put_seq[j]].Options_CURR.buy_4_prmbid_qty, 7);
+									else if (i == 4)
+										put_jan += AtoIf (Shm_Options[put_seq[j]].Options_CURR.buy_5_prmbid_qty, 7);
+									else
+										break;
+								}
+								put_jan = put_jan / 5;
+
+Log (USR_OK, "TEST_hms put_jan[%d] put_seq[%d] put_ticks[%d] 01[%d] 02[%d] 03[%d] 04[%d] 05[%d]",
+	put_jan, put_seq[j], put_ticks,
+	AtoIf (Shm_Options[put_seq[j]].Options_CURR.buy_1_prmbid_qty, 7),
+	AtoIf (Shm_Options[put_seq[j]].Options_CURR.buy_2_prmbid_qty, 7),
+	AtoIf (Shm_Options[put_seq[j]].Options_CURR.buy_3_prmbid_qty, 7),
+	AtoIf (Shm_Options[put_seq[j]].Options_CURR.buy_4_prmbid_qty, 7),
+	AtoIf (Shm_Options[put_seq[j]].Options_CURR.buy_5_prmbid_qty, 7));
+								
+								fu_jan = 0;
+								/* 선물 잔량누적하기 */
+								for (i = 0; i < o_ticks03 + 1; i ++)
+								{
+									if (i == 0)
+										fu_jan = AtoIf (Shm_Futures[0].Futures_CURR.buy_1_prmbid_qty, 6);
+									else if (i == 1)
+										fu_jan += AtoIf (Shm_Futures[0].Futures_CURR.buy_2_prmbid_qty, 6);
+									else if (i == 2)
+										fu_jan += AtoIf (Shm_Futures[0].Futures_CURR.buy_3_prmbid_qty, 6);
+									else if (i == 3)
+										fu_jan += AtoIf (Shm_Futures[0].Futures_CURR.buy_4_prmbid_qty, 6);
+									else if (i == 4)
+										fu_jan += AtoIf (Shm_Futures[0].Futures_CURR.buy_5_prmbid_qty, 6);
+									else
+										break;
+								}
+
+								fu_price =  - (o_ticks03 * 5) +
+											AtoIf (Shm_Futures[0].Futures_CURR.buy_1_prmbid, 5);
+
+Log (USR_OK, "TEST_hms fu_jan[%d] o_ticks03[%d] 01[%d] 02[%d] 03[%d] 04[%d] 05[%d]",
+	fu_jan, o_ticks03,
+	AtoIf (Shm_Futures[0].Futures_CURR.buy_1_prmbid_qty, 6),
+	AtoIf (Shm_Futures[0].Futures_CURR.buy_2_prmbid_qty, 6),
+	AtoIf (Shm_Futures[0].Futures_CURR.buy_3_prmbid_qty, 6),
+	AtoIf (Shm_Futures[0].Futures_CURR.buy_4_prmbid_qty, 6),
+	AtoIf (Shm_Futures[0].Futures_CURR.buy_5_prmbid_qty, 6));
+								
+								if (put_jan > call_jan)
+									jm_su = call_jan;
+								else
+									jm_su = put_jan;
+
+								if (jm_su > fu_jan)
+									jm_su = fu_jan;
+
+								if (jm_su > max_su)
+									jm_su = max_su;
+
+								jm_su = (jm_su * ju_biyul) / 100;
+
+								if (jm_su <= 0)
+								{
+									Log (USR_OK, "HMS jm_su Not Case j[%d] jm_su[%d]", j, jm_su);
+									Shm_Db[0].Ju_S_History[ApCh].sub_set[j].sub_auto_run = 9;
+
+									/* 정상종료 처리 */
+									for (i = 0; i < tot_strike; i ++)
+									{
+										if (Shm_Db[0].Ju_S_History[ApCh].sub_set[i].sub_auto_run != 9)
+											break;
+
+										if (i >= tot_strike - 1)
+										{
+											rt = Write_Data (1,2);
+											if (rt != OK)
+												Exit_Process ();
+
+											rt = Write_Data (19,1);
+											if (rt != OK)
+											{
+												Log (USR_ERROR, "OK Write Err 19");
+												Exit_Process ();
+											}
+										}
+									}
+									break;
+								}
+
+Log (USR_OK, "TEST_hms jm_su[%d] call_jan[%d] max_su[%d] put_jan[%d] fu_jan[%d] ju_biyul[%d] E[%1.1s][%1.1s][%1.1s]",
+	jm_su, call_jan, max_su, put_jan, fu_jan, ju_biyul,
+	Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[0].End_Flag,
+	Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[1].End_Flag,
+	Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[2].End_Flag);
+
+								if (put_jan > call_jan)
+								{
+									/* call, futures, put순 */
+									Mem_Write_Data_O (1, 2, j, 0, call_price, jm_su * 5);
+									Mem_Write_Data_F (1, 1, j, 2, fu_price, jm_su);
+									Mem_Write_Data_O (1, 1, j, 1, put_price, jm_su * 5);
+								}
+								else
+								{
+									/* put, futures, call순 */
+									Mem_Write_Data_O (1, 1, j, 1, put_price, jm_su * 5);
+									Mem_Write_Data_F (1, 1, j, 2, fu_price, jm_su);
+									Mem_Write_Data_O (1, 2, j, 0, call_price, jm_su * 5);
+								}
+
+Log (USR_OK, "TEST E[%1.1s][%1.1s][%1.1s]",
+	Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[0].End_Flag,
+	Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[1].End_Flag,
+	Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[2].End_Flag);
+
+							}
+							else
+							{
+								Log (USR_OK, "Not HMD, HMS Case j[%d]", j);
+							}
+						}
+					}
+				}
+			}
+
+			/* 선물 자동정정 로직 */
+			if (rc == 999)
+			{
+				for (j = 0; j < tot_strike; j ++)
+				{
+					if ((Shm_Db[0].Ju_S_History[ApCh].sub_set[j].sub_auto_run != 0)	&&
+					    (Shm_Db[0].Ju_S_History[ApCh].sub_set[j].sub_auto_run != 9)	&&
+					    (memcmp (Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[2].End_Flag, "1", 1) == 0))
+					{
+						f_rp_p = f_rp_c = 0;
+
+						/* 선물 매도 정정 */
+						if (memcmp (Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[2].TradeFlag, "1", 1) == 0)
+						{
+							if (Fu_bi_su >
+								AtoIf (Shm_Futures[0].Futures_CURR.buy_1_prmbid_qty,
+									sizeof(Shm_Futures[0].Futures_CURR.buy_1_prmbid_qty))   )
+							{
+								/* 호가가격 계산 */
+								f_rp_p = AtoIf (Shm_Futures[0].Futures_CURR.buy_1_prmbid,
+											sizeof(Shm_Futures[0].Futures_CURR.buy_1_prmbid));
+							}
+							/* 선물매수1호가 + 0.05 < 주문대기가격 */
+							else if (AtoIf (Shm_Futures[0].Futures_CURR.buy_1_prmbid,
+										sizeof(Shm_Futures[0].Futures_CURR.buy_1_prmbid)) + 5	<
+									 AtoIf (Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[2].Order_Price, 9))
+							{
+								/* 호가가격 계산 */
+								f_rp_p = AtoIf (Shm_Futures[0].Futures_CURR.buy_1_prmbid,
+									sizeof(Shm_Futures[0].Futures_CURR.buy_1_prmbid)) + 5;
+							}
+							else
+								break;
+
+							if ((AtoIf(Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[2].Order_Price, 6) * 100 +
+								 AtoIf(&Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[2].Order_Price[7], 2))
+								== f_rp_p)
+								break;
+
+							Mem_Write_Data_F (2, 1, j, 2, f_rp_p, 0);
+						}
+						/* 선물 매수 정정 */
+						else
+						if (memcmp (Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[2].TradeFlag, "2", 1) == 0)
+						{
+							if (Fu_bi_su >
+								AtoIf (Shm_Futures[0].Futures_CURR.sel_1_prmbid_qty,
+									sizeof(Shm_Futures[0].Futures_CURR.sel_1_prmbid_qty))	)
+							{
+								f_rp_c = AtoIf (Shm_Futures[0].Futures_CURR.sel_1_prmbid,
+									sizeof(Shm_Futures[0].Futures_CURR.sel_1_prmbid));
+							}
+							/* 선물매도1호가 - 0.05 > 주문대기가격 */
+							else if (AtoIf (Shm_Futures[0].Futures_CURR.sel_1_prmbid,
+										sizeof(Shm_Futures[0].Futures_CURR.sel_1_prmbid)) - 5	>
+									 AtoIf (Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[2].Order_Price, 9))
+							{
+								f_rp_c = AtoIf (Shm_Futures[0].Futures_CURR.sel_1_prmbid,
+											sizeof(Shm_Futures[0].Futures_CURR.sel_1_prmbid)) - 5;
+							}
+							else
+								break;
+
+							if ((AtoIf(Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[2].Order_Price, 6) * 100 +
+								 AtoIf(&Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[2].Order_Price[7], 2))
+								== f_rp_c)
+								break;
+
+							Mem_Write_Data_F (2, 2, j, 2, f_rp_c, 0);
+						}
+					}
+				}
+			}
+			/* 옵션 자동정정로직 */
+			else
+			{
+				for (j = 0; j < tot_strike; j ++)
+				{
+					if ((Shm_Db[0].Ju_S_History[ApCh].sub_set[j].sub_auto_run != 0)	&&
+						(Shm_Db[0].Ju_S_History[ApCh].sub_set[j].sub_auto_run != 9)	)
+					{
+						for (i = 0; i < 2; i++)
+						{
+							if ((Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[i].Jong_Seq == rc)	&&
+								(memcmp (Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[i].End_Flag, "1", 1) == 0))
+							{
+								/* 옵션이 매도인 경우 */
+								if (memcmp (Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[i].TradeFlag, "1", 1) == 0)
+								{
+									/* 정정가격 */
+									if (AtoIf (Shm_Options[rc].Options_CURR.sel_1_prmbid, 5) > 300)
+										bi_y = 5;
+									else
+										bi_y = 1;
+
+									/* 내호가가 최우선 호가가 아닌경우 */
+									if (AtoIf (Shm_Options[rc].Options_CURR.sel_1_prmbid, 5) < 
+										AtoIf (Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[i].Order_Price, 6) * 100 +
+										AtoIf (&Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[i].Order_Price[7], 2))
+									{
+										/* 호가에 빈칸이 있는지 */
+										if (AtoIf (Shm_Options[rc].Options_CURR.sel_1_prmbid, 5) - 
+											AtoIf (Shm_Options[rc].Options_CURR.buy_1_prmbid, 5)	> bi_y)
+										{
+											o_rp = AtoIf (Shm_Options[rc].Options_CURR.sel_1_prmbid, 5) - bi_y;
+										}
+										/* 상대잔량이 충분하면 내최우선호가로 */
+										else
+										{
+											/* 상대잔량이 Set값보다 적으면 내호가 - bi_y */
+											if (AtoIf (Shm_Options[rc].Options_CURR.buy_1_prmbid_qty, 7)	<
+												(Op_bi_su *
+												 (Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[i].Tot_Order_Cnt -
+												  Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[i].Nu_Che_Cnt)) / 10 )
+											{
+												o_rp = AtoIf (Shm_Options[rc].Options_CURR.sel_1_prmbid, 5) - bi_y;
+											}
+											/* 상대잔량이 충분하면 내최우선호가로 */
+											else
+											{
+												o_rp = AtoIf (Shm_Options[rc].Options_CURR.sel_1_prmbid, 5);
+											}
+										}
+									}
+									/* 내호가가 취우선 1호가인 경우 */
+									else
+									{
+										/* 빈칸이 있으면 Skip */
+										if (AtoIf (Shm_Options[rc].Options_CURR.sel_1_prmbid, 5) -
+											AtoIf (Shm_Options[rc].Options_CURR.buy_1_prmbid, 5)	> bi_y)
+											break;
+
+										/* 상대잔량이 Set값보다 적으면 내호가 - bi_y */
+										if (AtoIf (Shm_Options[rc].Options_CURR.buy_1_prmbid_qty, 7)	<
+											(Op_bi_su *
+											 (Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[i].Tot_Order_Cnt -
+											  Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[i].Nu_Che_Cnt)) /10  )
+										{
+											o_rp = AtoIf (Shm_Options[rc].Options_CURR.sel_1_prmbid, 5) - bi_y;
+										}
+										/* 상대잔량이 충분하면 내최우선 호가로 */
+										else
+											break;
+									}
+								}
+								/* 옵션이 매수인 경우 */
+								else
+								{
+									/* 정정가격 */
+									if (AtoIf (Shm_Options[rc].Options_CURR.buy_1_prmbid, 5) > 300)
+										bi_y = 5;
+									else
+										bi_y = 1;
+
+									/* 내호가가 최우선 호가가 아닌경우 */
+									if (AtoIf (Shm_Options[rc].Options_CURR.buy_1_prmbid, 5)	>
+										AtoIf (Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[i].Order_Price, 6) * 100 +
+										AtoIf (&Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[i].Order_Price[7], 2))
+									{
+										/* 호가에 빈칸이 있는지 */
+										if (AtoIf (Shm_Options[rc].Options_CURR.sel_1_prmbid, 5) - 
+											AtoIf (Shm_Options[rc].Options_CURR.buy_1_prmbid, 5)	> bi_y)
+										{
+											o_rp = AtoIf (Shm_Options[rc].Options_CURR.buy_1_prmbid, 5) + bi_y;
+										}
+										/* 상대잔량이 충분하면 내최우선호가로 */
+										else
+										{
+											/* 상대잔량이 Set값보다 적으면 내호가 - bi_y */
+											if (AtoIf (Shm_Options[rc].Options_CURR.buy_1_prmbid_qty, 7)	<
+												(Op_bi_su *
+												 (Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[i].Tot_Order_Cnt -
+												  Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[i].Nu_Che_Cnt)) / 10 )
+											{
+												o_rp = AtoIf (Shm_Options[rc].Options_CURR.buy_1_prmbid, 5) + bi_y;
+											}
+											/* 상대잔량이 충분하면 내최우선호가로 */
+											else
+											{
+												o_rp = AtoIf (Shm_Options[rc].Options_CURR.buy_1_prmbid, 5);
+											}
+										}
+									}
+									/* 내호가가 취우선 1호가인 경우 */
+									else
+									{
+										/* 빈칸이 있으면 Skip */
+										if (AtoIf (Shm_Options[rc].Options_CURR.sel_1_prmbid, 5) -
+											AtoIf (Shm_Options[rc].Options_CURR.buy_1_prmbid, 5)	> bi_y)
+											break;
+
+										/* 상대잔량이 Set값보다 적으면 내호가 - bi_y */
+										if (AtoIf (Shm_Options[rc].Options_CURR.sel_1_prmbid_qty, 7)	<
+											(Op_bi_su *
+											 (Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[i].Tot_Order_Cnt -
+											  Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[i].Nu_Che_Cnt)) /10  )
+										{
+											o_rp = AtoIf (Shm_Options[rc].Options_CURR.buy_1_prmbid, 5) + bi_y;
+										}
+										/* 상대잔량이 충분하면 내최우선 호가로 */
+										else
+											break;
+									}
+								}
+
+								/* 정정주문의 가격이 기 존재하는 가격과 동일하면 주문나가지 않음 */
+								if ((AtoIf(Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[i].Order_Price, 6) * 100 +
+									 AtoIf(&Shm_Db[0].Ju_S_History[ApCh].sub_set[j].ju_set[i].Order_Price[7], 2))
+									!= o_rp)
+								{
+									/* 매매구분과 수량은 0으로 처리한다 */
+									Mem_Write_Data_O (2, 0, j, i, o_rp, 0);
+								}
+
+								/* for문 종료 처리 */
+								j = tot_strike;
+
+								break;
+							}
+						}
+					}
+				}
+			}
+
+			break;
+		}
+
+		Check_Proc_Status (0);
+		Check_Proc_Status (1);
+	}
+
+}	/* End of PA_5020_MP ()	*/
+
+/*************************************************************************
+	Function        : . Poll_Wait
+	Parameters IN   : .
+	Parameters OUT  : .
+	Return Code     : . void
+	Comment         : . Sise Poll Check
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+void    Poll_Wait (void)
+/*----------------------------------------------------------------------*/
+{
+	int i, rt;
+
+	while (1)
+	{
+		rt = poll (Poll, 3, DATA_TIME);
+	
+		if (rt > 0)
+		{
+            for (i = 0; i < 3; i ++)
+            {
+                if (Poll[i].revents & POLLIN)
+                {
+                    Poll[i].revents = 0;
+                    return;
+                }
+
+                if (Poll[i].revents & POLLHUP)
+                {
+                    Log (SYS_ERROR, "poll hangup[%d,%d]", i, 4);
+                    continue;
+                }
+            }
+		}
+		else if (rt == 0)
+       	{
+			Log (USR_OK, "poll timeout");
+			Check_Proc_Status (0);
+			Check_Proc_Status (1);
+       	}
+       	else
+        {
+			if (SYS_NO == EINTR)
+				Log (SYS_OK, "poll interrupted {%d:%s}", SYS_NO, SYS_STR);
+			else
+				Log (SYS_ERROR, "poll failure {%d:%s}", SYS_NO, SYS_STR);
+		}
+	}
+
+	return ;
+}	/* End of Poll_Wait ( ) */
+
+/*************************************************************************
+    Function        : . Check_Proc_Status
+    Parameters IN   : .
+    Parameters OUT  : .
+    Return Code     : . void
+    Comment         : . check validity of Send_Proc status
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+void	Check_Proc_Status (int mk)
+/*----------------------------------------------------------------------*/
+{
+	int	rt;
+
+	if (TCP1_NSTAT(D_K,Pk_mp[mk]) != ON)
+	{
+		Log (USR_ERROR, "check process status[%.10s]", OFN(D_K,P_K,mk));
+
+		rt = Write_Data (3,2);
+		if (rt != OK)
+			Exit_Process ();
+
+		sleep (1);
+	}
+
+	return ;
+}   /* End of Check_Proc_Status ()  */
+
+/*************************************************************************
+    Function        : . Init_Parameters
+    Parameters IN   : .
+    Parameters OUT  : .
+    Return Code     : . int
+    Comment         : . All Program Parameters Init
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+int    Init_Parameters ()
+/*----------------------------------------------------------------------*/
+{
+	int		i, arry, mk_gbn, item_seq;
+	int		return_flag = 0;
+	char	fifo_name[256];
+	char	err_no[10];
+// 요기Struct(IN_SAMPLE01) 수정, 20211031
+	IN_SAMPLE01				*dat;
+	SEARCH_HEADER			*hd;
+	KRX_JUMUN_DATA			*KrxOrder;
+
+	Poll[0].fd = START_FD;		// of Daemon
+	Poll[0].events = POLLIN;
+	Poll[1].fd = INPUT_FD;		// of SelfFile
+	Poll[1].events = POLLIN;
+
+	while (1)
+	{
+		rt = F_R (PS_R_1, (void *)&R_Fmt, 1);
+		if (rt != 1)
+		{
+			Log (SAM_FATAL, "cannot read File[%s,%d:%s] W[%d] R[%d]",
+				IFN(D_K,P_K,0), SYS_NO, SYS_STR, WRITE_CNT, READ_CNT);
+			return (NOTOK);
+		}
+		else
+		{
+			Add_Count (PS_R_1, 1);
+			INT_SEQ ++;
+			Log (USR_OK, "File Read [%s] Write[%d] Read[%d]",
+				&R_Fmt[0].Data, IFW(D_K,P_K,0,0), IFR(D_K,P_K,0,0));
+		}
+
+		if (memcmp (R_Fmt[0].Data, "500200", 3) != 0)	// 자동설정
+		{
+			Log (USR_OK, "File Read Other Type[%s]", &R_Fmt[0].Data);
+			continue;
+		}
+
+		//hd	= (SEARCH_HEADER	*)&R_Fmt[0].Data[0];
+		dat = (IN_SAMPLE01		*)&R_Fmt[0].Data[sizeof(SEARCH_HEADER)];
+// 요기서부터 코딩, 20211031
+		/* 전략전달중 공통(윗부분)을 Set하고 시장 FD값을 설정한다 */
+		if ((memcmp (dat->next_flag, "O", 1) == 0)		// 1개 Struct
+			(memcmp (dat->next_flag, "S", 1) == 0))		// Struct 시작
+		{
+			/* 사용될 총 종목 수량 */
+			Shm_Strrg[0].SamPle_St01.tot_item_cnt	= AtoIf (dat->tot_item_cnt, 2);
+			/* 사용될 총 시장 수 */
+			Shm_Strrg[0].SamPle_St01.use_market_cnt	= AtoIf (dat->use_market_cnt, 2);
+			/* 1회 주문시 주문 수량 */
+			Shm_Strrg[0].SamPle_St01.tot_order_cnt	= AtoIf (dat->tot_order_cnt, 2);
+			/* 주문낼 현물 계좌번호 */
+			memcpy (Shm_Strrg[0].SamPle_St01.st_accno,	dat->st_accno, sizeof (dat->st_accno));
+			/* 주문낼 파생 계좌번호 */
+			memcpy (Shm_Strrg[0].SamPle_St01.dv_accno,	dat->dv_accno, sizeof (dat->dv_accno));
+
+			/* 시장별 fd값 설정 */
+			PollCnt	=	AtoIf (dat->use_market_cnt, 2);
+
+// 공통
+			for (i = 0; i < PollCnt; i++)
+			{
+				memset  (fifo_name, 0, sizeof (fifo_name));
+				if (memcmp (dat->market_gbn[i], "10", 2) == 0)
+					sprintf (fifo_name, "%s/PA/pa_7912_ur1", _FEP_FIFO);
+				else
+					sprintf (fifo_name, "%s/PA/pa_7%1.1d11_ur1", _FEP_FIFO, AtoIf (dat->market_gbn[i][1], 1));
+
+				Poll[i+2].fd = open (fifo_name, O_RDWR|O_NDELAY);
+				Poll[i+2].events = POLLIN;
+				if (Poll[i+2].fd < 0)
+				{
+					Log (FIF_FATAL, "cannot open i[%d] FIFO[%s][%d][%d:%s]",
+			            i, fifo_name, FIFO_fd, SYS_NO, SYS_STR);
+					return_flag = -1;
+					break;
+				}	
+			}
+			Log (USR_OK, "Poll Cnt = [%d]", PollCnt);
+		}
+
+		if ((memcmp (dat->next_flag, "N", 1) == 0)		// Struct 계속
+			(memcmp (dat->next_flag, "E", 1) == 0)	)	// Struct 종료
+		{
+			/* Arry 번호, 순번 */
+			arry	= AtoIf (dat->Condition.arry_no, 3);
+			/* 시장구분 */
+			mk_gbn = AtoIf (dat->Condition.market_gbn, 2);
+			Shm_Strrg[0].SamPle_St01.Condition[arry].mk_gbn = mk_gbn;
+			/* 종목seq */
+			item_seq = AtoIf (dat->Condition.item_seq, 5);
+			Shm_Strrg[0].SamPle_St01.Condition[arry].item_seq = item_seq;
+			/* 종목코드 정합성 체크 */
+			if (memcmp (Shm_Risk[0].S_Sise[mk_gbn][item_seq].m_item_cd,
+						dat->Condition.item_code, 12) != 0)
+			{
+				return_flag = -2;
+				break;
+			}
+			memcpy (Shm_Strrg[0].SamPle_St01.Condition[arry].item_code,
+					dat->Condition.item_code, 12);
+			/* 타켓인지 참조인지 여부 */
+			Shm_Strrg[0].SamPle_St01.Condition[arry].target_gbn =
+				AtoIf (dat->Condition.target_gbn, 1);
+			/* 1회 주문수량 */
+			Shm_Strrg[0].SamPle_St01.Condition[arry].order_cnt =
+				AtoIf (dat->Condition.order_cnt, 8);
+			/* 주문타입 */
+			Shm_Strrg[0].SamPle_St01.Condition[arry].order_type =
+				AtoIf (dat->Condition.order_type, 1);
+			/* 주문가격구분 */
+			Shm_Strrg[0].SamPle_St01.Condition[arry].order_price_gbn =
+				AtoIf (dat->Condition.order_price_gbn, 1);
+			/* 주문가격조건 */
+			Shm_Strrg[0].SamPle_St01.Condition[arry].order_price_conditon =
+				AtoIf (dat->Condition.order_price_conditon, 1);
+
+			if (memcmp (dat->next_flag, "E", 1) == 0)
+				break;
+		}
+	}
+
+	/* ********************************************************** */
+	/* 정상여부 응답 처리 */
+	memset (W_DFmt, 0x20, sizeof (W_DFmt));
+	memcpy (&W_DFmt, &R_Fmt,  sizeof (BUFF_RW_HEAD)+20);
+	/* 기동 Set 오류 */
+	if (return_flag < 0)
+	{
+		// pa_9001_mp에 종료요청, 종료후 Client에 Error 송신
+		memcpy (&W_DFmt[sizeof (BUFF_RW_HEAD)], "500220", 6);	/* SEARCH_HEADER (20), TrCode   */
+	}
+	else
+	{
+		// pa_9001_mp에 정상기동, Client에 정상기동(500210) 송신
+		memcpy (&W_DFmt[sizeof (BUFF_RW_HEAD)], "500210", 6);	/* SEARCH_HEADER (20), TrCode   */
+	}
+	sprintf (err_no, "%04d", -1*return_flag);
+	memcpy (&W_DFmt[sizeof (BUFF_RW_HEAD)+10], err_no, 4);	/* SEARCH_HEADER (20), ErrCode(0000:Normal) */
+	&W_DFmt[sizeof(BUFF_RW_HEAD) + DATA_SIZE] = '\n';
+
+	rt = F_W (TS_W2_1, (void *)&W_DFmt, 1);
+	if (rt != 1)
+	{
+		Log (SAM_FATAL, "file write fail[%s]", OFN(D_K,P_K,1));
+		Exit_Process ();
+	}
+
+	Log (USR_OK, "file write[%s:%d:%d]",
+		OFN(D_K,P_K,1), OFW(D_K,P_K,1,0), rt);
+	/* ********************************************************** */
+
+	while (1)
+	{
+		rt = read (Poll[1].fd, tmp, sizeof (tmp));
+		if (rt == 0 || rt == EAGAIN)
+			break;
+		else if (rt == -1)
+		{
+			if (SYS_NO == EINTR)
+				continue;
+
+			Log (FIF_ERROR, "Poll:cannot read FIFO {%d:%s}",
+		 		SYS_NO, SYS_STR);
+			break;
+		}
+	}
+
+	/* Client 회선 Check Key */
+	for (i = 0; i < 2; i++)
+	{
+		for (Pk_mp[i] = 0; Pk_mp[i] < DAEMON(D_K).p_count; Pk_mp[i] ++)
+		{
+			if (memcmp (PROC(D_K,Pk_mp[i]).process_id, ODN(D_K,P_K,i), 10) == 0)
+				break;
+
+			if (Pk_mp[i] == DAEMON(D_K).p_count - 1)
+			{
+				Log (USR_FATAL, "unregistered process[%s]", ODN(D_K,P_K,i));
+				TCP1_NET_STA = OFF;
+				Exit_Process ();
+			}
+		}
+	}
+
+	return (OK);
+}   /* End of Init_Parameters ()    */
+
+/*************************************************************************
+    Function        : . Mem_Write_Data_O
+    Parameters IN   : . 6개의 입력값을 수신받는다.
+						1. 1 : 신규, 2 : 정정 
+						2. 1 : 매도, 2 : 매수 0 : (정정시 기존거 수렴)
+						3. 0~9 : Sub-set 일련번호 
+						4. 0 : 첫번째 종목(콜), 1 : 두번째 종목(풋) 2 : 선물
+						5. 가격 예, 27610
+						6. 수량, 0 : (정정시 기존거 수렴)
+    Parameters OUT  : .
+    Return Code     : . void
+    Comment         : . check validity of Send_Proc status
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+void	Mem_Write_Data_O (int nm_gbn, int mm_gbn, int ss_cnt, int position, int i_p, int i_s)
+/*----------------------------------------------------------------------*/
+{
+	int		rt;
+	char	mic_time[24];
+	char	cli_orsnd[21], sub_ap_dat[10], t_time[12];
+
+Log (USR_OK, "O nm_gbn[%d] mm_gbn[%d] ss_cnt[%d] position[%d] i_p[%d] i_s[%d]",
+	nm_gbn, mm_gbn, ss_cnt, position, i_p, i_s);
+
+	/* 회원사처리항목에 신규주문의 포지션위치를 넣어준다 */
+	ItoAf (ss_cnt, &O_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 199], 2);
+
+	/* 정정취소 구분코드 (1:신규, 2:정정) */
+	ItoAf (nm_gbn, &O_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 66], 1);
+
+	/* 주문가격 */
+	ItoAf ( i_p / 100, &O_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 89], 8);
+	ItoAf ( i_p % 100, &O_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 89 + 9], 2);
+
+	if (nm_gbn == 1)
+	{
+		/* ********************************** */
+		/* 옵션 신규주문 Packet 만들어서 송신 */
+		/* TRcoed, 정정취소 구분코드, 원주문번호, 회원사항목 초기화 */
+		/* ********************************** */
+		/* 신규주문 재처리 */
+		/* TR code 변경 TCHODR10001 */
+		memcpy (&O_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 11],
+									"TCHODR10001", 11);
+	
+		/* 원주문번호 (주문번호 -> 원주문번호) */
+		memcpy (&O_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 43], "      ", 6);
+
+		/* 신규주문시 특정항목 초기화 처리(44) */
+		/* 자사주신고서 ID, 자사주매매방법코드, 매도유형코드, 신용구분코드 	*/
+		/* 위탁사번호(정정주문시 Space)	*/
+		/* 대용주권계좌번호부터 (12+2+2+3+4+2=25) */
+		memcpy (&O_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 113],
+			"0    0001031     00            4111410100000" , 44);
+		/* 신규주문 재처리 */
+
+		/* 종목코드 */
+		memcpy (&O_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 53],
+			Shm_Options[Shm_Db[0].Ju_S_History[ApCh].sub_set[ss_cnt].ju_set[position].Jong_Seq].Options_A0.item_code, 12);
+		
+		/* 매매구분 */
+		ItoAf (mm_gbn, &O_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 65], 1);
+
+		/* 호가수량 Setting */
+		ItoAf ( i_s, &O_Order_St[sizeof(BUFF_RW_HEAD) + KRX_HEAD_LEN + 79], 10);
+
+		/* 회원사처리항목 자동취소 옵션취소주문 발생 여부(01 => 취소주문 미처리) */
+		memcpy (&O_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 195], "01", 2);
+	}
+	/* 옵션 정정 */
+	else
+	{
+		/* ****************** */
+		/* 옵션 정정주문 Send */
+		/* ****************** */
+		/* Options Order Spec Set(정정주문 발주)	*/
+	
+		/* TR code 변경 TCHODR10001 -> TCHODR10003  */
+		memcpy (&O_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 11],
+									"TCHODR10002", 11);
+	
+		/* 종목코드	*/
+		memcpy (&O_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 53], 
+			Shm_Options[Shm_Db[0].Ju_S_History[ApCh].sub_set[ss_cnt].ju_set[position].Jong_Seq].Options_A0.item_code, 12);
+
+		/* 매매구분 */
+		memcpy (&O_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 65], 
+			Shm_Db[0].Ju_S_History[ApCh].sub_set[ss_cnt].ju_set[position].TradeFlag, 1);
+
+		/* 호가수량 Setting */
+		ItoAf ( Shm_Db[0].Ju_S_History[ApCh].sub_set[ss_cnt].ju_set[position].Tot_Order_Cnt -
+				Shm_Db[0].Ju_S_History[ApCh].sub_set[ss_cnt].ju_set[position].Nu_Che_Cnt,
+			&O_Order_St[sizeof(BUFF_RW_HEAD) + KRX_HEAD_LEN + 79], 10);
+
+		/* 정정주문시 특정항목 Space 처리	*/
+		/* 자사주신고서 ID, 자사주매매방법코드, 매도유형코드, 신용구분코드 	*/
+		/* 5 + 1 + 2 + 2 = 10 (정정, 취소시에는 Space로 처리)	*/
+		memcpy (&O_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 113], "          ", 10);
+		/* 위탁사번호(정정주문시 Space)	*/
+		memcpy (&O_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 125], "     ", 5);
+		/* 대용주권계좌번호부터 (12+2+2+3+4+2=25) */
+		memcpy (&O_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 132],
+										"                         ", 25);
+
+		/* 원주문번호 (주문번호 -> 원주문번호) */
+		memcpy (&O_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 43],
+			Shm_Db[0].Ju_S_History[ApCh].sub_set[ss_cnt].ju_set[position].OrderNo, 6);
+
+		/* 회원사처리항목 자동취소 옵션취소주문 발생 여부(01 => 취소주문 미처리) */
+		memcpy (&O_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 195], "01", 2);
+	}
+
+	/* 회원사 주문시각  */
+	memset (t_time, 0, sizeof (t_time));
+	Get_Time (t_time);
+	memcpy (&O_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 178], t_time, 9);
+
+	/* 옵션수량 1,000계약(공용) */
+	if (AtoIf (&O_Order_St[sizeof(BUFF_RW_HEAD) + KRX_HEAD_LEN + 79], 10) > MAX_OP_SU)
+	{
+		rt = Write_Data (1,2);
+		if (rt != OK)
+		{
+			Log (USR_ERROR, "Write_Data Error 04 (1,2)");
+			Exit_Process ();
+		}
+
+		rt = Write_Data (14,1);
+		if (rt != OK)
+		{
+			Log (USR_ERROR, "Write_Data Error 04 (14,1)");
+			Exit_Process ();
+		}
+
+		return;
+	}
+
+	/* 옵션금액 3억(공용) */
+	if ((AtoIf (&O_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 89], 8)
+		 * AtoIf (&O_Order_St[sizeof(BUFF_RW_HEAD) + KRX_HEAD_LEN + 79], 10))
+		> MAX_OP_GUM)
+	{
+		rt = Write_Data (1,2);
+		if (rt != OK)
+		{
+			Log (USR_ERROR, "Write_Data Error 05 (1,2)");
+			Exit_Process ();
+		}
+
+		rt = Write_Data (16,1);
+		if (rt != OK)
+		{
+			Log (USR_ERROR, "Write_Data Error 05 (16,1)");
+			Exit_Process ();
+		}
+
+		return;
+	}
+
+	/* ApType별 주문번호 채번(10만번대만 사용, 6자리만 쓴다) */
+	ACCNO(D_K,ApCh).js_order_no_band_b++;
+	ItoAf (ACCNO(D_K, ApCh).js_order_no_band_b,
+		&O_Order_St[sizeof(BUFF_RW_HEAD)+sizeof(SEARCH_HEADER)+KRX_HEAD_LEN+13], 6);
+
+	memset (mic_time, 0, sizeof (mic_time));
+	Get_MicroTime (mic_time);
+	memcpy (&O_Order_St[sizeof(BUFF_RW_HEAD) - 12 - 20], &mic_time[10], 12);
+
+	O_Order_St[sizeof(BUFF_RW_HEAD)+ODS(D_K,P_K,0)] = '\n';
+
+	/* Shw Write */
+	rt = DSHM_W (TS_W1_1, (void *)O_Order_St, READ_MAX);
+
+	Log (USR_OK, "DSHM write OK");
+
+	if (rt < 0)
+	{
+		Log (DSH_FATAL, "DSHM write[%s]", ODN(D_K,P_K,0));
+
+		rt = Write_Data (1,2);
+		if (rt != OK)
+		{
+			Log (USR_ERROR, "Write_Data Error 6 (1,2)");
+			Exit_Process ();
+		}
+
+		sleep (1);
+	}
+
+	/* Client 후처리 로직 추가	*/
+	memcpy (&W_DFmt[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + sizeof (SEARCH_HEADER)],
+		&O_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN],
+		sizeof(KRX_JUMUN_DATA));
+	W_DFmt[sizeof(BUFF_RW_HEAD)+OFS(D_K,P_K,0)] = '\n';
+
+	rt = F_W (TS_W1_1, (void *)&W_DFmt, 1);
+	if (rt != 1)
+	{
+		Log (SAM_FATAL, "file write fail[%s]", OFN(D_K,P_K,0));
+		Exit_Process ();
+	}
+
+	Log (USR_OK, "file write[%s:%d:%d]",
+		OFN(D_K,P_K,0), OFW(D_K,P_K,0,0), rt);
+
+/* ************************************************************************************* */
+/* 자동록직 종료                                                                         */
+/* ************************************************************************************* */
+#if (1)
+/* Test Log */
+	if (memcmp (&O_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 65], "1", 1) == 0)
+	{
+		Log (USR_OK, "매매구분[%.1s] 주문수량[%.10s] 주문가격[%.11s] 시장가격,수량[%.5s][%.7s] 주문번호[%6.6s]",
+			&O_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 65],
+			&O_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 79],
+			&O_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 89],
+			Shm_Options[Shm_Db[0].Ju_S_History[ApCh].sub_set[ss_cnt].ju_set[position].Jong_Seq].Options_CURR.buy_1_prmbid,
+			Shm_Options[Shm_Db[0].Ju_S_History[ApCh].sub_set[ss_cnt].ju_set[position].Jong_Seq].Options_CURR.buy_1_prmbid_qty,
+			&O_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 33]);
+
+		if (AtoIf(Shm_Options[Shm_Db[0].Ju_S_History[ApCh].sub_set[ss_cnt].ju_set[position].Jong_Seq].Options_CURR.buy_1_prmbid+3, 2) >=
+			AtoIf(&O_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 98], 2)	)
+			Log (USR_OK, "유효주문수량[%7.7s] 주문수량[%10.10s]", 
+				Shm_Options[Shm_Db[0].Ju_S_History[ApCh].sub_set[ss_cnt].ju_set[position].Jong_Seq].Options_CURR.buy_1_prmbid_qty,
+				&O_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 79]);
+		else
+			Log (USR_OK, "유효주문수량[00000]"); 
+	}
+	else
+	{
+		Log (USR_OK, "매매구분[%.1s] 주문수량[%.10s] 주문가격[%.11s] 시장가격,수량[%.5s][%.6s] 주문번호[%6.6s]",
+			&O_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 65],
+			&O_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 79],
+			&O_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 89],
+			Shm_Options[Shm_Db[0].Ju_S_History[ApCh].sub_set[ss_cnt].ju_set[position].Jong_Seq].Options_CURR.sel_1_prmbid,
+			Shm_Options[Shm_Db[0].Ju_S_History[ApCh].sub_set[ss_cnt].ju_set[position].Jong_Seq].Options_CURR.sel_1_prmbid_qty,
+			&O_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 33]);
+
+		if (AtoIf(Shm_Options[Shm_Db[0].Ju_S_History[ApCh].sub_set[ss_cnt].ju_set[position].Jong_Seq].Options_CURR.sel_1_prmbid+3, 2) <=
+			AtoIf(&O_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 98], 2)	)
+			Log (USR_OK, "유효주문수량[%.7s] 주문수량[%.10s]", 
+				Shm_Options[Shm_Db[0].Ju_S_History[ApCh].sub_set[ss_cnt].ju_set[position].Jong_Seq].Options_CURR.sel_1_prmbid_qty,
+				&O_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 79]);
+		else
+			Log (USR_OK, "유효주문수량[00000]"); 
+	}
+#endif
+
+	/* ************************************************ */
+	/* sub_set의 최초신규주문시에는 다음의 처리를 한다	*/
+	/* 1. 신규주문 송신횟수 증가. 						*/
+	/* 2. 해당 sub_set의 매매 결정.						*/
+	/* 3. 주문번호 Set									*/
+	/* ************************************************ */
+
+	if (nm_gbn == 1)
+	{
+		/* 주문번호 */
+		memcpy (Shm_Db[0].Ju_S_History[ApCh].sub_set[ss_cnt].ju_set[position].OrderNo,
+			&O_Order_St[sizeof(BUFF_RW_HEAD)+sizeof(SEARCH_HEADER)+KRX_HEAD_LEN+13], 6);
+	}
+	else
+	{
+		memcpy (Shm_Db[0].Ju_S_History[ApCh].sub_set[ss_cnt].ju_set[position].End_Flag, "5", 1);
+	}
+
+Log (USR_OK, "TEST ApCh[%d] sub_set[%d] position[%d] 주문번호[%6.6s][%6.6s]",
+	ApCh, ss_cnt, position,
+	Shm_Db[0].Ju_S_History[ApCh].sub_set[ss_cnt].ju_set[position].OrderNo,
+	&O_Order_St[sizeof(BUFF_RW_HEAD)+sizeof(SEARCH_HEADER)+KRX_HEAD_LEN+13]);
+
+	return ;
+}   /* End of Mem_Write_Data_O ()  */
+
+/*************************************************************************
+    Function        : . Mem_Write_Data_F
+    Parameters IN   : . 6개의 입력값을 수신받는다.
+						1. 0 : 신규, 1 : 정정 
+						2. 1 : 매도, 2 : 매수 0 : (정정시 기존거 수렴)
+						3. 0~9 : Sub-set 일련번호 
+						4. 0 : 첫번째 종목(콜), 1 : 두번째 종목(풋) 2 : 선물
+						5. 가격 예, 27610
+						6. 수량, 0 : (정정시 기존거 수렴)
+    Parameters OUT  : .
+    Return Code     : . void
+    Comment         : . check validity of Send_Proc status
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+void	Mem_Write_Data_F (int nm_gbn, int mm_gbn, int ss_cnt, int position, int i_p, int i_s)
+/*----------------------------------------------------------------------*/
+{
+	int		rt;
+	char	mic_time[24], t_time[12];
+
+Log (USR_OK, "F nm_gbn[%d] mm_gbn[%d] ss_cnt[%d] position[%d] i_p[%d] i_s[%d]",
+	nm_gbn, mm_gbn, ss_cnt, position, i_p, i_s);
+
+	/* ************** */
+	/* 선물 주문 Send */
+	/* ************** */
+	/* Future Order Spec Set(정정주문 발주)	*/
+
+	/* 회원사처리항목에 신규주문의 포지션위치를 넣어준다 */
+	ItoAf (ss_cnt, &F_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 199], 2);
+
+	/* 종목코드 */
+	memcpy (&F_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 53],
+		Shm_Futures[0].Futures_A0.item_code, 12);
+
+	/* 정정취소 구분코드 (1:신규, 2:정정) */
+	ItoAf (nm_gbn, &F_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 66], 1);
+
+	/* 호가가격 */
+	ItoAf ( i_p  / 100, &F_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 89], 8);
+	ItoAf ( i_p  % 100, &F_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 89 + 9], 2);
+
+	if (nm_gbn == 1)
+	{
+		/* ************************************ */
+		/* 선물 신규주문 Packet 만들어서 송신	*/		
+		/* TRcoed, 정정취소 구분코드, 원주문번호, 회원사항목 초기화 */
+		/* ************************************ */
+		/* 신규주문 재처리 */
+		/* TR code 변경 TCHODR10001 */
+		memcpy (&F_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 11],
+									"TCHODR10001", 11);
+
+		/* 원주문번호 (주문번호 -> 원주문번호) */
+		memcpy (&F_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 43], "      ", 6);
+
+		/* 신규주문시 특정항목 초기화 처리(44) */
+		/* 자사주신고서 ID, 자사주매매방법코드, 매도유형코드, 신용구분코드  */
+		/* 위탁사번호(정정주문시 Space) */
+		/* 대용주권계좌번호부터 (12+2+2+3+4+2=25) */
+		memcpy (&F_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 113],
+			"0    0001031     00            4111410100000" , 44);
+		/* 신규주문 재처리 */
+
+		/* 매매구분 */
+		ItoAf (mm_gbn, &F_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 65], 1);
+
+		/* 호가수량 Setting */
+		ItoAf ( i_s, &F_Order_St[sizeof(BUFF_RW_HEAD) + KRX_HEAD_LEN + 79], 10);
+
+		/* 회원사처리항목 자동취소 옵션취소주문 발생 여부(01 => 취소주문 미처리) */
+		memcpy (&F_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 195], "01", 2);
+	}
+	else
+	{
+		/* TR code 변경 TCHODR10001 -> TCHODR10003  */
+		memcpy (&F_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 11], "TCHODR10002", 11);
+	
+		/* 매매구분 */
+		memcpy (&F_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 65], 
+			Shm_Db[0].Ju_S_History[ApCh].sub_set[ss_cnt].ju_set[2].TradeFlag, 1);
+
+		/* 선물은 종목이 한종목인지라 종목코드 수정을 하지 않는다 */
+		/* 매매구분도 수정하지 않는다 */
+		/* 호가가격은 위에서 처리했음 */
+		
+		/* 호가수량 Setting */
+		ItoAf ( Shm_Db[0].Ju_S_History[ApCh].sub_set[ss_cnt].ju_set[2].Tot_Order_Cnt -
+				Shm_Db[0].Ju_S_History[ApCh].sub_set[ss_cnt].ju_set[2].Nu_Che_Cnt,
+			&F_Order_St[sizeof(BUFF_RW_HEAD) + KRX_HEAD_LEN + 79], 10);
+	
+		/* 정정주문시 특정항목 Space 처리	*/
+		/* 자사주신고서 ID, 자사주매매방법코드, 매도유형코드, 신용구분코드 	*/
+		/* 5 + 1 + 2 + 2 = 10 (정정, 취소시에는 Space로 처리)	*/
+		memcpy (&F_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 113], "          ", 10);
+		/* 위탁사번호(정정주문시 Space)	*/
+		memcpy (&F_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 125], "     ", 5);
+		/* 대용주권계좌번호부터 (12+2+2+3+4+2=25) */
+		memcpy (&F_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 132],
+								"                         ", 25);
+		
+		/* 회원사 주문시각  */
+		memset (t_time, 0, sizeof (t_time));
+		Get_Time (t_time);
+		memcpy (&F_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 178], t_time, 9);
+
+		/* 원주문번호 (주문번호 -> 원주문번호) */
+		memcpy (&F_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 43],
+			Shm_Db[0].Ju_S_History[ApCh].sub_set[ss_cnt].ju_set[2].OrderNo, 6);
+	}
+
+	/* 선물수량 50계약(공용) */
+	if (AtoIf (&F_Order_St[sizeof(BUFF_RW_HEAD) + KRX_HEAD_LEN + 79], 10) > MAX_FU_SU)
+	{
+		rt = Write_Data (1,2);
+		if (rt != OK)
+		{
+			Log (USR_ERROR, "Write_Data Error 07 (1,2)");
+			Exit_Process ();
+		}
+
+		rt = Write_Data (13,1);
+		if (rt != OK)
+		{
+			Log (USR_ERROR, "Write_Data Error 07 (13,1)");
+			Exit_Process ();
+		}
+
+		return;
+	}
+
+	/* 선물금액 75억(공용, 소수점 빼고 계산한다, 7천5백으로 비교) */
+	if ((AtoIf (&F_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 89], 8)
+		 * AtoIf (&F_Order_St[sizeof(BUFF_RW_HEAD) + KRX_HEAD_LEN + 79], 10)	)
+		> MAX_FU_GUM)
+	{
+		rt = Write_Data (1,2);
+		if (rt != OK)
+		{
+			Log (USR_ERROR, "Write_Data Error 08 (1,2)");
+			Exit_Process ();
+		}
+
+		rt = Write_Data (15,1);
+		if (rt != OK)
+		{
+			Log (USR_ERROR, "Write_Data Error 08 (15,1)");
+			Exit_Process ();
+		}
+
+		return;
+	}
+
+	/* ApType별 주문번호 채번(10만번대만 사용, 6자리만 쓴다) */
+	ACCNO(D_K,ApCh).js_order_no_band_b++;
+	ItoAf (ACCNO(D_K,ApCh).js_order_no_band_b,
+		&F_Order_St[sizeof(BUFF_RW_HEAD)+sizeof(SEARCH_HEADER)+KRX_HEAD_LEN+13], 6);
+
+	memset (mic_time, 0, sizeof (mic_time));
+	Get_MicroTime (mic_time);
+	memcpy (&F_Order_St[sizeof(BUFF_RW_HEAD) - 12 - 20], &mic_time[10], 12);
+
+	F_Order_St[sizeof(BUFF_RW_HEAD)+ODS(D_K,P_K,0)] = '\n';
+
+	/* Shw Write */
+	rt = DSHM_W (TS_W1_1, (void *)F_Order_St, READ_MAX);
+
+	Log (USR_OK, "DSHM write OK");
+
+	if (rt < 0)
+	{
+		Log (DSH_FATAL, "DSHM write[%s]", ODN(D_K,P_K,0));
+
+		rt = Write_Data (1,2);
+		if (rt != OK)
+			Exit_Process ();
+
+		rt = Write_Data (1,1);
+		if (rt != OK)
+			Exit_Process ();
+
+		sleep (1);
+	}
+
+	/* Client 후처리 로직 추가	*/
+	memcpy (&W_DFmt[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + sizeof (SEARCH_HEADER)],
+		&F_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN],
+		sizeof(KRX_JUMUN_DATA));
+	W_DFmt[sizeof(BUFF_RW_HEAD)+OFS(D_K,P_K,0)] = '\n';
+
+	rt = F_W (TS_W1_1, (void *)&W_DFmt, 1);
+	if (rt != 1)
+	{
+		Log (SAM_FATAL, "file write fail[%s]", OFN(D_K,P_K,0));
+		Exit_Process ();
+	}
+
+	Log (USR_OK, "file write[%s:%d:%d]",
+		OFN(D_K,P_K,0), OFW(D_K,P_K,0,0), rt);
+
+	/* 자동정정 대상으로 설정    */
+	if (Shm_Db[0].Ju_S_History[ApCh].sub_set[ss_cnt].sub_auto_run == 0)
+		Shm_Db[0].Ju_S_History[ApCh].sub_set[ss_cnt].sub_auto_run = 1;
+
+	if (nm_gbn == 1)
+	{
+		/* 주문번호 */
+		memcpy (Shm_Db[0].Ju_S_History[ApCh].sub_set[ss_cnt].ju_set[2].OrderNo,
+			&F_Order_St[sizeof(BUFF_RW_HEAD)+sizeof(SEARCH_HEADER)+KRX_HEAD_LEN+13], 6);
+	}
+	else
+	{
+		memcpy (Shm_Db[0].Ju_S_History[ApCh].sub_set[ss_cnt].ju_set[2].End_Flag, "5", 1);
+	}
+
+/* ************************************************************************************* */
+/* 자동록직 종료                                                                         */
+/* ************************************************************************************* */
+#if (1)
+/* Test Log */
+	if (memcmp (&F_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 65], "1", 1) == 0)
+	{
+		Log (USR_OK, "매매구분[%.1s] 주문수량[%.10s] 주문가격[%.11s] 시장가격,수량[%.5s][%.6s] 주문번호[%6.6s]",
+			&F_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 65],
+			&F_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 79],
+			&F_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 89],
+			Shm_Futures[Shm_Db[0].Ju_S_History[ApCh].sub_set[ss_cnt].ju_set[2].Jong_Seq].Futures_CURR.buy_1_prmbid,
+			Shm_Futures[Shm_Db[0].Ju_S_History[ApCh].sub_set[ss_cnt].ju_set[2].Jong_Seq].Futures_CURR.buy_1_prmbid_qty,
+			&F_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 33]);
+
+		if (AtoIf(Shm_Futures[Shm_Db[0].Ju_S_History[ApCh].sub_set[ss_cnt].ju_set[2].Jong_Seq].Futures_CURR.buy_1_prmbid+3, 2) >=
+			AtoIf(&F_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 98], 2)	)
+			Log (USR_OK, "유효주문수량[%6.6s] 주문수량[%10.10s]", 
+				Shm_Futures[Shm_Db[0].Ju_S_History[ApCh].sub_set[ss_cnt].ju_set[2].Jong_Seq].Futures_CURR.buy_1_prmbid_qty,
+				&F_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 79]);
+		else
+			Log (USR_OK, "유효주문수량[00000]"); 
+	}
+	else
+	{
+		Log (USR_OK, "매매구분[%.1s] 주문수량[%.10s] 주문가격[%.11s] 시장가격,수량[%.5s][%.6s] 주문번호[%6.6s]",
+			&F_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 65],
+			&F_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 79],
+			&F_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 89],
+			Shm_Futures[Shm_Db[0].Ju_S_History[ApCh].sub_set[ss_cnt].ju_set[2].Jong_Seq].Futures_CURR.sel_1_prmbid,
+			Shm_Futures[Shm_Db[0].Ju_S_History[ApCh].sub_set[ss_cnt].ju_set[2].Jong_Seq].Futures_CURR.sel_1_prmbid_qty,
+			&F_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 33]);
+
+		if (AtoIf(Shm_Futures[Shm_Db[0].Ju_S_History[ApCh].sub_set[ss_cnt].ju_set[2].Jong_Seq].Futures_CURR.sel_1_prmbid+3, 2) <=
+			AtoIf(&F_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 98], 2)	)
+			Log (USR_OK, "유효주문수량[%.6s] 주문수량[%.10s]", 
+				Shm_Futures[Shm_Db[0].Ju_S_History[ApCh].sub_set[ss_cnt].ju_set[2].Jong_Seq].Futures_CURR.sel_1_prmbid_qty,
+				&F_Order_St[sizeof (BUFF_RW_HEAD) + KRX_HEAD_LEN + 79]);
+		else
+			Log (USR_OK, "유효주문수량[00000]"); 
+	}
+#endif
+
+	return ;
+}   /* End of Mem_Write_Data_F ()  */
+
+/**************************************************************************
+    Function        : . Write_Data
+    Parameters IN   : . egbn : Error_Flag
+						 1 : 500330 (Auto Kill)
+						 2 : 500110 (주문기동요청 응답)
+						 3 : 500310 (Auto All Kill)
+						10 : 입력값 오류
+						13 : 선물계약수량초과
+						14 : 옵션계약수량초과
+						15 : 선물 주문금액 한도초과
+						16 : 옵션 주문금액 한도초과
+						19 : 주문횟수 만족(정상종료, 500210)
+				      .	p_flag  : write flag
+						1 : Client 후처리
+						2 : pa_9001_mp(관리)
+    Parameters OUT  : .
+    Return Code     : . int
+    Comment         : . write data to file
+**************************************************************************/
+/*-----------------------------------------------------------------------*/
+int    Write_Data (int egbn, int p_flag)
+/*-----------------------------------------------------------------------*/
+{
+	int     rt;
+	char    m_time[24], str[10];
+	char	cdata[30];
+
+	memset (m_time, 0, sizeof (m_time));
+	memset (cdata, ' ', sizeof (cdata));
+	memset (str, ' ', sizeof (str));
+	memset (&W_Fmt, ' ', sizeof (FILE_BUFF_FORMAT));
+	Get_MicroTime (m_time);
+
+	ItoAf (OFW_CNT(p_flag-1,0) + 1, W_Fmt.If_Seq, sizeof (W_Fmt.If_Seq));
+	memcpy (W_Fmt.ApType, ApType, sizeof (W_Fmt.ApType));
+	memcpy (W_Fmt.ResponseCode, RES_NORMAL, strlen (RES_NORMAL));
+	memcpy (W_Fmt.RecvTime1, m_time, sizeof (W_Fmt.RecvTime1));
+	memcpy (W_Fmt.RecvTime2, &m_time[sizeof(W_Fmt.RecvTime1)],
+		sizeof (W_Fmt.RecvTime2));
+
+	ItoAf (HEAD_SIZE + DATA_SIZE, Tcp_Data_Head.Length,
+		sizeof (Tcp_Data_Head.Length));
+	ItoAf (OFW_CNT(p_flag-1,0) + 1, Tcp_Data_Head.DataSeq,
+		sizeof (Tcp_Data_Head.DataSeq));
+	memcpy (Tcp_Data_Head.ResponseCode, RES_NORMAL, strlen (RES_NORMAL));
+	memcpy (Tcp_Data_Head.LineFlag, Cli_handler, 4);
+
+	memcpy (W_Fmt.DataHeader, &Tcp_Data_Head, sizeof (TCP_DATA_HEAD));
+
+	/* 후처리 client */
+	if (p_flag == 1)
+	{
+		/* 주문기동 응답 */
+		if (egbn == 2)
+		{
+			sprintf (cdata, "00005001100000%5.5s %02d", _Exe_Name+3, In_Strategy+1);
+			memcpy (W_Fmt.Data, cdata, sizeof (SEARCH_HEADER) + 2);
+
+			/* Auto TOT Cnt - */
+			if (AtoIf(ACCNO(D_K, ApCh).auto_use_cnt, 2) <= 0)
+			{
+				memcpy (ACCNO(D_K, ApCh).auto_use_cnt, "01", 2);
+			}
+			else
+			{
+				sprintf (str, "%02d",
+					AtoIf(ACCNO(D_K, ApCh).auto_use_cnt, 2) + 1);
+				memcpy (ACCNO(D_K, ApCh).auto_use_cnt, str, 2);
+			}
+
+			/* Auto Strategy Cnt - */
+			if (AtoIf(&ACCNO(D_K,ApCh).auto_use_cnt[In_Strategy+2], 1) <= 0)
+			{
+				memcpy (&ACCNO(D_K,ApCh).auto_use_cnt[In_Strategy+2],
+				"1", 1);
+			}
+			else
+			{
+				sprintf (str, "%d",
+					AtoIf(&ACCNO(D_K,ApCh).auto_use_cnt[In_Strategy+2], 1) + 1);
+				memcpy (&ACCNO(D_K,ApCh).auto_use_cnt[In_Strategy+2], str, 1);
+			}
+		}
+		else
+		{
+			sprintf (cdata, "00005002200000%5.5s %02d", _Exe_Name+3, In_Strategy+1);
+			memcpy (W_Fmt.Data, cdata, sizeof (SEARCH_HEADER) + 2);
+
+			if (egbn == 10)
+				memcpy (&W_Fmt.Data[sizeof (SEARCH_HEADER) + 10],
+					"입력값 오류로 인한 미기동 ", 26);
+			else if (egbn == 13)
+				memcpy (&W_Fmt.Data[sizeof (SEARCH_HEADER) + 10],
+					"선물계약 수량초과에 의한 종료", 29);
+			else if (egbn == 14)
+				memcpy (&W_Fmt.Data[sizeof (SEARCH_HEADER) + 10],
+					"옵션계약 수량초과에 의한 종료", 29);
+			else if (egbn == 15)
+				memcpy (&W_Fmt.Data[sizeof (SEARCH_HEADER) + 10],
+					"선물 주문금액 한도초과에 의한 종료", 34);
+			else if (egbn == 16)
+				memcpy (&W_Fmt.Data[sizeof (SEARCH_HEADER) + 10],
+					"옵션 주문금액 한도초과에 의한 종료", 34);
+			else if (egbn == 19)
+				memcpy (&W_Fmt.Data[sizeof (SEARCH_HEADER) + 10],
+					"주문종료 조건 만족에 의한 종료처리", 34);
+		}
+			
+	}
+	/* pa_9001_mp(관리) */
+	else
+	{
+		/* Auto Kill */
+		if (egbn == 1)
+		{
+			sprintf (cdata, "00005003300000%5.5s %02d", _Exe_Name+3, In_Strategy+1);
+			memcpy (W_Fmt.Data, cdata, sizeof (SEARCH_HEADER) + 2);
+		}
+		/* Auto All Kill */
+		else if (egbn == 3)
+		{
+			sprintf (cdata, "00005003100000%5s %02d", _Exe_Name+3, In_Strategy+1);
+			memcpy (W_Fmt.Data, cdata, sizeof (SEARCH_HEADER) + 2);
+
+			/* Auto TOT Cnt - */
+			if (AtoIf(ACCNO(D_K,ApCh).auto_use_cnt, 2) <= 0)
+			{
+				memcpy (ACCNO(D_K,ApCh).auto_use_cnt, "00", 2);
+			}
+			else
+			{
+				sprintf (str, "%02d",
+					AtoIf(ACCNO(D_K,ApCh).auto_use_cnt, 2) - 1);
+				memcpy (ACCNO(D_K,ApCh).auto_use_cnt, str, 2);
+			}
+	
+			/* Auto Strategy Cnt - */
+			if (AtoIf(&ACCNO(D_K,ApCh).auto_use_cnt[In_Strategy+2], 1)
+			<= 0)
+			{
+				memcpy (&ACCNO(D_K,ApCh).auto_use_cnt[In_Strategy+2],
+					"0", 1);
+			}
+			else
+			{
+				sprintf (str, "%d",
+		AtoIf(&ACCNO(D_K,ApCh).auto_use_cnt[In_Strategy+2], 1) - 1);
+				memcpy (&ACCNO(D_K,ApCh).auto_use_cnt[In_Strategy+2],
+					str, 2);
+			}
+		}
+	}
+
+	W_Fmt.LineFeed[0] = '\n';
+
+	rt = F_W (p_flag * 10, (void *)&W_Fmt, 1);
+
+	if (rt != 1)
+	{
+		Log (SAM_FATAL, "file write fail[%s]", OFN(D_K,P_K,p_flag-1));
+		return (NOTOK);
+	}
+
+	Log (USR_OK, "file write[%s:%d:%d]",
+		OFN(D_K,P_K,p_flag-1), OFW(D_K,P_K,p_flag-1,0), rt);
+
+	return (OK);
+}   /* End of Write_Data () */
+
+/*************************************************************************
+	End of Program (pa_5020_mp.c)
+*************************************************************************/
+

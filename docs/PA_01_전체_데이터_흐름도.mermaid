@@ -1,0 +1,61 @@
+---
+title: PA 전체 데이터 흐름도
+---
+graph TD
+    KRX["KRX (거래소)"]
+
+    subgraph KRX_RECV["KRX 수신/송신"]
+        TS1["pa_1101_ts\n채권주문송신\n:37221"]
+        TR1["pa_1201_tr\n채권응답수신\n:57221"]
+        DP1["pa_1211_tr\nDP수신\n:61726"]
+        SISE["pa_1601_tr\n시세수신\n:61725"]
+        RDS["pa_7801_tr\nRDS수신\n:63725"]
+        BATCH["pa_1801_ts\n일괄수신\n:63724"]
+    end
+
+    KRX --> TR1
+    KRX --> DP1
+    KRX --> SISE
+    KRX --> RDS
+    KRX --> BATCH
+    TS1 --> KRX
+
+    subgraph PROC["데이터 처리"]
+        QR["pa_5001_qr\n채권주문큐관리"]
+        MP_RESP["pa_1201_mp / pa_1291_mp\n응답처리 / 미체결"]
+        MP_EXEC["pa_1401_mp / pa_1491_mp / pa_1492_mp\n체결처리 / 요약 / 연산"]
+        DP_TS["pa_8111_ts\n채권DP송신\n:32009"]
+        SISE_MP["pa_1601_mp\n시세처리"]
+        RDS_DD["pa_7801_dd / pa_7802_dd\nRDS처리"]
+    end
+
+    TR1 -->|"FIFO"| MP_RESP
+    TR1 -->|"FIFO"| MP_EXEC
+    DP1 -->|"FIFO"| DP_TS
+    SISE -->|"FIFO"| SISE_MP
+    RDS -->|"FIFO"| RDS_DD
+
+    subgraph CLIENT_AUTO["Client 통신 / 한도 / 자동매매"]
+        CL_TX["pa_8101_ts\nClient송신\n:32001"]
+        CL_RX["pa_8201_tr\nClient수신\n:32011"]
+        HANDO["pa_9001_mp\n한도관리"]
+        AUTO["pa_50xxx_mp\nAuto전략 x40"]
+    end
+
+    MP_RESP -->|"FIFO"| CL_TX
+    MP_EXEC -->|"FIFO"| CL_TX
+    MP_EXEC -->|"FIFO"| HANDO
+    MP_RESP -->|"DSHM"| AUTO
+    MP_EXEC -->|"DSHM"| AUTO
+    DP_TS --> CLIENT["Client\n(HTS/MTS)"]
+    CL_TX --> CLIENT
+    CLIENT --> CL_RX
+    CL_RX -->|"DSHM"| TS1
+    AUTO -->|"DSHM"| TS1
+
+    subgraph SHM_AREA["공유 메모리"]
+        SHM["SHM\nShm_Note / Shm_FinFut / Shm_Risk"]
+    end
+
+    SISE_MP --> SHM
+    RDS_DD --> SHM

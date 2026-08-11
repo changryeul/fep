@@ -1,0 +1,430 @@
+/*#####################################################################
+ - EAI를 통해 CMBS에서 시세 수신하여 newmds로 UDP 송신
+//#######################################################################*/
+
+#include "mds2.h"
+
+#include "eaiinfo.h"
+
+#include "comdef.h"
+#include "wfaapi.h"    // 실시간전송(Client)
+#include "axsnd.h"
+#include "mymq.h"
+#include "agfix.h"
+#include "agxpi.h"
+#include "agtrc.h"
+#include "comrdb.h"
+#include "comhdr.h"
+#include "comfun.h"
+#include "killmon.h"
+
+#define		EAI_INTERVAL		5
+
+char	bizdate[8];		// 영업일 (최초 기동 시 DB테이블에서 조회함)
+
+char	*whoami = "eai4CMBS";
+MDARCH	*parch = NULL;
+MDFOLD	*pfold = NULL;
+
+EXEC SQL INCLUDE SQLCA;
+
+KILLMON_T		*root;
+KILL_SWITCH_T	*pk;
+
+void exitproc(int exitval);
+
+int SetTime4CMBS(char *stime, char *etime);		// YYYYMMDDHHmmSS
+int GetFeedStat(char *ctime);
+
+MARKET	market;
+E_MSG	e_msg;      // Error Message info
+
+/*===============================================================
+ * EXITPROC
+===============================================================*/
+void exitproc(int exitval)
+{
+	char		TZ[40];
+
+	sprintf(TZ, TZ_KST);
+	putenv(TZ);
+	tzset();
+	
+	l_db2disconnect();
+
+	printf("\nProgram Terminated.. exitval[%d]\n\n", exitval);
+	
+	exit(exitval);
+}
+
+void Usage(int exitval)
+{
+	printf("\n\t Usage : %s [-cp9999] [-rp9998] \n", whoami);
+	printf("\t   -cp : CMBS   송신포트 \n");
+	printf("\t   -rp : REUTER 송신포트 \n");
+	exitproc(exitval);
+}
+
+/*===============================================================
+ * MAIN PROCESS
+===============================================================*/
+int main(int argc, char *argv[])
+{
+	int		rtn, ii, cport=-1, rport=-1;
+	struct	tm *tm;
+	struct timeval	tv;
+	char	options[32], stemp[32];
+
+	if (argc < 3)	Usage(-1);
+	
+	for (ii=1; ii < argc; ii++)
+	{
+		memset(options, 0x00, sizeof(options));
+
+		if (strncmp(argv[ii], "-cp", 3) == 0)		// CMBS 송신포트
+		{
+			strcpy(options, &argv[ii][3]);
+			cport = atoi(options);
+		}
+		if (strncmp(argv[ii], "-rp", 3) == 0)		// REUT 송신포트
+		{
+			strcpy(options, &argv[ii][3]);
+			rport = atoi(options);
+		}
+	}
+
+	if (cport <= 0 || rport <= 0)	Usage(-2);
+
+	memset(&market, 0x00, sizeof(market));
+	strcpy(market.procname, whoami);
+	market.ctx.llog = LOG_DEBUG;
+
+	memset(&e_msg,  0x00, E_MSG_SZ);
+	strcpy(e_msg.pname, whoami);
+
+	/*===============================================================
+	 * PROCESS 초기화
+	===============================================================*/
+	root = InitKillMon();
+	if(root == NULL) // 실패
+	{
+		mds_log(&market, MLOG_ERROR, "InitKillMon() Failed!");
+		exitproc(-1);
+	}
+
+	pk = AddKillMon(root, whoami);
+	if(pk == NULL) // 실패
+	{
+		mds_log(&market, MLOG_ERROR, "AddKillMon() %s Failed!", whoami);
+		exitproc(-1);
+	}
+	mds_log(&market, MLOG_MUST, "AddKillMon() %s Success!", whoami);
+	sprintf(pk->pdesc, "CMBS,REUTER EAI 조회");
+
+	pk->priority = 8000;
+
+	rtn = l_db2connect();
+	if (rtn != 0)
+	{
+		mds_log(&market, MLOG_ERROR, "dbconnect error!!!  (%d:%s)", rtn, errno, strerror(errno));
+		exitproc(-1);
+	}
+
+	/*===============================================================
+	 * UDP 클라이언트 : 송신준비
+	  > CUST, BEST 데이터 송신 용
+	===============================================================*/
+	int		csock, rsock;
+	struct	sockaddr_in	caddr, raddr;
+
+	// CMBS 송신 소켓
+	memset(&caddr, 0x00, sizeof(caddr));
+
+	caddr.sin_family       = AF_INET;
+	caddr.sin_addr.s_addr  = inet_addr("127.0.0.1");	// 동일한 서버에 있음.
+	caddr.sin_port         = htons(cport);
+
+	if ((csock = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
+	{
+		mds_log(&market, MLOG_ERROR, "Cannot open a socket for a best (%d) (%d:%s)", cport, errno, strerror(errno));
+		exitproc(-1);
+	}
+	
+	// REUTER 송신 소켓
+	memset(&raddr, 0x00, sizeof(raddr));
+
+	raddr.sin_family       = AF_INET;
+	raddr.sin_addr.s_addr  = inet_addr("127.0.0.1");	// 동일한 서버에 있음.
+	raddr.sin_port         = htons(rport);
+
+	if ((rsock = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
+	{
+		mds_log(&market, MLOG_ERROR, "Cannot open a socket for a best (%d) (%d:%s)", rport, errno, strerror(errno));
+		exitproc(-2);
+	}
+
+	/*===============================================================
+	 * CUST MAST SharedMemory Attach
+	===============================================================*/
+	char	msg[128];
+	memset(msg, 0x00, sizeof(msg));
+
+	parch = mds_getarch(0, "CUST", msg);
+	if (parch == NULL)
+	{
+		mds_log(&market, MLOG_ERROR, "mds_getarch error!!!  (%s)", rtn, msg);
+		exitproc(-3);
+	}
+
+	pfold = (MDFOLD *)((char *)parch + sizeof(MDARCH) + (sizeof(INDEX)*parch->xchg.maxcnt));
+	
+	/*===============================================================
+	 * MAIN PROCESS (시세송신)
+	===============================================================*/
+	int		dlen, dcnt;
+	char	stoday[14+1], sbuff[1024];
+	char	stime[14+1], etime[14+1], ctime[14+1];				// YYYYMMDDHHmmSS
+	struct Eai_keiif0020_in		keiif0020_i;
+	struct Eai_keiif0020_out	keiif0020_o;
+	struct Biz_ErrInfo			errinfo;
+
+	if ((rtn=SetTime4CMBS(stime, etime)) < 0) {
+		mds_log(&market, MLOG_ERROR, "[%s][%d] SetTime4CMBS error !!! [%d]", __FUNCTION__, __LINE__, rtn);
+		exitproc(-4);
+	}
+
+mds_log(&market, MLOG_MUST, "[%s] service ready OK.. bizdate[%.8s] >>>>>>>>>>>>>>>>>>>>>>>>> ", __FUNCTION__, bizdate);
+
+	long	usec;
+
+	while(1)
+	{
+		gettimeofday(&tv, NULL);
+		tm = localtime(&tv.tv_sec);
+
+		sprintf(ctime, "%04d%02d%02d%02d%02d%02d", tm->tm_year+1900, tm->tm_mon+1, tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec);
+
+		// 기동시 조회한 서비스 시간 기준으로 동작하고.. 장 중에 변경된 내용은 GetFeedStat() 에서 체크 함.
+		if (strcmp(ctime, stime) < 0 || strcmp(ctime, etime) > 0)
+		{
+			// Start 전이면 정시에 시작할 수 있도록 usleep 으로 조회시간 보정
+			if (strcmp(ctime, stime) < 0 && tm->tm_sec%EAI_INTERVAL !=0)
+			{
+				usec = (5 - tm->tm_sec%EAI_INTERVAL - 1)*1000000 + 1000000 - tv.tv_usec;
+				mds_log(&market, MLOG_DEBUG, "ctime[%s] usec[%ld] usleep[%f]", ctime, tv.tv_usec, usec/1000000.);
+				usleep(usec);
+			}
+
+			// End 이후이면서 일자변경되면 수신카운트 초기화 및 운영시간 재조회
+			if (strcmp(ctime, etime) > 0 && memcmp(bizdate, ctime, sizeof(bizdate)) != 0)
+			{
+				pk->tot_count = 0;
+//				memcpy(bizdate, ctime, sizeof(bizdate));
+//				mds_log(&market, MLOG_DEBUG, "############## bizdate changed [%.8s]", bizdate);
+				
+				if ((rtn=SetTime4CMBS(stime, etime)) < 0)
+					mds_log(&market, MLOG_ERROR, "[%s][%d] timeset is not found.. SetTime4CMBS error !!! [%d]", __FUNCTION__, __LINE__, rtn);
+			}
+
+			// CUST 메모리에 호가제공 exc:!ode가 'C', 'R' 인지 체크
+			rtn = GetFeedStat(ctime);
+			if (rtn <= 0)
+			{
+				mds_log(&market, MLOG_DEBUG, "[%s][%d] not service time [%s~%s] ", __FUNCTION__, __LINE__, stime, etime);
+
+				if (strcmp(ctime, etime) > 0)	sleep(60);		// 서비스 시간 종료된 상태이면 길게 쉰다.
+				
+				sleep(EAI_INTERVAL);
+				continue;
+			}
+			else if (rtn == 2)		// 통화쌍 중 기본시간에 CMBS, REUTER가 세팅되어 있는 경우는 재조회
+				SetTime4CMBS(stime, etime);
+		}
+
+		//--------------------------------------------------------------------
+		// EAI(keiif0020) 함수 호출
+		//--------------------------------------------------------------------
+		memset(&keiif0020_i, 0x00, sizeof(keiif0020_i));
+		memset(&keiif0020_o, 0x00, sizeof(keiif0020_o));
+
+//		memcpy(keiif0020_i.baseYmd, ctime,   sizeof(keiif0020_i.baseYmd));    // 기준일자  
+		memcpy(keiif0020_i.baseYmd, bizdate, sizeof(bizdate));    // 기준일자  
+//		mds_log(&market, MLOG_DEBUG, "== f_keiif0020 call....[%.8s]", keiif0020_i.baseYmd);
+
+		rtn = f_keiif0020(&e_msg, &keiif0020_i, &keiif0020_o, &errinfo);
+		if (rtn != 0)
+		{
+			mds_log(&market, MLOG_ERROR,  "[%s] EAI 데이터 요청처리 오류 [%d]", __FUNCTION__, rtn);
+			mds_log(&market, MLOG_ERROR,  "[%s] errinfo [%.*s]", __FUNCTION__, sizeof(errinfo), (char *)&errinfo);
+			sleep(EAI_INTERVAL);
+			continue;
+		}
+
+		//-----------------------------------------------------
+		// 수신데이터를 분할하여 UDP 전송
+		//-----------------------------------------------------
+		dcnt = str2i(keiif0020_o.grid01_cnt, sizeof(keiif0020_o.grid01_cnt));
+
+mds_log(&market, MLOG_DEBUG, "== f_keiif0020 call..... rtn:%d (dcnt:%d)", rtn, dcnt);
+
+		for (ii=0; ii < dcnt ; ii++)
+		{
+			memset(sbuff, 0x00, sizeof(sbuff));
+			memcpy(sbuff, &keiif0020_o.orec[ii], sizeof(Eai_keiif0020_olist));
+
+			if (memcmp(keiif0020_o.orec[ii].cncycd, "AED", 3) == 0)		continue;
+
+			/*===============================================================
+			 * UDP SEND TO CMBS
+			===============================================================*/
+			rtn = sendto(csock, sbuff, sizeof(Eai_keiif0020_olist), 0, (struct sockaddr *)&caddr, sizeof(struct sockaddr));
+			if (rtn <  0)
+			{
+				mds_log(&market, MLOG_ERROR, "UDP SEND ERROR of CMBS (%d) (%d:%s)", rtn, errno, strerror(errno));
+				continue;
+			}
+
+			/*===============================================================
+			 * UDP SEND TO REUTER
+			===============================================================*/
+			rtn = sendto(rsock, sbuff, sizeof(Eai_keiif0020_olist), 0, (struct sockaddr *)&raddr, sizeof(struct sockaddr));
+			if (rtn <  0)
+			{
+				mds_log(&market, MLOG_ERROR, "UDP SEND ERROR of CMBS (%d) (%d:%s)", rtn, errno, strerror(errno));
+				continue;
+			}
+			pk->tot_count++;
+			pk->tot_count_time = tv.tv_sec;
+
+if (tm->tm_min%10 == 0)
+	mds_log(&market, MLOG_DEBUG, "udpsend [%.6s/%.3s/%.9s/%.9s]"
+					,keiif0020_o.orec[ii].regiHMS, keiif0020_o.orec[ii].cncycd, keiif0020_o.orec[ii].buyPcstExrt, keiif0020_o.orec[ii].sellPcstExrt);
+		}
+
+		sleep(EAI_INTERVAL);
+	}
+	mds_log(&market, MLOG_ERROR, "CMBS데이터 EAI 수신처리.. Terminated....!! ");
+
+	close(csock);
+	close(rsock);
+
+	exitproc(0);
+}
+
+/*===============================================================
+ * CMBS/REUTER 시세 제공시간 체크
+ * CUST 내에 CMBS/REUTER 가 우선시세로 설정되어 있는 종목이 있으면 stime, etime 에 관계없이 수신
+===============================================================*/
+int GetFeedStat(char *ctime)
+{
+	int		ii;
+	MDFOLD *p;
+
+	p = pfold;
+
+	for (ii=0; ii < parch->nrec; ii++, p++)
+	{
+		if (p->symb[0] == NULL)		continue;
+
+		if (p->cust.excode[0] != 'C' && p->cust.excode[0] != 'R')	continue;
+
+		// 우선적용 상태인지 체크
+		if (p->cust.feedtp[0] == DF_CFEED_PRIO)
+			return (1);
+
+		if (strlen(ctime) != sizeof(p->cust.stm))	continue;
+		
+		// 화면에서 변경한 시간을 적용하기 위한 체크
+		if (memcmp(ctime, p->cust.stm, sizeof(p->cust.stm)) > 0 && memcmp(ctime, p->cust.etm, sizeof(p->cust.etm)) < 0)
+			return (2);
+	}
+
+	return (0);
+}
+
+int SetTime4CMBS(char *stime, char *etime)		// YYYYMMDDHHmmSS
+{
+EXEC SQL BEGIN DECLARE SECTION;
+	char v_tmstamp	[19+1];
+	char v_stime	[14+1];
+	char v_etime	[14+1];
+	char v_bizdate	[ 8+1];
+EXEC SQL END DECLARE SECTION;
+
+	memset(v_tmstamp, 0x00, sizeof(v_tmstamp));
+	memset(v_stime,   0x00, sizeof(v_stime));
+	memset(v_etime,   0x00, sizeof(v_etime));
+	memset(v_bizdate, 0x00, sizeof(v_bizdate));
+
+	memset(bizdate,   0x00, sizeof(bizdate));		// 전역 영업일 변수
+
+EXEC SQL
+	SELECT 영업년월일 INTO :v_bizdate FROM INST1.TSKEIAM00 WITH UR;
+	if (SQLCODE != 0)
+	{
+		mds_log(&market, MLOG_ERROR, "[%s] select bizdate from TSKEIAM00 error.. [%s] \n", __func__, SQLERRM);
+		return (-1);
+	}
+	
+	memcpy(bizdate, v_bizdate, sizeof(bizdate));
+
+	strcpy(stime, "99999999999999");	// 기본값 세팅
+	strcpy(etime, "00000000000000");	// 기본값 세팅
+
+	// 종료시간이 익일인 경우가 혼재되어 있음. (START_HMS > END_HMS)
+EXEC SQL
+	SELECT	MIN(STIME), MAX(ETIME)
+	  INTO	:v_stime, :v_etime
+	  FROM	(
+			SELECT	 :v_bizdate || MIN(START_HMS) AS STIME
+					,:v_bizdate || MAX(END_HMS) AS ETIME
+			  FROM	INST1.TSKEIAM98
+			 WHERE	FCM_ID IN ('CMBS','REUT')
+			   AND	START_HMS < END_HMS
+			UNION ALL
+			SELECT	 :v_bizdate || MIN(START_HMS) AS STIME
+					,TO_CHAR(TO_DATE(:v_bizdate, 'YYYYMMDD') + 1 DAY, 'YYYYMMDD') || MAX(END_HMS) AS ETIME
+			  FROM	INST1.TSKEIAM98
+			 WHERE	FCM_ID IN ('CMBS','REUT')
+			   AND	START_HMS > END_HMS
+			)
+	WITH UR;
+	if (SQLCODE != 0)
+	{
+		mds_log(&market, MLOG_ERROR, "[%s] select cme eai service time[%s] \n", __func__, SQLERRM);
+		return (-1);
+	}
+	
+	l_rtrim(v_stime);
+	l_rtrim(v_etime);
+	
+	if (strlen(v_stime) == 0 || strlen(v_etime) == 0)
+		return (-1);
+
+	sprintf(v_tmstamp, "%.4s-%.2s-%.2s %.2s:%.2s:%.2s", v_stime, &v_stime[4], &v_stime[6], &v_stime[8], &v_stime[10], &v_stime[12]);
+
+	memset(v_stime, 0x00, sizeof(v_stime));
+
+	// 세팅 시간보다 1분먼저 EAI 조회 시작
+EXEC SQL
+	SELECT	TO_CHAR(TIMESTAMP(:v_tmstamp) - 1 MINUTES, 'YYYYMMDDHH24MISS')
+	  INTO	:v_stime
+	  FROM	SYSIBM.DUAL
+	;
+	if (SQLCODE != 0)
+	{
+		mds_log(&market, MLOG_ERROR, "[%s] select from dual error !!!  [%s] \n", __func__, SQLERRM);
+		return (-2);
+	}
+	
+	l_rtrim(v_stime);
+
+	strcpy(stime, v_stime);
+	strcpy(etime, v_etime);
+
+	mds_log(&market, MLOG_BIZ, "[%s] biz [%.8s] cme servicetime [%s ~ %s]", __func__, bizdate, stime, etime);
+
+	l_db2commit();
+
+	return (0);
+}

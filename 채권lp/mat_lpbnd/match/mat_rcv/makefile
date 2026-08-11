@@ -1,0 +1,27 @@
+SUFFIXES		=.c.o
+include			$(HOME)/mat/lib/make.env
+include			$(HOME)/mat/lib/mymq.env
+TARGET			= main
+LIB_TARGET		= $(LIBDIR)/libcdc.a
+SOURCE			= main.c
+OBJ				= ${SOURCE:.c=.o}
+HEADER			= ${SOURCE:.c=.h}
+INC				= -I. -I..
+
+#all			: $(TARGET)
+
+$(TARGET)	: $(OBJ)
+	$(LD) $(LDFLAGS) -o $@ $(OBJ) $(LIBS) $(LIB)
+
+.c.o		:
+	$(CC) $(CFLAGS) $(INCS) $(INC) -o $@ -c $<
+
+clean		:
+	rm -f $(OBJ) $(TARGET)
+
+install		:
+	mv $(MAT_BIN)/mat_rcv $(MAT_BIN)/mat_rcv.bak
+	cp $(TARGET) $(MAT_BIN)/mat_rcv
+
+
+

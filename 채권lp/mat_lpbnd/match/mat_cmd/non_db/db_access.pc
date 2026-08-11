@@ -1,0 +1,1904 @@
+/*******************************************************************************
+ * Callback Name : TEST00A01
+ * Description   : 에러코드조회/등록/수정/삭제
+ *
+ *  Rev. History :
+ *      Ver     Date       Information
+ *      ------- ---------- -----------------------------------------------
+ *      1.00    2023-09-13 김경섭 최초 작성
+ *              변수사용시 v_baseDate 등 "_"를 사용하지 말고 카멜 표기준수
+ *              예) v_baseDate --> vBaseDate로 사용
+ *                  특히 DB입력변수에서는 절대 사용금지
+ *******************************************************************************/
+
+//#include "comglb.h"
+#if 0
+#include "comcom.h"
+#endif
+#include <sqlca.h>
+
+#include "log.h"
+#include "etc.h"
+#include "gcomdef.h"
+
+#include "mat.h"
+#include "main.h"
+extern MAT	*Mat;
+
+EXEC SQL BEGIN DECLARE SECTION;
+
+typedef struct _db_order_
+{
+    char    ORDN_NO                         [30  +1];           /* 주문번호                    VARCHAR2            */
+    char    ORTR_ORDN_NO                    [30  +1];           /* 원거래주문번호              VARCHAR2            */
+    char    OUST_ORDN_NO                    [30  +1];           /* 당초주문번호                VARCHAR2            */
+    char    GRP_ORDN_NO                     [30  +1];           /* 그룹주문번호                VARCHAR2            */
+    char    ORDN_YMD                        [8   +1];           /* 주문년월일                  VARCHAR2            */
+    char    ORDN_DCD                        [1   +1];           /* 주문구분코드                CHAR                */
+    char    PRAS_ID                         [60  +1];           /* 호가ID                      VARCHAR2            */
+    char    FDM_ID                          [10  +1];           /* 외환중개사ID                VARCHAR2            */
+    char    ORDN_ORGN_DCD                   [1   +1];           /* 주문원천구분코드            CHAR                */
+    char    ORDN_ORGN_SUB_DCD               [1   +1];           /*                             CHAR                */
+    char    FX_TRN_TCD                      [1   +1];           /* FX거래유형코드              CHAR                */
+    char    AUON_DCD                        [1   +1];           /* 자동거래구분코드            CHAR                */
+    char    ORDE_ID                         [20  +1];           /*                             VARCHAR2            */
+    char    WBCS_RLNM_ALTR_NO               [16  +1];           /* 전행고객실명대체번호        VARCHAR2            */
+    char    PU_CD                           [5   +1];           /* PU코드                      CHAR                */
+    char    FXBK_ID                         [20  +1];           /* FX북ID                      VARCHAR2            */
+    char    MNGM_BRCD                       [4   +1];           /* 관리부점코드                CHAR                */
+    char    HDOM_APLY_GRP_ID                [3   +1];           /* 본점마진적용그룹ID          VARCHAR2            */
+    char    FX_PDCD                         [3   +1];           /* FX상품코드                  CHAR                */
+    char    CRNC_PAIR_ID                    [7   +1];           /* 통화페어ID                  VARCHAR2            */
+    char    TNR_PTRN_DCD                    [1   +1];           /* TENOR유형구분코드           CHAR                */
+    char    TNR_ID                          [3   +1];           /* TENORID                     CHAR                */
+    char    EXPI_STTG_YMD                   [8   +1];           /* 만기종료년월일              VARCHAR2            */
+    char    EXPI_FNSH_YMD                   [8   +1];           /* 만기시작년월일              VARCHAR2            */
+    char    FX_ITMS_ID                      [30  +1];           /* FX종목ID                    VARCHAR2            */
+    char    BYSEL_DCD                       [1   +1];           /* 매입매도구분코드            CHAR                */
+    char    CNTT_CNDT_DCD                   [3   +1];           /* 체결조건구분코드            CHAR                */
+    char    ORDN_VALD_YMD                   [8   +1];           /* 주문유효년월일              VARCHAR2            */
+    char    TXCR_DCD                        [1   +1];           /* 거래통화구분코드            CHAR                */
+    char    BASE_CRCD                       [3   +1];           /* 기준통화코드                CHAR                */
+    double  FX_SDCU_AMT                             ;           /* FX기준통화금액              NUMBER              */
+    char    COCU_CD                         [3   +1];           /* 상대통화코드                CHAR                */
+    double  FX_COCU_AMT                             ;           /* FX상대통화금액              NUMBER              */
+    double  FX_ORDN_QTY                             ;           /* FX주문수량                  NUMBER              */
+    double  FX_CRCT_QTY                             ;           /* FX정정수량                  NUMBER              */
+    double  FX_CNCL_QTY                             ;           /* FX취소수량                  NUMBER              */
+    double  FX_CNTT_QTY                             ;           /* FX체결수량                  NUMBER              */
+    double  FX_ORDN_BALN_QTY                        ;           /* FX주문잔고수량              NUMBER              */
+    double  FX_ORDN_PNTM_PRC                        ;           /* FX주문시점가격              NUMBER              */
+    char    ORDN_PRC_CNCD                   [1   +1];           /* 주문가격조건코드            CHAR                */
+    double  FX_ORDN_PRC                             ;           /* FX주문가격                  NUMBER              */
+    double  MRKT_SPOT_PRC                           ;           /* 시장SPOT가격                NUMBER              */
+    double  MRKT_SWAP_PRC                           ;           /* 시장스왑가격                NUMBER              */
+    double  FX_MRKT_PRC                             ;           /* FX시장가격                  NUMBER              */
+    double  CVR_SPR                                 ;           /* 커버스프레드                NUMBER              */
+    double  SLS_SPR                                 ;           /* 세일즈스프레드              NUMBER              */
+    double  FX_ORCY_PRC                             ;           /* FX당사가격                  NUMBER              */
+    char    SPR_UT_DCD                      [1   +1];           /* 스프레드단위구분코드        CHAR                */
+    double  CUS_SPR                                 ;           /* 고객스프레드                NUMBER              */
+    double  SLPPG_PRC                               ;           /* 슬리피지가격                NUMBER              */
+    char    MNRC_CRCD                       [3   +1];           /* 입금통화코드                CHAR                */
+    char    MNRC_CRNC_ACN                   [20  +1];           /* 입금통화계좌번호            VARCHAR2            */
+    char    DROT_CRCD                       [3   +1];           /* 출금통화코드                CHAR                */
+    char    DROT_CRNC_ACN                   [20  +1];           /* 출금통화계좌번호            VARCHAR2            */
+    char    DASTL_YN                        [1   +1];           /* 차액결제여부                CHAR                */
+    char    STLM_CRCD                       [3   +1];           /* 결제통화코드                CHAR                */
+    char    FX_GRNY_PTRN_DCD                [1   +1];           /* FX보증유형구분코드          CHAR                */
+    double  GRMN_APLY_RT                            ;           /* 보증금적용율                NUMBER              */
+    char    NMNL_GRNY_CRCD                  [3   +1];           /* 명목보증통화코드            CHAR                */
+    double  NMNL_GRNY_AMT                           ;           /* 명목보증금액                NUMBER              */
+    char    GRMN_ACN                        [20  +1];           /* 보증금계좌번호              VARCHAR2            */
+    char    GRMN_CRCD                       [3   +1];           /* 보증금통화코드              CHAR                */
+    double  GRMN_WTMN_AMT                           ;           /* 보증금인출금액              NUMBER              */
+    char    LMT_ACN                         [30  +1];           /* 한도계좌번호                VARCHAR2            */
+    char    LMT_CRCD                        [3   +1];           /* 한도통화코드                CHAR                */
+    double  FX_LMUS_AMT                             ;           /* FX한도사용금액              NUMBER              */
+    double  NMNL_GRNY_CRNC_TLCH_SELL_RT             ;           /* 명목보증통화전신환매도율    NUMBER              */
+    double  NMNL_GRNY_CRNC_TSCN_RT                  ;           /* 명목보증통화대미환산율      NUMBER              */
+    double  GRLM_CRNC_TSCN_RT                       ;           /* 보증한도통화대미환산율      NUMBER              */
+    char    FWEX_PSRN_NO                    [30  +1];           /* 선물환사전점검번호          VARCHAR2            */
+    double  FWEX_PSRN_DTLS_NO                       ;           /* 선물환사전점검세부번호      NUMBER              */
+    char    FX_CCTN_CHNL_DCD                [2   +1];           /* FX접속채널구분코드          CHAR                */
+    char    ORDN_TRMS_DCD                   [3   +1];           /* 주문전송구분코드            CHAR                */
+    char    ORDN_STTS_DCD                   [1   +1];           /* 주문상태구분코드            CHAR                */
+    char    ERCD_CONV_ID                    [10  +1];           /* 오류코드변환ID              VARCHAR2            */
+    char    ERCD_CONV_CON                   [200 +1];           /* 오류코드변환내용            VARCHAR2            */
+    char    ORDN_TRMS_PNTM_CON              [26  +1];           /* 주문전송시점내용            VARCHAR2            */
+    char    ORDN_RCIP_PNTM_CON              [26  +1];           /* 주문접수시점내용            VARCHAR2            */
+    char    LAST_CNTT_PNTM_CON              [26  +1];           /* 최종체결시점내용            VARCHAR2            */
+    char    FDM_ORDN_RCIP_PNTM_CON          [26  +1];           /* 외환중개사주문접수시점내용  VARCHAR2            */
+    char    FX_EXTL_REF_NO                  [60  +1];           /* FX외부참조번호              VARCHAR2            */
+    char    ENAM_STFS_YN                    [1   +1];           /* 전액결제완료여부            CHAR                */
+    char    EXTL_LNK_ID                     [60  +1];           /* 외부연계ID                  VARCHAR2            */
+    char    FX_MDIA_DCD                     [2   +1];           /* FX매체구분코드              CHAR                */
+    char    FX_SYS_MAIN_USER_ID             [30  +1];           /* FX시스템메인사용자ID        VARCHAR2            */
+    char    FX_SYS_SUB_USER_ID              [30  +1];           /* FX시스템서브사용자ID        VARCHAR2            */
+    char    ORDE_OFRC_IP                    [40  +1];           /* 주문자공인IP                VARCHAR2            */
+    char    ORDE_INDV_IP                    [40  +1];           /* 주문자개인IP                VARCHAR2            */
+    char    MAC_ADR                         [100 +1];           /* MAC주소                     VARCHAR2            */
+    char    RULE_ID                         [36  +1];           /* RULEID                      VARCHAR2            */
+    char    PCSN_BRCD                       [4   +1];           /* 처리부점코드                CHAR                */
+    char    FDM_ORDN_NO                     [50  +1];           /* 외환중개사주문번호          VARCHAR2            */
+    char    ADD_CON                         [500 +1];           /*                             VARCHAR2            */
+    char    BOB_EMN                         [6   +1];           /*                             CHAR                */
+    char    IMDR_YN                         [1   +1];           /*                             CHAR                */
+    char    USE_YN                          [1   +1];           /* 사용여부                    CHAR                */
+    char    FX_SYS_LSMD_ID                  [30  +1];           /* FX시스템최종변경ID          VARCHAR2            */
+    char    FX_SYS_LSMD_TS                  [7   +1];           /* FX시스템최종변경일시        DATE                */
+}   DB_ORDER;
+
+typedef struct _opr_dhpair_cfg_
+{
+	char	pair_id			[7	+1];
+	char	ccy1			[3	+1];
+	char	ccy2			[3	+1];
+	char	pnt_digt		[22	+1];
+	char	pnt_digt_val	[22	+1];
+	char	cli_digt		[22	+1];
+	char	cli_digt_val	[22	+1];
+	char	pl_pair_id		[7	+1];
+	char	pl_calc_tp		[1	+1];
+	char	px_unit			[22	+1];
+	char	roundingtype	[1	+1];
+	char	spotleg			[22	+1];
+	char	disp_seq		[22	+1];
+	char	active_yn		[1	+1];
+	char	upd_id			[20	+1];
+	char	upd_dt			[8	+1];
+	char	upd_tm			[6	+1];
+}	OPR_DHPAIR_CFG;
+
+typedef struct _tb_fxb_cmg004m_
+{
+	char		CRNC_PAIR_ID		[  7 +1];				/* */
+	char		BASE_CRCD			[  3 +1];				/* */
+	char		COCU_CD				[  3 +1];				/* */
+	double		EMP_CLCL_DCPU_RCN	        ;				/* */
+	double		EMP_CLCL_DCPU_VL	        ;				/* */
+	double		CUS_CLCL_DCPU_RCN	        ;				/* */
+	double		CUS_CLCL_DCPU_VL	        ;				/* */
+	char		PL_CRNC_PAIR_ID		[  7 +1];				/* */
+	char		FX_PRLOC_DCD		[  1 +1];				/* */
+	double		FX_PCRR_UT			        ;				/* */
+	char		DCPN_PCSN_DCD		[  1 +1];				/* */
+	double		SPOT_DT_CDNC_VL		        ;				/* */
+	double		RPSN_SQC			        ;				/* */
+	char		USE_YN				[  1 +1];				/* */
+	char		FX_SYS_LSMD_ID		[ 30 +1];				/* */
+	char		FX_SYS_LSMD_TS		[ 21 +1];				/* */
+}	TB_FXB_CMG004M;
+
+typedef struct _price_time_
+{
+	char	vl			[100 +1];
+	char	ref_con1	[32  +1];
+	char	vl_use_yn	[1   +1];
+}	PRICE_TIME;
+
+typedef struct _err_message_
+{
+	char	fx_err_cd		[5   +1];
+	char	lngg_dcd		[1   +1];
+	char	err_cd_con		[1000+1];
+	char	fx_sys_lsmd_id	[30  +1];
+	char	fx_sys_lsmd_ts	[20  +0];
+}	ERR_MESSAGE;
+
+typedef struct _tb_fxb_cmg001m_					/* 장운영 시간 */
+{
+	char	FDM_ID					[10  +1];   /* FRX */
+	char	FDM_NM					[100 +1];   /* name */
+	char	OPN_YMD					[8   +1];   /* 운영일시 */
+	char	FNSH_YMD				[8   +1];   /* 종료일시 */
+	char	OPRT_YN					[1   +1];   /* 운영여부 */
+	char	HLDD_YN					[1   +1];   /* 휴일여부 */
+	char	TRN_STTG_HMS			[6   +1];   /* 시작시간 */
+	char	TRN_FNSH_HMS			[6   +1];   /* 종료시간 */
+	char	TRNM_TRN_TGIS_ID		[50  +1];   /* */
+	char	TRNM_TRN_SUB_TGIS_ID	[50  +1];   /* */
+	char	RCTX_TGIS_ID			[50  +1];   /* */
+	char	RCTX_SUB_TGIS_ID		[50  +1];   /* */
+	char	USE_YN					[1   +1];   /* */
+	char	FX_SYS_LSMD_ID			[30  +1];   /* */
+	char	FX_SYS_LSMD_TS			[30  +1];   /* */
+}	TB_FXB_CMG001M;
+
+typedef struct _fix_holiday_
+{
+	char	FDM_ID        			[10 +1];		/*	*/
+	char	CRCD          			[3  +1];		/*	*/
+	char	FXNG_HLDD_MD  			[4  +1];		/*	*/
+	char	FX_HLDD_NM    			[50 +1];		/*	*/
+	char	COMNT_CON     			[500+1];		/*	*/
+	char	FX_SYS_LSMD_ID			[30 +1];		/*	*/
+	char	FX_SYS_LSMD_TS			[30 +1];		/*	*/
+}	FIX_HOLIDAY;
+
+typedef struct _flt_holiday_
+{
+	char	FDM_ID        			[10 +1];		/*	*/
+	char	CRCD          			[3  +1];		/*	*/
+	char	FLCT_HLDD_YMD 			[8  +1];		/*	*/
+	char	FX_HLDD_NM    			[50 +1];		/*	*/
+	char	COMNT_CON     			[500+1];		/*	*/
+	char	FX_SYS_LSMD_ID			[30 +1];		/*	*/
+	char	FX_SYS_LSMD_TS			[30 +1];		/*	*/
+}	FLT_HOLIDAY;
+
+typedef struct _cmg039m
+{
+	char CRNC_PAIR_ID     [7  +1];        /* 통화 페어 */
+	char PDF_TNR_CLSF_ID  [3  +1];        /* 상품 구분 */
+	char APSR_YMD         [8  +1];        /* 시작 일   */
+	char FNAP_YMD         [8  +1];        /* 종료 일   */
+	char STTG_HMS         [6  +1];        /* 시작 시간 */
+	char FNSH_HMS         [6  +1];        /* 종료 시간 */
+	char USE_YN           [1  +1];        /* 사용 여부 */
+	char FX_SYS_LSMD_ID   [30 +1];        /* 시스템 ID */
+	char FX_SYS_LSMD_TS   [30 +1];        /* 적용 시간 */
+}   JANG_PAIR;
+
+EXEC SQL END DECLARE SECTION;
+
+#define NO_DATA_FOUND	1403
+
+/***** Module : db_access.pc *****/
+int         Db_Process();
+int         Db_GetCodFxPair();
+int         Db_GetCmc003C();
+int         Db_GetTbFxbCmc001M();
+int         Db_GetTbFxbCmc001M_Cursor();
+int         Db_GetSyg001M();
+int         TB_FXB_CMG004M_Print( TB_FXB_CMG004M* ptr);
+int         TB_FXB_CMG001M_Print( TB_FXB_CMG001M* ptr);
+
+
+/*******************************************************************************
+* Function Name : TEST00A01()
+* Description   : 에러코드조회/등록/수정/삭제
+*******************************************************************************/
+int Db_Process()
+{
+	int		rtn;
+
+	rtn = l_dbconnect();
+	if( rtn != RET_SUCCESS)
+	{
+		LogCri( "DB CONNECT ERROR. rtn=[%d] ", rtn);
+		return -1;
+	}
+	LogDbg( "DB CONNECT SUCCESS. rtn=[%d] ", rtn);
+
+
+	/* 통화쌍 정보 */
+	LogMsg( "Table %s에서 외환 거래 정보를 load합니다.", "COD_FXPAIR");
+	Db_GetCodFxPair();
+
+	/* 시세 유효시간 정보 */
+	LogMsg( "Table %s에서 시세 유효시간 정보를 load합니다.", "TB_FXB_CMC003D");
+	Db_GetCmc003C();
+
+	/* 에러 메세지 */
+	/*
+	Db_GetSyg001M();
+	*/
+
+	/* 장시간 정보 */
+	Db_GetTbFxbCmc001M();
+
+	/* 통화별 장운영 정보 */
+	Db_GetCmg039M();
+
+	/* 유효 주문 Load */
+	Db_Order();
+
+	rtn = l_dbdisconnect();
+	if( rtn != RET_SUCCESS)
+	{
+		LogCri( "DB DISCONNECT ERROR. rtn=[%d] ", rtn);
+		return -1;
+	}
+	LogDbg( "DB DISCONNECT SUCCESS. rtn=[%d] ", rtn);
+
+
+	// 처리 결과를 보낸다.
+  	return rtn;
+}
+
+/*******************************************************************************
+* Function Name : Db_GetCodFxPair()
+* Description   : 통화쌍 정보 upload
+********************************************************************************/
+int Db_GetCodFxPair()
+{
+	int		i, cnt;
+	int		ii;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	TB_FXB_CMG004M			_cmg004m; 
+	TB_FXB_CMG004M			*cmg004m = &_cmg004m;
+	EXEC SQL END DECLARE SECTION;
+
+	//---------------------------------------------------------------------
+	// 4.조회 
+	//--------------------------------------------------------------------
+	EXEC SQL DECLARE TB_FXB_OPR_CMG004M CURSOR FOR
+	SELECT 
+		CRNC_PAIR_ID,
+		BASE_CRCD,
+		COCU_CD,
+		EMP_CLCL_DCPU_RCN,
+		EMP_CLCL_DCPU_VL,
+		CUS_CLCL_DCPU_RCN,
+		CUS_CLCL_DCPU_VL,
+		PL_CRNC_PAIR_ID,
+		FX_PRLOC_DCD,
+		FX_PCRR_UT,
+		DCPN_PCSN_DCD,
+		SPOT_DT_CDNC_VL,
+		RPSN_SQC,
+		USE_YN,
+		FX_SYS_LSMD_ID,
+		TO_CHAR( FX_SYS_LSMD_TS, 'YYYYMMDDHH24MISS')
+	FROM TB_FXB_CMG004M
+	ORDER BY RPSN_SQC
+	;
+
+	if (SQLCODE != 0)
+	{
+		LogCri( "SAMPLE  CURSOR DECLARE Error = [%d]", SQLCODE);
+		return -1;
+	}
+
+	EXEC SQL OPEN TB_FXB_OPR_CMG004M;
+	if (SQLCODE != 0)
+	{
+   		if (SQLCODE == NO_DATA_FOUND)
+   		{
+   			LogCri( "건수없음 SQLCODE=[%d]=================", SQLCODE);
+   			return(RET_FAILURE);
+   		}
+		else
+		{
+			LogCri( "SAMPLE CURSOR OPEN Error = [%d]", SQLCODE);
+			return(RET_FAILURE);
+		}
+   	}
+
+	for (ii = 0; ;ii++)
+	{
+		//출력값 메모리 초기화
+		memset( cmg004m, 0x00, sizeof( TB_FXB_CMG004M));
+
+	 	EXEC SQL 
+		FETCH TB_FXB_OPR_CMG004M
+		INTO
+			:cmg004m->CRNC_PAIR_ID		,
+			:cmg004m->BASE_CRCD			,
+			:cmg004m->COCU_CD			,
+			:cmg004m->EMP_CLCL_DCPU_RCN	,
+			:cmg004m->EMP_CLCL_DCPU_VL	,
+			:cmg004m->CUS_CLCL_DCPU_RCN	,
+			:cmg004m->CUS_CLCL_DCPU_VL	,
+			:cmg004m->PL_CRNC_PAIR_ID	,
+			:cmg004m->FX_PRLOC_DCD		,
+			:cmg004m->FX_PCRR_UT		,
+			:cmg004m->DCPN_PCSN_DCD		,
+			:cmg004m->SPOT_DT_CDNC_VL	,
+			:cmg004m->RPSN_SQC			,
+			:cmg004m->USE_YN			,
+			:cmg004m->FX_SYS_LSMD_ID	,
+			:cmg004m->FX_SYS_LSMD_TS
+			;
+		if (SQLCODE != 0)
+		{
+			if (SQLCODE == NO_DATA_FOUND )
+			{
+				break;
+			}
+			else
+			{
+				LogCri( "SAMPLE CURSOR Fetch Error = [%d]", SQLCODE);
+				EXEC SQL CLOSE TB_FXB_OPR_CMG004M;
+				return(RET_FAILURE);
+			}
+		}
+		else
+		{
+			//APLog(content->rkey, APLOG_DEBUG, "[%-15s][%4d] 에러코드	[%s]", __FUNCTION__, __LINE__, c_errCd );
+			//APLog(content->rkey, APLOG_DEBUG, "[%-15s][%4d] 에러메시지  [%s]", __FUNCTION__, __LINE__, c_errMsg);
+			;
+		}	
+
+		/* TB_FXB_CMG004M_Print( cmg004m); */
+		//로그출력 Level DEBUG
+		LogRaw( "[%s][%d][%d][%3d][%2d][%s][%s][%s]\n",
+			cmg004m->CRNC_PAIR_ID,
+			( int)cmg004m->EMP_CLCL_DCPU_RCN,
+			( int)cmg004m->CUS_CLCL_DCPU_RCN,
+			( int)cmg004m->FX_PCRR_UT,
+			( int)cmg004m->RPSN_SQC,
+			cmg004m->USE_YN,
+			cmg004m->FX_SYS_LSMD_ID,
+			cmg004m->FX_SYS_LSMD_TS
+			);
+		Mat_AddIndex( Mat, cmg004m->CRNC_PAIR_ID, 
+				( int)cmg004m->EMP_CLCL_DCPU_RCN, 
+				( int)cmg004m->FX_PCRR_UT);
+	}
+
+	EXEC SQL CLOSE TB_FXB_OPR_CMG004M;
+
+	//--------------------------------------------------------------
+	// 정상 처리 세팅 (0:정상, 1:비정상)
+	//--------------------------------------------------------------
+	LogMsg( "그리드건수 = [%d]", ii);
+	return(RET_SUCCESS);
+}
+
+/*******************************************************************************
+* Function Name : Db_GetCmc003C()
+* Description   : 시세유효시간 정보 upload
+********************************************************************************/
+int Db_GetCmc003C()
+{
+	int			i, cnt;
+	int			ii;
+	int			base, cont;
+	MAT_INDEX	*index;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	PRICE_TIME			_price_time; 
+	PRICE_TIME			*price_time = &_price_time;
+	EXEC SQL END DECLARE SECTION;
+
+	//---------------------------------------------------------------------
+	// 4.조회 
+	//--------------------------------------------------------------------
+	EXEC SQL DECLARE TB_FXB_PRICE_TIME_C1 CURSOR FOR
+	SELECT 
+		CMCD_VL,
+		CMCD_VL_REF_CON1,
+		USE_YN
+	FROM TB_FXB_CMC003D
+	WHERE COM_CD_NM = 'MCTX_DLY_ALWN_TIM'
+	;
+	
+
+	if (SQLCODE != 0)
+	{
+		LogCri( "SAMPLE  CURSOR DECLARE Error = [%d]", SQLCODE);
+		return -1;
+	}
+
+	EXEC SQL OPEN TB_FXB_PRICE_TIME_C1;
+	if (SQLCODE != 0)
+	{
+   		if (SQLCODE == NO_DATA_FOUND)
+   		{
+   			LogCri( "건수없음 SQLCODE=[%d]=================", SQLCODE);
+   			return(RET_FAILURE);
+   		}
+		else
+		{
+			LogCri( "SAMPLE CURSOR OPEN Error = [%d]", SQLCODE);
+			return(RET_FAILURE);
+		}
+   	}
+
+	for (ii = 0; ;ii++)
+	{
+		//출력값 메모리 초기화
+		memset( price_time, 0x00, sizeof( PRICE_TIME));
+
+	 	EXEC SQL 
+		FETCH TB_FXB_PRICE_TIME_C1
+		INTO
+			:price_time->vl					,
+			:price_time->ref_con1			,
+			:price_time->vl_use_yn			
+			;
+		if (SQLCODE != 0)
+		{
+			if (SQLCODE == NO_DATA_FOUND )
+			{
+				break;
+			}
+			else
+			{
+				LogCri( "SAMPLE CURSOR Fetch Error = [%d]", SQLCODE);
+				EXEC SQL CLOSE TB_FXB_PRICE_TIME_C1;
+				return(RET_FAILURE);
+			}
+		}
+		else
+		{
+			//APLog(content->rkey, APLOG_DEBUG, "[%-15s][%4d] 에러코드	[%s]", __FUNCTION__, __LINE__, c_errCd );
+			//APLog(content->rkey, APLOG_DEBUG, "[%-15s][%4d] 에러메시지  [%s]", __FUNCTION__, __LINE__, c_errMsg);
+			;
+		}	
+
+		//로그출력 Level DEBUG
+		LogRaw( "[%.7s][%.7s][%s]\n",
+			price_time->vl,
+			price_time->ref_con1,
+			price_time->vl_use_yn
+			);
+		base  = Mat_GetCurrentInt( Mat, &price_time->vl[ 0]);
+		cont  = Mat_GetCurrentInt( Mat, &price_time->vl[ 4]);
+		index = Mat_GetIndex( Mat, base, cont);
+		if( index == NULL)
+		{
+			LogCri( "index not found. vl=[%s]", price_time->vl);
+			continue;
+		}
+		if( price_time->vl_use_yn[ 0] == 'Y')
+		{
+			index->price_time = AtoI( price_time->ref_con1, sizeof( price_time->ref_con1));
+		}
+		else
+		{
+			index->price_time = 0;
+		}
+
+		/*
+		TB_FXB_CMG004M_Print( dh_pare);
+		*/
+	}
+
+	EXEC SQL CLOSE TB_FXB_PRICE_TIME_C1;
+
+	//--------------------------------------------------------------
+	// 정상 처리 세팅 (0:정상, 1:비정상)
+	//--------------------------------------------------------------
+	LogMsg( "그리드건수 = [%d]", ii);
+	return(RET_SUCCESS);
+}
+
+/*******************************************************************************
+* Function Name : Db_GetCmg039M()
+* Description   : 통화페어 정운영 정보 upload
+********************************************************************************/
+int Db_GetCmg039M()
+{
+	int				i, cnt;
+	int				ii;
+	int				base, cont;
+	MAT_INDEX		*index;
+
+	time_t			cur_time;
+	struct tm		_tm, *tp = &_tm;
+	int				int_today;
+	int				int_stime, int_etime;
+	int				int_hour, int_min, int_sec;
+	int				s_day, e_day;
+	MAT_JANG_REC	_jang, *jang = &_jang;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	JANG_PAIR			_jang_pair; 
+	JANG_PAIR			*jang_pair = &_jang_pair;
+	EXEC SQL END DECLARE SECTION;
+
+	time( &cur_time);
+	localtime_r( &cur_time, tp);
+	int_today = ( tp->tm_year +1900) * 10000
+			+ ( tp->tm_mon +1) * 100
+			+ tp->tm_mday;
+	LogDel( "today=[%d]", int_today);
+
+	//---------------------------------------------------------------------
+	// 4.조회 
+	//--------------------------------------------------------------------
+	EXEC SQL DECLARE TB_FXB_CMG039M_C1 CURSOR FOR
+	SELECT 
+		CRNC_PAIR_ID     ,
+		PDF_TNR_CLSF_ID  ,
+		APSR_YMD         ,
+		FNAP_YMD         ,
+		STTG_HMS         ,
+		FNSH_HMS         ,
+		USE_YN           ,
+		FX_SYS_LSMD_ID   ,
+		TO_CHAR( FX_SYS_LSMD_TS, 'YYYYMMDDHH24MISS')
+	FROM TB_FXB_CMG039M
+	;
+
+	if (SQLCODE != 0)
+	{
+		LogCri( "TB_FXB_CMG039M_C1 CURSOR DECLARE Error = [%d]", SQLCODE);
+		return -1;
+	}
+
+	EXEC SQL OPEN TB_FXB_CMG039M_C1;
+	if (SQLCODE != 0)
+	{
+   		if (SQLCODE == NO_DATA_FOUND)
+   		{
+   			LogCri( "건수없음 SQLCODE=[%d]=================", SQLCODE);
+   			return(RET_FAILURE);
+   		}
+		else
+		{
+			LogCri( "TB_FXB_CMG039M_C1 CURSOR OPEN Error = [%d]", SQLCODE);
+			return(RET_FAILURE);
+		}
+   	}
+
+	for (ii = 0; ;ii++)
+	{
+		//출력값 메모리 초기화
+		memset( jang_pair, 0x00, sizeof( JANG_PAIR));
+
+	 	EXEC SQL 
+		FETCH TB_FXB_CMG039M_C1
+		INTO
+			:jang_pair->CRNC_PAIR_ID     ,
+			:jang_pair->PDF_TNR_CLSF_ID  ,
+			:jang_pair->APSR_YMD         ,
+			:jang_pair->FNAP_YMD         ,
+			:jang_pair->STTG_HMS         ,
+			:jang_pair->FNSH_HMS         ,
+			:jang_pair->USE_YN           ,
+			:jang_pair->FX_SYS_LSMD_ID   ,
+			:jang_pair->FX_SYS_LSMD_TS   
+			;
+		if (SQLCODE != 0)
+		{
+			if (SQLCODE == NO_DATA_FOUND )
+			{
+				break;
+			}
+			else
+			{
+				LogCri( "TB_FXB_CMG039M_C1 CURSOR Fetch Error = [%d]", SQLCODE);
+				EXEC SQL CLOSE TB_FXB_CMG039M_C1;
+				return(RET_FAILURE);
+			}
+		}
+		else
+		{
+			;
+		}	
+
+#if 0
+		JANG_PAIR_Print( jang_pair);
+#endif
+
+		s_day = AtoI( jang_pair->APSR_YMD, sizeof( jang_pair->APSR_YMD));
+		e_day = AtoI( jang_pair->FNAP_YMD, sizeof( jang_pair->FNAP_YMD));
+
+		LogDel( "s_day=[%d] e_day=[%d]", s_day, e_day);
+
+		if( s_day > int_today) continue;
+		if( e_day < int_today) continue;
+		if( jang_pair->USE_YN[ 0] != 'Y') continue;
+
+		LogRaw( "[%.7s][%.3s][%.8s][%.8s][%.6s][%.6s]\n",
+			jang_pair->CRNC_PAIR_ID,
+			jang_pair->PDF_TNR_CLSF_ID,
+			jang_pair->APSR_YMD,
+			jang_pair->FNAP_YMD,
+			jang_pair->STTG_HMS,
+			jang_pair->FNSH_HMS
+		);
+
+		memcpy( jang->start_day,	jang_pair->APSR_YMD,	sizeof( jang->start_day));
+		memcpy( jang->end_day,		jang_pair->FNAP_YMD,	sizeof( jang->end_day));
+		memcpy( jang->start_time,	jang_pair->STTG_HMS,	sizeof( jang->start_time));
+		memcpy( jang->end_time,		jang_pair->FNSH_HMS,	sizeof( jang->end_time));
+		jang->used = 1;
+
+		time( &cur_time);
+		localtime_r( &cur_time, tp);
+
+		int_stime = AtoI( jang_pair->STTG_HMS, sizeof( jang_pair->STTG_HMS));
+		int_etime = AtoI( jang_pair->FNSH_HMS, sizeof( jang_pair->FNSH_HMS));
+		tp->tm_hour = int_stime / 10000;
+		tp->tm_min  = ( int_stime % 10000) / 100;
+		tp->tm_sec  = int_stime % 100;
+		jang->s_time = mktime( tp);
+
+		if( int_stime >= int_etime)			/* 다음날 장종료 */
+		{
+			LogDel( "다음날 set");
+			time( &cur_time);
+			cur_time += ( 24 * 3600);
+			localtime_r( &cur_time, tp);
+		}
+		tp->tm_hour = int_etime / 10000;
+		tp->tm_min  = ( int_etime % 10000) / 100;
+		tp->tm_sec  = int_etime % 100;
+		jang->e_time = mktime( tp);
+		LogDel( "jang->e_time=[%s]", TtoS( jang->e_time));
+
+		if( !memcmp( jang_pair->PDF_TNR_CLSF_ID, "MAR", 3))				jang->id = 1;
+		else if( !memcmp( jang_pair->PDF_TNR_CLSF_ID, "TOD", 3))		jang->id = 2;
+		else if( !memcmp( jang_pair->PDF_TNR_CLSF_ID, "TOM", 3))		jang->id = 3;
+		else if( !memcmp( jang_pair->PDF_TNR_CLSF_ID, "SPT", 3))		jang->id = 4;
+		else if( !memcmp( jang_pair->PDF_TNR_CLSF_ID, "FWD", 3))		jang->id = 5;
+		else															
+		{
+			LogCri( "unknown order type. type=[%s]", jang_pair->PDF_TNR_CLSF_ID);
+			jang->id = 0;
+		}
+		LogDel( "jang->id=[%d]", jang->id);
+
+		Mat_SetJang( Mat, jang_pair->CRNC_PAIR_ID, jang);
+
+	}
+
+	EXEC SQL CLOSE TB_FXB_CMG039M_C1;
+
+	//--------------------------------------------------------------
+	// 정상 처리 세팅 (0:정상, 1:비정상)
+	//--------------------------------------------------------------
+	LogMsg( "그리드건수 = [%d]", ii);
+	return(RET_SUCCESS);
+}
+
+/*******************************************************************************
+* Function Name : Db_GetTbFxbCmc001M()
+* Description   : 장 시작시간, 장 마감시간 정보 GET
+********************************************************************************/
+int Db_GetTbFxbCmc001M()
+{
+	time_t		cur_time;
+	int			s_time, e_time;
+	struct tm	_tm, *tp = &_tm;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	TB_FXB_CMG001M	_tb_fxb_cmg001m;
+	TB_FXB_CMG001M	*tb_fxb_cmg001m = &_tb_fxb_cmg001m;
+	EXEC SQL END DECLARE SECTION;
+
+	//---------------------------------------------------------------------
+	// 4.조회 
+	//--------------------------------------------------------------------
+	//출력값 메모리 초기화
+	memset( tb_fxb_cmg001m, 0x00, sizeof( TB_FXB_CMG001M));
+
+ 	EXEC SQL SELECT
+		FDM_ID,
+		FDM_NM,
+		OPN_YMD,
+		FNSH_YMD,
+		OPRT_YN,
+		HLDD_YN,
+		TRN_STTG_HMS,
+		TRN_FNSH_HMS,
+		TRNM_TRN_TGIS_ID,
+		TRNM_TRN_SUB_TGIS_ID,
+		RCTX_TGIS_ID,
+		RCTX_SUB_TGIS_ID,
+		USE_YN,
+		FX_SYS_LSMD_ID,
+		TO_CHAR( FX_SYS_LSMD_TS, 'YYYYMMDDHH24MISS')
+	INTO
+		:tb_fxb_cmg001m->FDM_ID,
+		:tb_fxb_cmg001m->FDM_NM,
+		:tb_fxb_cmg001m->OPN_YMD,
+		:tb_fxb_cmg001m->FNSH_YMD,
+		:tb_fxb_cmg001m->OPRT_YN,
+		:tb_fxb_cmg001m->HLDD_YN,
+		:tb_fxb_cmg001m->TRN_STTG_HMS,
+		:tb_fxb_cmg001m->TRN_FNSH_HMS,
+		:tb_fxb_cmg001m->TRNM_TRN_TGIS_ID,
+		:tb_fxb_cmg001m->TRNM_TRN_SUB_TGIS_ID,
+		:tb_fxb_cmg001m->RCTX_TGIS_ID,
+		:tb_fxb_cmg001m->RCTX_SUB_TGIS_ID,
+		:tb_fxb_cmg001m->USE_YN,
+		:tb_fxb_cmg001m->FX_SYS_LSMD_ID,
+		:tb_fxb_cmg001m->FX_SYS_LSMD_TS
+	FROM TB_FXB_CMG001M
+	WHERE
+		FDM_ID = 'FRX'
+		AND USE_YN = 'Y'
+		AND OPRT_YN = 'Y'
+		AND HLDD_YN = 'N'
+		;
+	if (SQLCODE != 0)
+	{
+		if (SQLCODE == NO_DATA_FOUND )
+		{
+			return NO_DATA_FOUND;
+		}
+		else
+		{
+			LogCri( "SAMPLE CURSOR Fetch Error = [%d]", SQLCODE);
+			return(RET_FAILURE);
+		}
+	}
+	else
+	{
+		//APLog(content->rkey, APLOG_DEBUG, "[%-15s][%4d] 에러코드	[%s]", __FUNCTION__, __LINE__, c_errCd );
+		//APLog(content->rkey, APLOG_DEBUG, "[%-15s][%4d] 에러메시지  [%s]", __FUNCTION__, __LINE__, c_errMsg);
+		;
+	}	
+
+	TB_FXB_CMG001M_Print( tb_fxb_cmg001m);
+
+	time( &cur_time);
+	localtime_r( &cur_time, tp);
+
+	s_time = atoi( tb_fxb_cmg001m->TRN_STTG_HMS);
+	e_time = atoi( tb_fxb_cmg001m->TRN_FNSH_HMS);
+
+	tp->tm_hour = s_time / 10000;
+	tp->tm_min  = ( s_time % 10000) / 100;
+	tp->tm_sec  = s_time % 100;
+	Mat->map->stat.start = mktime( tp);
+
+	if( e_time < s_time)
+	{
+		cur_time += 24 *3600;
+		localtime_r( &cur_time, tp);
+	}
+
+	tp->tm_hour = e_time / 10000;
+	tp->tm_min  = ( e_time % 10000) / 100;
+	tp->tm_sec  = e_time % 100;
+	Mat->map->stat.end = mktime( tp);
+
+	LogMsg( "장시작시간  =[%s]", TtoS( Mat->map->stat.start));
+	LogMsg( "장마감시간  =[%s]", TtoS( Mat->map->stat.end));
+
+	//--------------------------------------------------------------
+	// 정상 처리 세팅 (0:정상, 1:비정상)
+	//--------------------------------------------------------------
+	return(RET_SUCCESS);
+}
+
+/*******************************************************************************
+* Function Name : Db_GetSyg001M()
+* Description   : 에러 메세지 upload
+********************************************************************************/
+int Db_GetSyg001M()
+{
+	int			i, cnt;
+	int			ii;
+	MAT_MESSAGE	*msg;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	ERR_MESSAGE			_err_msg; 
+	ERR_MESSAGE			*err_msg = &_err_msg;
+	EXEC SQL END DECLARE SECTION;
+
+	//---------------------------------------------------------------------
+	// 4.조회 
+	//--------------------------------------------------------------------
+	EXEC SQL DECLARE TB_FXB_ERR_MSG_C1 CURSOR FOR
+	SELECT *
+	FROM TB_FXB_SYG001M
+	ORDER BY FX_ERR_CD
+	;
+	
+
+	if (SQLCODE != 0)
+	{
+		LogCri( "SAMPLE  CURSOR DECLARE Error = [%d]", SQLCODE);
+		return -1;
+	}
+
+	EXEC SQL OPEN TB_FXB_ERR_MSG_C1;
+	if (SQLCODE != 0)
+	{
+   		if (SQLCODE == NO_DATA_FOUND)
+   		{
+   			LogCri( "건수없음 SQLCODE=[%d]=================", SQLCODE);
+   			return(RET_FAILURE);
+   		}
+		else
+		{
+			LogCri( "SAMPLE CURSOR OPEN Error = [%d]", SQLCODE);
+			return(RET_FAILURE);
+		}
+   	}
+
+	for (ii = 0; ;ii++)
+	{
+		//출력값 메모리 초기화
+		memset( err_msg, 0x00, sizeof( ERR_MESSAGE));
+
+	 	EXEC SQL 
+		FETCH TB_FXB_ERR_MSG_C1
+		INTO
+			:err_msg->fx_err_cd			,
+			:err_msg->lngg_dcd			,
+			:err_msg->err_cd_con		,
+			:err_msg->fx_sys_lsmd_id	,
+			:err_msg->fx_sys_lsmd_ts	
+			;
+		if (SQLCODE != 0)
+		{
+			if (SQLCODE == NO_DATA_FOUND )
+			{
+				break;
+			}
+			else
+			{
+				LogCri( "SAMPLE CURSOR Fetch Error = [%d]", SQLCODE);
+				EXEC SQL CLOSE TB_FXB_ERR_MSG_C1;
+				return(RET_FAILURE);
+			}
+		}
+		else
+		{
+			//APLog(content->rkey, APLOG_DEBUG, "[%-15s][%4d] 에러코드	[%s]", __FUNCTION__, __LINE__, c_errCd );
+			//APLog(content->rkey, APLOG_DEBUG, "[%-15s][%4d] 에러메시지  [%s]", __FUNCTION__, __LINE__, c_errMsg);
+			;
+		}	
+
+		/* 
+		메칭 엔진용 메세지는 따로 정의 ... 
+		msg = &Mat->map->msg[ Mat->map->msg_cnt];
+		msg->code = AtoI( err_msg->fx_err_cd, sizeof( err_msg->fx_err_cd));
+		memcpy( msg->msg, err_msg->err_cd_con, sizeof( msg->msg));
+		TrimNR( msg->msg, sizeof( msg->msg));
+		Mat->map->msg_cnt++;
+		*/
+
+		//로그출력 Level DEBUG
+		LogRaw( "[%3d][%s][%s][%.75s][%.6s][%.10s]\n",
+			ii,
+			err_msg->fx_err_cd,
+			err_msg->lngg_dcd			,
+			err_msg->err_cd_con			,
+			err_msg->fx_sys_lsmd_id	,
+			err_msg->fx_sys_lsmd_ts	
+			);
+		/*
+		TB_FXB_CMG004M_Print( dh_pare);
+		*/
+
+	}
+
+	EXEC SQL CLOSE TB_FXB_ERR_MSG_C1;
+
+	//--------------------------------------------------------------
+	// 정상 처리 세팅 (0:정상, 1:비정상)
+	//--------------------------------------------------------------
+	LogMsg( "그리드건수 = [%d]", ii);
+	return(RET_SUCCESS);
+}
+
+/*******************************************************************************
+* Function Name : Db_GetSyg001M()
+* Description   : 에러 메세지 upload
+********************************************************************************/
+int Db_GetFixHoliday( MAT_HOLIDAY *holiday)
+{
+	int			i, cnt;
+	int			ii;
+	time_t		cur_time;
+	struct tm	*tp;
+	int			year;
+	char		buf[ 128];
+	MAT_HOLIDAY_REC *rec;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	FIX_HOLIDAY	_fix_holiday, *fix_holiday = &_fix_holiday;
+	EXEC SQL END DECLARE SECTION;
+
+	time( &cur_time);
+	tp = localtime( &cur_time);
+	year = tp->tm_year + 1900;
+
+	//---------------------------------------------------------------------
+	// 4.조회 
+	//--------------------------------------------------------------------
+	EXEC SQL DECLARE TB_FXB_HOLIDAY_C1 CURSOR FOR
+	SELECT
+		FDM_ID,
+		CRCD,
+		FXNG_HLDD_MD,
+		FX_HLDD_NM,
+		COMNT_CON,
+		FX_SYS_LSMD_ID,
+		FX_SYS_LSMD_TS
+	FROM TB_FXB_CMG010M
+	WHERE	CRCD = 'KRW'
+	;
+	if (SQLCODE != 0)
+	{
+		LogCri( "TB_FXB_HOLIDAY_C1 CURSOR DECLARE Error = [%d]", SQLCODE);
+		return -1;
+	}
+
+	EXEC SQL OPEN TB_FXB_HOLIDAY_C1;
+	if (SQLCODE != 0)
+	{
+   		if (SQLCODE == NO_DATA_FOUND)
+   		{
+   			LogCri( "건수없음 SQLCODE=[%d]=================", SQLCODE);
+   			return(RET_FAILURE);
+   		}
+		else
+		{
+			LogCri( "TB_FXB_HOLIDAY_C1 CURSOR OPEN Error = [%d]", SQLCODE);
+			return(RET_FAILURE);
+		}
+   	}
+
+	for (ii = 0; ;ii++)
+	{
+		//출력값 메모리 초기화
+		memset( fix_holiday, 0x00, sizeof( FIX_HOLIDAY));
+
+	 	EXEC SQL 
+		FETCH TB_FXB_HOLIDAY_C1
+		INTO
+			:fix_holiday->FDM_ID,
+			:fix_holiday->CRCD,
+			:fix_holiday->FXNG_HLDD_MD,
+			:fix_holiday->FX_HLDD_NM,
+			:fix_holiday->COMNT_CON,
+			:fix_holiday->FX_SYS_LSMD_ID,
+			:fix_holiday->FX_SYS_LSMD_TS
+			;
+		if (SQLCODE != 0)
+		{
+			if (SQLCODE == NO_DATA_FOUND )
+			{
+				break;
+			}
+			else
+			{
+				LogCri( "TB_FXB_HOLIDAY_C1 CURSOR Fetch Error = [%d]", SQLCODE);
+				EXEC SQL CLOSE TB_FXB_HOLIDAY_C1;
+				return(RET_FAILURE);
+			}
+		}
+
+		rec = &holiday->rec[ holiday->cnt];
+		sprintf( buf, "%04d%s", year -1, fix_holiday->FXNG_HLDD_MD);
+		rec->day = atoi( buf);
+		memcpy( rec->str, 		buf, 						strlen( buf));
+		memcpy( rec->comment,	fix_holiday->FX_HLDD_NM,	sizeof( rec->comment));
+		holiday->cnt++;
+
+		rec = &holiday->rec[ holiday->cnt];
+		sprintf( buf, "%04d%s", year, fix_holiday->FXNG_HLDD_MD);
+		rec->day = atoi( buf);
+		memcpy( rec->str, 		buf, 						strlen( buf));
+		memcpy( rec->comment,	fix_holiday->FX_HLDD_NM,	sizeof( rec->comment));
+		holiday->cnt++;
+
+		rec = &holiday->rec[ holiday->cnt];
+		sprintf( buf, "%04d%s", year +1, fix_holiday->FXNG_HLDD_MD);
+		rec->day = atoi( buf);
+		memcpy( rec->str, 		buf, 						strlen( buf));
+		memcpy( rec->comment,	fix_holiday->FX_HLDD_NM,	sizeof( rec->comment));
+		holiday->cnt++;
+	}
+	LogMsg( "그리드건수 = [%d]", ii);
+
+	EXEC SQL CLOSE TB_FXB_HOLIDAY_C1;
+
+	//--------------------------------------------------------------
+	// 정상 처리 세팅 (0:정상, 1:비정상)
+	//--------------------------------------------------------------
+	return(RET_SUCCESS);
+}
+
+/*******************************************************************************
+* Function Name : Db_GetSyg001M()
+* Description   : 에러 메세지 upload
+********************************************************************************/
+int Db_GetFltHoliday( MAT_HOLIDAY *holiday)
+{
+	int			i, cnt;
+	int			ii;
+	time_t		cur_time;
+	struct tm	*tp;
+	char		buf[ 128];
+	MAT_HOLIDAY_REC *rec;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	char		s_date[ 32], e_date[ 32];
+	FIX_HOLIDAY	_fix_holiday, *fix_holiday = &_fix_holiday;
+	FLT_HOLIDAY	_flt_holiday, *flt_holiday = &_flt_holiday;
+	EXEC SQL END DECLARE SECTION;
+
+	time( &cur_time);
+	tp = localtime( &cur_time);
+	sprintf( s_date, "%04d", tp->tm_year + 1900 -1);
+	sprintf( e_date, "%04d", tp->tm_year + 1900 +2);
+
+
+	EXEC SQL DECLARE TB_FXB_HOLIDAY_C2 CURSOR FOR
+	SELECT
+		FDM_ID,
+		CRCD,
+		FLCT_HLDD_YMD,
+		FX_HLDD_NM,
+		COMNT_CON,
+		FX_SYS_LSMD_ID,
+		FX_SYS_LSMD_TS
+	FROM TB_FXB_CMG011M
+	WHERE	CRCD = 'KRW'
+	AND		FLCT_HLDD_YMD > :s_date
+	AND		FLCT_HLDD_YMD < :e_date
+	;
+	if (SQLCODE != 0)
+	{
+		LogCri( "TB_FXB_HOLIDAY_C2 CURSOR DECLARE Error = [%d]", SQLCODE);
+		return -1;
+	}
+
+	EXEC SQL OPEN TB_FXB_HOLIDAY_C2;
+	if (SQLCODE != 0)
+	{
+   		if (SQLCODE == NO_DATA_FOUND)
+   		{
+   			LogCri( "건수없음 SQLCODE=[%d]=================", SQLCODE);
+   			return(RET_FAILURE);
+   		}
+		else
+		{
+			LogCri( "TB_FXB_HOLIDAY_C2 CURSOR OPEN Error = [%d]", SQLCODE);
+			return(RET_FAILURE);
+		}
+   	}
+
+	for (ii = 0; ;ii++)
+	{
+		//출력값 메모리 초기화
+		memset( fix_holiday, 0x00, sizeof( FIX_HOLIDAY));
+
+	 	EXEC SQL 
+		FETCH TB_FXB_HOLIDAY_C2
+		INTO
+			:flt_holiday->FDM_ID,
+			:flt_holiday->CRCD,
+			:flt_holiday->FLCT_HLDD_YMD,
+			:flt_holiday->FX_HLDD_NM,
+			:flt_holiday->COMNT_CON,
+			:flt_holiday->FX_SYS_LSMD_ID,
+			:flt_holiday->FX_SYS_LSMD_TS
+			;
+		if (SQLCODE != 0)
+		{
+			if (SQLCODE == NO_DATA_FOUND )
+			{
+				break;
+			}
+			else
+			{
+				LogCri( "TB_FXB_HOLIDAY_C2 CURSOR Fetch Error = [%d]", SQLCODE);
+				EXEC SQL CLOSE TB_FXB_HOLIDAY_C2;
+				return(RET_FAILURE);
+			}
+		}
+
+		rec = &holiday->rec[ holiday->cnt];
+		sprintf( buf, "%s", flt_holiday->FLCT_HLDD_YMD);
+		rec->day = atoi( buf);
+		memcpy( rec->str, 		buf, 						strlen( buf));
+		memcpy( rec->comment,	flt_holiday->FX_HLDD_NM,	sizeof( rec->comment) -1);
+		holiday->cnt++;
+	}
+	LogMsg( "그리드건수 = [%d]", ii);
+
+	EXEC SQL CLOSE TB_FXB_HOLIDAY_C2;
+
+	//--------------------------------------------------------------
+	// 정상 처리 세팅 (0:정상, 1:비정상)
+	//--------------------------------------------------------------
+	return(RET_SUCCESS);
+}
+
+/*******************************************************************************
+* Function Name : Db_GetCodFxPair()
+* Description   : 통화쌍 정보 upload
+********************************************************************************/
+int Db_Order()
+{
+	int		i, cnt;
+	int		ii;
+	ORDER	_obook, *obook = &_obook;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	DB_ORDER			_db_order; 
+	DB_ORDER			*db_order = &_db_order;
+	EXEC SQL END DECLARE SECTION;
+
+	LogMsg( "유효 주문을 DB에서 LOAD 합니다. tbl=[%s]", "TB_FXB_TRG001L");
+
+	//---------------------------------------------------------------------
+	// 4.조회 
+	//--------------------------------------------------------------------
+	EXEC SQL DECLARE TB_FXB_OPR_TRG001L_C1 CURSOR FOR
+	SELECT 
+		A.ORDN_NO,
+		A.ORTR_ORDN_NO,
+		A.OUST_ORDN_NO,
+		A.GRP_ORDN_NO,
+		A.ORDN_YMD,
+		A.ORDN_DCD,
+		A.PRAS_ID,
+		A.FDM_ID,
+		A.ORDN_ORGN_DCD,
+		A.ORDN_ORGN_SUB_DCD,
+		A.FX_TRN_TCD,
+		A.AUON_DCD,
+		A.ORDE_ID,
+		A.WBCS_RLNM_ALTR_NO,
+		A.PU_CD,
+		A.FXBK_ID,
+		A.MNGM_BRCD,
+		A.HDOM_APLY_GRP_ID,
+		A.FX_PDCD,
+		A.CRNC_PAIR_ID,
+		A.TNR_PTRN_DCD,
+		A.TNR_ID,
+		A.EXPI_STTG_YMD,
+		A.EXPI_FNSH_YMD,
+		A.FX_ITMS_ID,
+		A.BYSEL_DCD,
+		A.CNTT_CNDT_DCD,
+		A.ORDN_VALD_YMD,
+		A.TXCR_DCD,
+		A.BASE_CRCD,
+		A.FX_SDCU_AMT,
+		A.COCU_CD,
+		A.FX_COCU_AMT,
+		A.FX_ORDN_QTY,
+		A.FX_CRCT_QTY,
+		A.FX_CNCL_QTY,
+		A.FX_CNTT_QTY,
+		A.FX_ORDN_BALN_QTY,
+		A.FX_ORDN_PNTM_PRC,
+		A.ORDN_PRC_CNCD,
+		A.FX_ORDN_PRC,
+		A.MRKT_SPOT_PRC,
+		A.MRKT_SWAP_PRC,
+		A.FX_MRKT_PRC,
+		A.CVR_SPR,
+		A.SLS_SPR,
+		A.FX_ORCY_PRC,
+		A.SPR_UT_DCD,
+		A.CUS_SPR,
+		A.SLPPG_PRC,
+		A.MNRC_CRCD,
+		A.MNRC_CRNC_ACN,
+		A.DROT_CRCD,
+		A.DROT_CRNC_ACN,
+		A.DASTL_YN,
+		A.STLM_CRCD,
+		A.FX_GRNY_PTRN_DCD,
+		A.GRMN_APLY_RT,
+		A.NMNL_GRNY_CRCD,
+		A.NMNL_GRNY_AMT,
+		A.GRMN_ACN,
+		A.GRMN_CRCD,
+		A.GRMN_WTMN_AMT,
+		A.LMT_ACN,
+		A.LMT_CRCD,
+		A.FX_LMUS_AMT,
+		A.NMNL_GRNY_CRNC_TLCH_SELL_RT,
+		A.NMNL_GRNY_CRNC_TSCN_RT,
+		A.GRLM_CRNC_TSCN_RT,
+		A.FWEX_PSRN_NO,
+		A.FWEX_PSRN_DTLS_NO,
+		A.FX_CCTN_CHNL_DCD,
+		A.ORDN_TRMS_DCD,
+		A.ORDN_STTS_DCD,
+		A.ERCD_CONV_ID,
+		A.ERCD_CONV_CON,
+		A.ORDN_TRMS_PNTM_CON,
+		A.ORDN_RCIP_PNTM_CON,
+		A.LAST_CNTT_PNTM_CON,
+		A.FDM_ORDN_RCIP_PNTM_CON,
+		A.FX_EXTL_REF_NO,
+		A.ENAM_STFS_YN,
+		A.EXTL_LNK_ID,
+		A.FX_MDIA_DCD,
+		A.FX_SYS_MAIN_USER_ID,
+		A.FX_SYS_SUB_USER_ID,
+		A.ORDE_OFRC_IP,
+		A.ORDE_INDV_IP,
+		A.MAC_ADR,
+		A.RULE_ID,
+		A.PCSN_BRCD,
+		A.FDM_ORDN_NO,
+		A.ADD_CON,
+		A.BOB_EMN,
+		A.IMDR_YN,
+		A.USE_YN,
+		A.FX_SYS_LSMD_ID,
+		A.FX_SYS_LSMD_TS
+	FROM TB_FXB_TRG001L A
+	WHERE	1 = 1
+	AND A.ORDN_STTS_DCD IN ('0', '1', '2')
+	AND A.ORDN_ORGN_DCD IN ('1')  --(1-고객거래, 2-내부거래, 3-대행거래, 4-대량거래, 5-시장거래)
+	-- AND A.ORDN_ORGN_DCD IN ('1', '2', '3', '4', '5')  --(1-고객거래, 2-내부거래, 3-대행거래, 4-대량거래, 5-시장거래)
+	AND A.ORDN_VALD_YMD >= TO_CHAR(SYSDATE, 'YYYYMMDD')
+	AND A.FX_ORDN_BALN_QTY >= 0
+	AND A.USE_YN = 'Y'
+	;
+	
+	if (SQLCODE != 0)
+	{
+		LogCri( "TB_FXB_OPR_TRG001L_C1 CURSOR DECLARE Error = [%d]", SQLCODE);
+		return -1;
+	}
+
+	EXEC SQL OPEN TB_FXB_OPR_TRG001L_C1;
+	if (SQLCODE != 0)
+	{
+   		if (SQLCODE == NO_DATA_FOUND)
+   		{
+   			LogCri( "건수없음 SQLCODE=[%d]=================", SQLCODE);
+   			return(RET_FAILURE);
+   		}
+		else
+		{
+			LogCri( "TB_FXB_OPR_TRG001L_C1 CURSOR OPEN Error = [%d]", SQLCODE);
+			return(RET_FAILURE);
+		}
+   	}
+
+	for (ii = 0; ;ii++)
+	{
+		//출력값 메모리 초기화
+		memset( db_order, 0x00, sizeof( DB_ORDER));
+
+	 	EXEC SQL 
+		FETCH TB_FXB_OPR_TRG001L_C1
+		INTO
+			:db_order->ORDN_NO                         ,
+			:db_order->ORTR_ORDN_NO                    ,
+			:db_order->OUST_ORDN_NO                    ,
+			:db_order->GRP_ORDN_NO                     ,
+			:db_order->ORDN_YMD                        ,
+			:db_order->ORDN_DCD                        ,
+			:db_order->PRAS_ID                         ,
+			:db_order->FDM_ID                          ,
+			:db_order->ORDN_ORGN_DCD                   ,
+			:db_order->ORDN_ORGN_SUB_DCD               ,
+			:db_order->FX_TRN_TCD                      ,
+			:db_order->AUON_DCD                        ,
+			:db_order->ORDE_ID                         ,
+			:db_order->WBCS_RLNM_ALTR_NO               ,
+			:db_order->PU_CD                           ,
+			:db_order->FXBK_ID                         ,
+			:db_order->MNGM_BRCD                       ,
+			:db_order->HDOM_APLY_GRP_ID                ,
+			:db_order->FX_PDCD                         ,
+			:db_order->CRNC_PAIR_ID                    ,
+			:db_order->TNR_PTRN_DCD                    ,
+			:db_order->TNR_ID                          ,
+			:db_order->EXPI_STTG_YMD                   ,
+			:db_order->EXPI_FNSH_YMD                   ,
+			:db_order->FX_ITMS_ID                      ,
+			:db_order->BYSEL_DCD                       ,
+			:db_order->CNTT_CNDT_DCD                   ,
+			:db_order->ORDN_VALD_YMD                   ,
+			:db_order->TXCR_DCD                        ,
+			:db_order->BASE_CRCD                       ,
+			:db_order->FX_SDCU_AMT                     ,
+			:db_order->COCU_CD                         ,
+			:db_order->FX_COCU_AMT                     ,
+			:db_order->FX_ORDN_QTY                     ,
+			:db_order->FX_CRCT_QTY                     ,
+			:db_order->FX_CNCL_QTY                     ,
+			:db_order->FX_CNTT_QTY                     ,
+			:db_order->FX_ORDN_BALN_QTY                ,
+			:db_order->FX_ORDN_PNTM_PRC                ,
+			:db_order->ORDN_PRC_CNCD                   ,
+			:db_order->FX_ORDN_PRC                     ,
+			:db_order->MRKT_SPOT_PRC                   ,
+			:db_order->MRKT_SWAP_PRC                   ,
+			:db_order->FX_MRKT_PRC                     ,
+			:db_order->CVR_SPR                         ,
+			:db_order->SLS_SPR                         ,
+			:db_order->FX_ORCY_PRC                     ,
+			:db_order->SPR_UT_DCD                      ,
+			:db_order->CUS_SPR                         ,
+			:db_order->SLPPG_PRC                       ,
+			:db_order->MNRC_CRCD                       ,
+			:db_order->MNRC_CRNC_ACN                   ,
+			:db_order->DROT_CRCD                       ,
+			:db_order->DROT_CRNC_ACN                   ,
+			:db_order->DASTL_YN                        ,
+			:db_order->STLM_CRCD                       ,
+			:db_order->FX_GRNY_PTRN_DCD                ,
+			:db_order->GRMN_APLY_RT                    ,
+			:db_order->NMNL_GRNY_CRCD                  ,
+			:db_order->NMNL_GRNY_AMT                   ,
+			:db_order->GRMN_ACN                        ,
+			:db_order->GRMN_CRCD                       ,
+			:db_order->GRMN_WTMN_AMT                   ,
+			:db_order->LMT_ACN                         ,
+			:db_order->LMT_CRCD                        ,
+			:db_order->FX_LMUS_AMT                     ,
+			:db_order->NMNL_GRNY_CRNC_TLCH_SELL_RT     ,
+			:db_order->NMNL_GRNY_CRNC_TSCN_RT          ,
+			:db_order->GRLM_CRNC_TSCN_RT               ,
+			:db_order->FWEX_PSRN_NO                    ,
+			:db_order->FWEX_PSRN_DTLS_NO               ,
+			:db_order->FX_CCTN_CHNL_DCD                ,
+			:db_order->ORDN_TRMS_DCD                   ,
+			:db_order->ORDN_STTS_DCD                   ,
+			:db_order->ERCD_CONV_ID                    ,
+			:db_order->ERCD_CONV_CON                   ,
+			:db_order->ORDN_TRMS_PNTM_CON              ,
+			:db_order->ORDN_RCIP_PNTM_CON              ,
+			:db_order->LAST_CNTT_PNTM_CON              ,
+			:db_order->FDM_ORDN_RCIP_PNTM_CON          ,
+			:db_order->FX_EXTL_REF_NO                  ,
+			:db_order->ENAM_STFS_YN                    ,
+			:db_order->EXTL_LNK_ID                     ,
+			:db_order->FX_MDIA_DCD                     ,
+			:db_order->FX_SYS_MAIN_USER_ID             ,
+			:db_order->FX_SYS_SUB_USER_ID              ,
+			:db_order->ORDE_OFRC_IP                    ,
+			:db_order->ORDE_INDV_IP                    ,
+			:db_order->MAC_ADR                         ,
+			:db_order->RULE_ID                         ,
+			:db_order->PCSN_BRCD                       ,
+			:db_order->FDM_ORDN_NO                     ,
+			:db_order->ADD_CON                         ,
+			:db_order->BOB_EMN                         ,
+			:db_order->IMDR_YN                         ,
+			:db_order->USE_YN                          ,
+			:db_order->FX_SYS_LSMD_ID                  ,
+			:db_order->FX_SYS_LSMD_TS                  
+			;
+		if (SQLCODE != 0)
+		{
+			if (SQLCODE == NO_DATA_FOUND )
+			{
+				break;
+			}
+			else
+			{
+				LogCri( "TB_FXB_OPR_TRG001L_C1 CURSOR Fetch Error = [%d]", SQLCODE);
+				EXEC SQL CLOSE TB_FXB_OPR_TRG001L_C1;
+				return(RET_FAILURE);
+			}
+		}
+		else
+		{
+			//APLog(content->rkey, APLOG_DEBUG, "[%-15s][%4d] 에러코드	[%s]", __FUNCTION__, __LINE__, c_errCd );
+			//APLog(content->rkey, APLOG_DEBUG, "[%-15s][%4d] 에러메시지  [%s]", __FUNCTION__, __LINE__, c_errMsg);
+			;
+		}	
+
+		/* DB_ORDER_Print( db_order); */
+		Convert_DbOrder( obook, db_order);
+		ORDER_Print( obook);
+		Proc_OrderInsert( Mat, obook);
+	}
+
+	EXEC SQL CLOSE TB_FXB_OPR_TRG001L_C1;
+
+	//--------------------------------------------------------------
+	// 정상 처리 세팅 (0:정상, 1:비정상)
+	//--------------------------------------------------------------
+	LogMsg( "유효 주문을 DB에서 LOAD 했습니다.. tbl=[%s] 그리드건수=[%d]", "TB_FXB_TRG001L", ii);
+	return(RET_SUCCESS);
+}
+
+/** ***************************************************************************
+**	
+***************************************************************************** */
+/** ***************************************************************************
+**  @fn         int Proc_()
+**  @param      int argc     - 프로그램 인수 갯수
+**  @return     프로그램 수행 결과
+**  @retval     음수 실패
+**  @retval     양수 성공
+**  @exception
+**  @remark
+**  @brief
+**  convert ORDER_RECV to ORDER
+***************************************************************************** */
+int Convert_DbOrder( ORDER *order, DB_ORDER *db_order)
+{
+	char		space[ 512];
+	time_t		cur_time;
+	struct tm	*tp;
+	char		today[ 32];
+
+	memset( space, ' ', sizeof( space));
+
+	if( db_order->ORDN_DCD[ 0] == 'N')				order->MsgType[ 0] = 'D';
+	else
+	if( db_order->ORDN_DCD[ 0] == 'M')				order->MsgType[ 0] = 'G';
+	else
+	if( db_order->ORDN_DCD[ 0] == 'C')				order->MsgType[ 0] = 'F';
+
+	memcpy( order->OrdStatus       , "0"						, sizeof( order->OrdStatus       ));
+	memcpy( order->CustID          , db_order->WBCS_RLNM_ALTR_NO, sizeof( order->CustID          ));
+	memcpy( order->ExecType        , db_order->FX_TRN_TCD		, sizeof( order->ExecType        ));
+	memcpy( order->LgenNo          , db_order->ORDE_ID			, sizeof( order->LgenNo          ));
+	memcpy( order->OrgnGb          , db_order->ORDN_ORGN_DCD	, sizeof( order->OrgnGb          ));
+	memcpy( order->BkNo            , space /*db_order->BkNo */	, sizeof( order->BkNo            ));
+	memset( order->FxBkId          , ' '						, sizeof( order->FxBkId          ));
+	memcpy( order->ClOrdID         , db_order->ORDN_NO			, sizeof( order->ClOrdID         ));
+	memcpy( order->OrigClOrdID     , db_order->ORTR_ORDN_NO		, sizeof( order->OrigClOrdID     ));
+	memcpy( order->Currency        , db_order->BASE_CRCD		, sizeof( order->Currency        ));
+	        order->OrderQty        = db_order->FX_ORDN_QTY;
+
+	if( db_order->ORDN_PRC_CNCD[ 0] == 'L')				order->OrdType[ 0] = '2';
+	else
+	if( db_order->ORDN_PRC_CNCD[ 0] == 'M')				order->OrdType[ 0] = '1';
+
+	        order->SlipCmpPrice    = db_order->FX_ORDN_PNTM_PRC;
+	        order->SlipPip         = db_order->SLPPG_PRC;
+	        order->CumQty          = 0.0D;
+	        order->LastQty         = 0.0D;
+	        order->LeavesQty       = 0.0D;
+	memcpy( order->OrdID           , db_order->FDM_ORDN_NO		, sizeof( order->OrdID           ));
+	memset( order->ExecID          , 0x20         		        , sizeof( order->ExecID          ));
+	        order->Price           = db_order->FX_ORDN_PRC;
+	        order->PriceSpr        = db_order->CUS_SPR;
+			order->OrdSprPrc       = 0.0D;
+	        order->LastPx          = 0.0D;
+	        order->LastSprPx       = 0.0D;
+
+	if( db_order->BYSEL_DCD[ 0] == 'B')					order->Side[ 0] = '1';
+	else 
+	if( db_order->BYSEL_DCD[ 0] == 'S')					order->Side[ 0] = '2';
+
+	if( !memcmp( db_order->CNTT_CNDT_DCD, "DAY", 3))	order->TimeInForce[ 0] = '0';
+	else
+	if( !memcmp( db_order->CNTT_CNDT_DCD, "IOC", 3))	order->TimeInForce[ 0] = '3';
+	else
+	if( !memcmp( db_order->CNTT_CNDT_DCD, "FOK", 3))	order->TimeInForce[ 0] = '4';
+	else												order->TimeInForce[ 0] = '0';
+
+	memcpy( order->RefuslCd        , "0000000000"          			, sizeof( order->RefuslCd        ));
+	memset( order->Text            , ' '                   			, sizeof( order->Text            ));
+
+	memcpy( order->TransactTime    , db_order->FDM_ORDN_RCIP_PNTM_CON, sizeof( order->TransactTime    ));
+	memcpy( order->SettType        , db_order->FX_PDCD				, sizeof( order->SettType        ));
+
+	memcpy( order->TnrId           , db_order->TNR_ID				, sizeof( order->TnrId           ));
+	memcpy( order->TnrPtrnDcd      , db_order->TNR_PTRN_DCD			, sizeof( order->TnrPtrnDcd      ));
+	
+	memcpy( order->Symbol          , db_order->CRNC_PAIR_ID			, sizeof( order->Symbol          ));
+	/* TOD일 경우 만기종료년월일,만기시작년월일을 오늘 날짜로 */
+	if( !memcmp( order->TnrId, "TOD", 3))
+	{
+		time( &cur_time);
+		tp = localtime( &cur_time);
+		sprintf( today, "%04d%02d%02d", tp->tm_year +1900, tp->tm_mon +1, tp->tm_mday);
+		memcpy( order->ValueDate1      , today						, sizeof( order->ValueDate1      ));
+		memcpy( order->ValueDate2      , today						, sizeof( order->ValueDate2      ));
+	}
+	else
+	{
+		memcpy( order->ValueDate1      , db_order->EXPI_STTG_YMD		, sizeof( order->ValueDate1      ));
+		memcpy( order->ValueDate2      , db_order->EXPI_FNSH_YMD		, sizeof( order->ValueDate2      ));
+	}
+	memset( order->OfprKeyVal      , ' '							, sizeof( order->OfprKeyVal      ));
+	
+
+#if 0
+	memcpy( order->NearSettType    , db_order->NearSettType    		, sizeof( order->NearSettType    ));
+	memcpy( order->NearTnrId       , db_order->NearTnrId    		, sizeof( order->NearTnrId       ));
+	memcpy( order->NearTnrPtrnDcd  , db_order->NearTnrPtrnDcd   	, sizeof( order->NearTnrPtrnDcd  ));
+
+	memcpy( order->NearLegSide     , db_order->NearLegSide     		, sizeof( order->NearLegSide     ));
+	memcpy( order->NearLegSettlDate, db_order->NearLegSettlDate		, sizeof( order->NearLegSettlDate));
+
+	        order->NearLegMktPrc   = AtoD( db_order->NearLegMktPrc  , sizeof( db_order->NearLegMktPrc    ));
+	        order->NearLegCvPrc    = AtoD( db_order->NearLegCvPrc   , sizeof( db_order->NearLegCvPrc     ));
+	        order->NearLegCoPrc    = AtoD( db_order->NearLegCoPrc   , sizeof( db_order->NearLegCoPrc     ));
+
+			order->NearLegMktPrc   = 0.0D;
+        	order->NearLegCvPrc    = 0.0D;
+        	order->NearLegCoPrc    = 0.0D;
+	        order->NearLegCusPrc   = AtoD( db_order->NearLegPrice   , sizeof( db_order->NearLegPrice     ));
+	        order->NearLegCusSpr   = AtoD( db_order->NearLegPriceSprd, sizeof( db_order->NearLegPriceSprd));
+
+	memcpy( order->FarSettType     , db_order->FarSettType     		, sizeof( order->FarSettType     ));
+	memcpy( order->FarTnrId        , db_order->FarTnrId     		, sizeof( order->FarTnrId     ));
+	memcpy( order->FarTnrPtrnDcd   , db_order->FarTnrPtrnDcd     	, sizeof( order->FarTnrPtrnDcd     ));
+	
+	memcpy( order->FarLegSide      , db_order->FarLegSide      		, sizeof( order->FarLegSide      ));
+	memcpy( order->FarLegSettlDate , db_order->FarLegSettlDate 		, sizeof( order->FarLegSettlDate ));
+
+	        order->FarLegMktPrc    = AtoD( db_order->FarLegMktPrc   , sizeof( db_order->FarLegMktPrc     ));
+	        order->FarLegCvPrc     = AtoD( db_order->FarLegCvPrc    , sizeof( db_order->FarLegCvPrc      ));
+	        order->FarLegCoPrc     = AtoD( db_order->FarLegCoPrc    , sizeof( db_order->FarLegCoPrc      ));
+
+			order->FarLegMktPrc    = 0.0D;
+			order->FarLegCvPrc     = 0.0D;
+			order->FarLegCoPrc     = 0.0D;
+	        order->FarLegCusPrc    = AtoD( db_order->FarLegPrice   , sizeof( db_order->FarLegPrice       ));
+	        order->FarLegCusSpr    = AtoD( db_order->FarLegPriceSprd, sizeof( db_order->FarLegPriceSprd  ));
+#else
+	memcpy( order->NearSettType    , space							, sizeof( order->NearSettType    ));
+	memcpy( order->NearTnrId       , space							, sizeof( order->NearTnrId       ));
+	memcpy( order->NearTnrPtrnDcd  , space						   	, sizeof( order->NearTnrPtrnDcd  ));
+
+	memcpy( order->NearLegSide     , space  			     		, sizeof( order->NearLegSide     ));
+	memcpy( order->NearLegSettlDate, space							, sizeof( order->NearLegSettlDate));
+
+	        order->NearLegMktPrc   = 0.0D;
+	        order->NearLegCvPrc    = 0.0D;
+	        order->NearLegCoPrc    = 0.0D;
+
+			order->NearLegMktPrc   = 0.0D;
+        	order->NearLegCvPrc    = 0.0D;
+        	order->NearLegCoPrc    = 0.0D;
+	        order->NearLegCusPrc   = 0.0D;
+	        order->NearLegCusSpr   = 0.0D;
+
+	memcpy( order->FarSettType     , space					 		, sizeof( order->FarSettType     ));
+	memcpy( order->FarTnrId        , space							, sizeof( order->FarTnrId     ));
+	memcpy( order->FarTnrPtrnDcd   , space						  	, sizeof( order->FarTnrPtrnDcd     ));
+	
+	memcpy( order->FarLegSide      , space							, sizeof( order->FarLegSide      ));
+	memcpy( order->FarLegSettlDate , space							, sizeof( order->FarLegSettlDate ));
+
+	        order->FarLegMktPrc    = 0.0D;
+	        order->FarLegCvPrc     = 0.0D;
+	        order->FarLegCoPrc     = 0.0D;
+
+			order->FarLegMktPrc    = 0.0D;
+			order->FarLegCvPrc     = 0.0D;
+			order->FarLegCoPrc     = 0.0D;
+	        order->FarLegCusPrc    = 0.0D;
+	        order->FarLegCusSpr    = 0.0D;
+#endif
+			
+	memcpy( order->TranPtrnCd      , db_order->FX_TRN_TCD           , sizeof( order->TranPtrnCd      ));
+	memcpy( order->GrpOrdnNo       , db_order->GRP_ORDN_NO			, sizeof( order->GrpOrdnNo       ));
+#if 0
+	memcpy( order->GrpOrdnCnt      , db_order->GrpOrdnCnt           , sizeof( order->GrpOrdnCnt      ));
+	memcpy( order->GrpOrdnSeq      , db_order->GrpOrdnSeq           , sizeof( order->GrpOrdnSeq      ));
+#endif
+
+	/* 임시 - 보류, 그룹주문에 해당하는 2개 컬럼은 아직 준비되어 있지 않음 */
+	memcpy( order->GrpFxPdcd       , space							, sizeof( order->GrpFxPdcd      ));
+	memcpy( order->TrdTypeDcd      , "1"							, sizeof( order->TrdTypeDcd      ));
+#if 0
+
+	memcpy( order->TrdTypeDcd      , db_order->TrdTypeDcd           , sizeof( order->TrdTypeDcd      ));
+	        order->SpotPrc         = AtoD( db_order->SpotPrc        , sizeof( db_order->SpotPrc     ));
+#endif
+
+	memset( order->filler          , ' '          					, sizeof( order->filler          ));
+			order->Eof[ 0]         = 0x00;
+
+	/*
+	ORDER_Print( order);
+	*/
+
+	return 1;
+}
+
+
+int DB_ORDER_Print( DB_ORDER* ptr)
+{
+    LogRaw( "%s", "----[ DB_ORDER ]------------------------------------------------------------------------\n");
+    LogRaw( "주문번호                      ORDN_NO               31    0 = [%.31s]\n", 	ptr->ORDN_NO);
+    LogRaw( "원거래주문번호                ORTR_ORDN_NO          31   31 = [%.31s]\n", 	ptr->ORTR_ORDN_NO);
+    LogRaw( "당초주문번호                  OUST_ORDN_NO          31   62 = [%.31s]\n", 	ptr->OUST_ORDN_NO);
+    LogRaw( "그룹주문번호                  GRP_ORDN_NO           31   93 = [%.31s]\n", 	ptr->GRP_ORDN_NO);
+    LogRaw( "주문년월일                    ORDN_YMD               9  124 = [%.9s]\n", 	ptr->ORDN_YMD);
+    LogRaw( "주문구분코드                  ORDN_DCD               2  133 = [%.2s]\n", 	ptr->ORDN_DCD);
+    LogRaw( "호가ID                        PRAS_ID               61  135 = [%.61s]\n", 	ptr->PRAS_ID);
+    LogRaw( "외환중개사ID                  FDM_ID                11  196 = [%.11s]\n", 	ptr->FDM_ID);
+    LogRaw( "주문원천구분코드              ORDN_ORGN_DCD          2  207 = [%.2s]\n", 	ptr->ORDN_ORGN_DCD);
+    LogRaw( "CHAR                          ORDN_ORGN_SUB_DCD      2  209 = [%.2s]\n", 	ptr->ORDN_ORGN_SUB_DCD);
+    LogRaw( "FX거래유형코드                FX_TRN_TCD             2  211 = [%.2s]\n", 	ptr->FX_TRN_TCD);
+    LogRaw( "자동거래구분코드              AUON_DCD               2  213 = [%.2s]\n", 	ptr->AUON_DCD);
+    LogRaw( "VARCHAR2                      ORDE_ID               21  215 = [%.21s]\n", 	ptr->ORDE_ID);
+    LogRaw( "전행고객실명대체번호          WBCS_RLNM_ALTR_NO     17  236 = [%.17s]\n", 	ptr->WBCS_RLNM_ALTR_NO);
+    LogRaw( "PU코드                        PU_CD                  6  253 = [%.6s]\n", 	ptr->PU_CD);
+    LogRaw( "FX북ID                        FXBK_ID               21  259 = [%.21s]\n", 	ptr->FXBK_ID);
+    LogRaw( "관리부점코드                  MNGM_BRCD              5  280 = [%.5s]\n", 	ptr->MNGM_BRCD);
+    LogRaw( "본점마진적용그룹ID            HDOM_APLY_GRP_ID       4  285 = [%.4s]\n", 	ptr->HDOM_APLY_GRP_ID);
+    LogRaw( "FX상품코드                    FX_PDCD                4  289 = [%.4s]\n", 	ptr->FX_PDCD);
+    LogRaw( "통화페어ID                    CRNC_PAIR_ID           8  293 = [%.8s]\n", 	ptr->CRNC_PAIR_ID);
+    LogRaw( "TENOR유형구분코드             TNR_PTRN_DCD           2  301 = [%.2s]\n", 	ptr->TNR_PTRN_DCD);
+    LogRaw( "TENORID                       TNR_ID                 4  303 = [%.4s]\n", 	ptr->TNR_ID);
+    LogRaw( "만기종료년월일                EXPI_STTG_YMD          9  307 = [%.9s]\n", 	ptr->EXPI_STTG_YMD);
+    LogRaw( "만기시작년월일                EXPI_FNSH_YMD          9  316 = [%.9s]\n", 	ptr->EXPI_FNSH_YMD);
+    LogRaw( "FX종목ID                      FX_ITMS_ID            31  325 = [%.31s]\n", 	ptr->FX_ITMS_ID);
+    LogRaw( "매입매도구분코드              BYSEL_DCD              2  356 = [%.2s]\n", 	ptr->BYSEL_DCD);
+    LogRaw( "체결조건구분코드              CNTT_CNDT_DCD          4  358 = [%.4s]\n", 	ptr->CNTT_CNDT_DCD);
+    LogRaw( "주문유효년월일                ORDN_VALD_YMD          9  362 = [%.9s]\n", 	ptr->ORDN_VALD_YMD);
+    LogRaw( "거래통화구분코드              TXCR_DCD               2  371 = [%.2s]\n", 	ptr->TXCR_DCD);
+    LogRaw( "기준통화코드                  BASE_CRCD              4  373 = [%.4s]\n", 	ptr->BASE_CRCD);
+    LogRaw( "FX기준통화금액                FX_SDCU_AMT            8  377 = [%f]\n", 	ptr->FX_SDCU_AMT);
+    LogRaw( "상대통화코드                  COCU_CD                4  385 = [%.4s]\n", 	ptr->COCU_CD);
+    LogRaw( "FX상대통화금액                FX_COCU_AMT            8  389 = [%f]\n", 	ptr->FX_COCU_AMT);
+    LogRaw( "FX주문수량                    FX_ORDN_QTY            8  397 = [%f]\n", 	ptr->FX_ORDN_QTY);
+    LogRaw( "FX정정수량                    FX_CRCT_QTY            8  405 = [%f]\n", 	ptr->FX_CRCT_QTY);
+    LogRaw( "FX취소수량                    FX_CNCL_QTY            8  413 = [%f]\n", 	ptr->FX_CNCL_QTY);
+    LogRaw( "FX체결수량                    FX_CNTT_QTY            8  421 = [%f]\n", 	ptr->FX_CNTT_QTY);
+    LogRaw( "FX주문잔고수량                FX_ORDN_BALN_QTY       8  429 = [%f]\n", 	ptr->FX_ORDN_BALN_QTY);
+    LogRaw( "FX주문시점가격                FX_ORDN_PNTM_PRC       8  437 = [%f]\n", 	ptr->FX_ORDN_PNTM_PRC);
+    LogRaw( "주문가격조건코드              ORDN_PRC_CNCD          2  445 = [%.2s]\n", 	ptr->ORDN_PRC_CNCD);
+    LogRaw( "FX주문가격                    FX_ORDN_PRC            8  447 = [%f]\n", 	ptr->FX_ORDN_PRC);
+    LogRaw( "시장SPOT가격                  MRKT_SPOT_PRC          8  455 = [%f]\n", 	ptr->MRKT_SPOT_PRC);
+    LogRaw( "시장스왑가격                  MRKT_SWAP_PRC          8  463 = [%f]\n", 	ptr->MRKT_SWAP_PRC);
+    LogRaw( "FX시장가격                    FX_MRKT_PRC            8  471 = [%f]\n", 	ptr->FX_MRKT_PRC);
+    LogRaw( "커버스프레드                  CVR_SPR                8  479 = [%f]\n", 	ptr->CVR_SPR);
+    LogRaw( "세일즈스프레드                SLS_SPR                8  487 = [%f]\n", 	ptr->SLS_SPR);
+    LogRaw( "FX당사가격                    FX_ORCY_PRC            8  495 = [%f]\n", 	ptr->FX_ORCY_PRC);
+    LogRaw( "스프레드단위구분코드          SPR_UT_DCD             2  503 = [%.2s]\n", 	ptr->SPR_UT_DCD);
+    LogRaw( "고객스프레드                  CUS_SPR                8  505 = [%f]\n", 	ptr->CUS_SPR);
+    LogRaw( "슬리피지가격                  SLPPG_PRC              8  513 = [%f]\n", 	ptr->SLPPG_PRC);
+    LogRaw( "입금통화코드                  MNRC_CRCD              4  521 = [%.4s]\n", 	ptr->MNRC_CRCD);
+    LogRaw( "입금통화계좌번호              MNRC_CRNC_ACN         21  525 = [%.21s]\n", 	ptr->MNRC_CRNC_ACN);
+    LogRaw( "출금통화코드                  DROT_CRCD              4  546 = [%.4s]\n", 	ptr->DROT_CRCD);
+    LogRaw( "출금통화계좌번호              DROT_CRNC_ACN         21  550 = [%.21s]\n", 	ptr->DROT_CRNC_ACN);
+    LogRaw( "차액결제여부                  DASTL_YN               2  571 = [%.2s]\n", 	ptr->DASTL_YN);
+    LogRaw( "결제통화코드                  STLM_CRCD              4  573 = [%.4s]\n", 	ptr->STLM_CRCD);
+    LogRaw( "FX보증유형구분코드            FX_GRNY_PTRN_DCD       2  577 = [%.2s]\n", 	ptr->FX_GRNY_PTRN_DCD);
+    LogRaw( "보증금적용율                  GRMN_APLY_RT           8  579 = [%f]\n", 	ptr->GRMN_APLY_RT);
+    LogRaw( "명목보증통화코드              NMNL_GRNY_CRCD         4  587 = [%.4s]\n", 	ptr->NMNL_GRNY_CRCD);
+    LogRaw( "명목보증금액                  NMNL_GRNY_AMT          8  591 = [%f]\n", 	ptr->NMNL_GRNY_AMT);
+    LogRaw( "보증금계좌번호                GRMN_ACN              21  599 = [%.21s]\n", 	ptr->GRMN_ACN);
+    LogRaw( "보증금통화코드                GRMN_CRCD              4  620 = [%.4s]\n", 	ptr->GRMN_CRCD);
+    LogRaw( "보증금인출금액                GRMN_WTMN_AMT          8  624 = [%f]\n", 	ptr->GRMN_WTMN_AMT);
+    LogRaw( "한도계좌번호                  LMT_ACN               31  632 = [%.31s]\n", 	ptr->LMT_ACN);
+    LogRaw( "한도통화코드                  LMT_CRCD               4  663 = [%.4s]\n", 	ptr->LMT_CRCD);
+    LogRaw( "FX한도사용금액                FX_LMUS_AMT            8  667 = [%f]\n", 	ptr->FX_LMUS_AMT);
+    LogRaw( "명목보증통화전신환매도율      NMNL_GRNY_CRNC_TLCH_SELL_RT   8  675 = [%f]\n", 	ptr->NMNL_GRNY_CRNC_TLCH_SELL_RT);
+    LogRaw( "명목보증통화대미환산율        NMNL_GRNY_CRNC_TSCN_RT   8  683 = [%f]\n", 	ptr->NMNL_GRNY_CRNC_TSCN_RT);
+    LogRaw( "보증한도통화대미환산율        GRLM_CRNC_TSCN_RT      8  691 = [%f]\n", 	ptr->GRLM_CRNC_TSCN_RT);
+    LogRaw( "선물환사전점검번호            FWEX_PSRN_NO          31  699 = [%.31s]\n", 	ptr->FWEX_PSRN_NO);
+    LogRaw( "선물환사전점검세부번호        FWEX_PSRN_DTLS_NO      8  730 = [%f]\n", 	ptr->FWEX_PSRN_DTLS_NO);
+    LogRaw( "FX접속채널구분코드            FX_CCTN_CHNL_DCD       3  738 = [%.3s]\n", 	ptr->FX_CCTN_CHNL_DCD);
+    LogRaw( "주문전송구분코드              ORDN_TRMS_DCD          4  741 = [%.4s]\n", 	ptr->ORDN_TRMS_DCD);
+    LogRaw( "주문상태구분코드              ORDN_STTS_DCD          2  745 = [%.2s]\n", 	ptr->ORDN_STTS_DCD);
+    LogRaw( "오류코드변환ID                ERCD_CONV_ID          11  747 = [%.11s]\n", 	ptr->ERCD_CONV_ID);
+    LogRaw( "오류코드변환내용              ERCD_CONV_CON        201  758 = [%.201s]\n", 	ptr->ERCD_CONV_CON);
+    LogRaw( "주문전송시점내용              ORDN_TRMS_PNTM_CON    27  959 = [%.27s]\n", 	ptr->ORDN_TRMS_PNTM_CON);
+    LogRaw( "주문접수시점내용              ORDN_RCIP_PNTM_CON    27  986 = [%.27s]\n", 	ptr->ORDN_RCIP_PNTM_CON);
+    LogRaw( "최종체결시점내용              LAST_CNTT_PNTM_CON    27 1013 = [%.27s]\n", 	ptr->LAST_CNTT_PNTM_CON);
+    LogRaw( "외환중개사주문접수시점내용    FDM_ORDN_RCIP_PNTM_CON  27 1040 = [%.27s]\n", 	ptr->FDM_ORDN_RCIP_PNTM_CON);
+    LogRaw( "FX외부참조번호                FX_EXTL_REF_NO        61 1067 = [%.61s]\n", 	ptr->FX_EXTL_REF_NO);
+    LogRaw( "전액결제완료여부              ENAM_STFS_YN           2 1128 = [%.2s]\n", 	ptr->ENAM_STFS_YN);
+    LogRaw( "외부연계ID                    EXTL_LNK_ID           61 1130 = [%.61s]\n", 	ptr->EXTL_LNK_ID);
+    LogRaw( "FX매체구분코드                FX_MDIA_DCD            3 1191 = [%.3s]\n", 	ptr->FX_MDIA_DCD);
+    LogRaw( "FX시스템메인사용자ID          FX_SYS_MAIN_USER_ID   31 1194 = [%.31s]\n", 	ptr->FX_SYS_MAIN_USER_ID);
+    LogRaw( "FX시스템서브사용자ID          FX_SYS_SUB_USER_ID    31 1225 = [%.31s]\n", 	ptr->FX_SYS_SUB_USER_ID);
+    LogRaw( "주문자공인IP                  ORDE_OFRC_IP          41 1256 = [%.41s]\n", 	ptr->ORDE_OFRC_IP);
+    LogRaw( "주문자개인IP                  ORDE_INDV_IP          41 1297 = [%.41s]\n", 	ptr->ORDE_INDV_IP);
+    LogRaw( "MAC주소                       MAC_ADR              101 1338 = [%.101s]\n", 	ptr->MAC_ADR);
+    LogRaw( "RULEID                        RULE_ID               37 1439 = [%.37s]\n", 	ptr->RULE_ID);
+    LogRaw( "처리부점코드                  PCSN_BRCD              5 1476 = [%.5s]\n", 	ptr->PCSN_BRCD);
+    LogRaw( "외환중개사주문번호            FDM_ORDN_NO           51 1481 = [%.51s]\n", 	ptr->FDM_ORDN_NO);
+    LogRaw( "VARCHAR2                      ADD_CON              501 1532 = [%.501s]\n", 	ptr->ADD_CON);
+    LogRaw( "CHAR                          BOB_EMN                7 2033 = [%.7s]\n", 	ptr->BOB_EMN);
+    LogRaw( "CHAR                          IMDR_YN                2 2040 = [%.2s]\n", 	ptr->IMDR_YN);
+    LogRaw( "사용여부                      USE_YN                 2 2042 = [%.2s]\n", 	ptr->USE_YN);
+    LogRaw( "FX시스템최종변경ID            FX_SYS_LSMD_ID        31 2044 = [%.31s]\n", 	ptr->FX_SYS_LSMD_ID);
+    LogRaw( "FX시스템최종변경일시          FX_SYS_LSMD_TS         8 2075 = [%.8s]\n", 	ptr->FX_SYS_LSMD_TS);
+    LogRaw( "%s", "------------------------------------------------------------------------[ DB_ORDER ]----\n");
+
+    return sizeof( DB_ORDER);
+}
+
+#if 0
+int TB_FXB_CMG004M_Print( TB_FXB_CMG004M* ptr)
+{
+    LogRaw( "%s", "----[ TB_FXB_CMG004M ]------------------------------------------------------------------\n");
+    LogRaw( "                              pair_id                7    0 = [%.7s]\n", 	ptr->pair_id);
+    LogRaw( "                              ccy1                   3    7 = [%.3s]\n", 	ptr->ccy1);
+    LogRaw( "                              ccy2                   3   10 = [%.3s]\n", 	ptr->ccy2);
+    LogRaw( "                              pnt_digt              22   13 = [%.22s]\n", 	ptr->pnt_digt);
+    LogRaw( "                              pnt_digt_val          22   35 = [%.22s]\n", 	ptr->pnt_digt_val);
+    LogRaw( "                              cli_digt              22   57 = [%.22s]\n", 	ptr->cli_digt);
+    LogRaw( "                              cli_digt_val          22   79 = [%.22s]\n", 	ptr->cli_digt_val);
+    LogRaw( "                              pl_pair_id             7  101 = [%.7s]\n", 	ptr->pl_pair_id);
+    LogRaw( "                              pl_calc_tp             1  108 = [%.1s]\n", 	ptr->pl_calc_tp);
+    LogRaw( "                              px_unit               22  109 = [%.22s]\n", 	ptr->px_unit);
+    LogRaw( "                              roundingtype           1  131 = [%.1s]\n", 	ptr->roundingtype);
+    LogRaw( "                              spotleg               22  132 = [%.22s]\n", 	ptr->spotleg);
+    LogRaw( "                              disp_seq              22  154 = [%.22s]\n", 	ptr->disp_seq);
+    LogRaw( "                              active_yn              1  176 = [%.1s]\n", 	ptr->active_yn);
+    LogRaw( "                              upd_id                20  177 = [%.20s]\n", 	ptr->upd_id);
+    LogRaw( "                              upd_dt                 8  197 = [%.8s]\n", 	ptr->upd_dt);
+    LogRaw( "                              upd_tm                 6  205 = [%.6s]\n", 	ptr->upd_tm);
+    LogRaw( "%s", "------------------------------------------------------------------[ TB_FXB_CMG004M ]----\n");
+
+    return sizeof( TB_FXB_CMG004M);
+}
+#endif
+
+int TB_FXB_CMG001M_Print( TB_FXB_CMG001M* ptr)
+{
+    LogRaw( "%s", "----[ TB_FXB_CMG001M ]------------------------------------------------------------------\n");
+    LogRaw( "FRX                           FDM_ID                11    0 = [%.11s]\n", 	ptr->FDM_ID);
+    LogRaw( "name                          FDM_NM               101   11 = [%.101s]\n", 	ptr->FDM_NM);
+    LogRaw( "운영일시                      OPN_YMD                9  112 = [%.9s]\n", 	ptr->OPN_YMD);
+    LogRaw( "종료일시                      FNSH_YMD               9  121 = [%.9s]\n", 	ptr->FNSH_YMD);
+    LogRaw( "운영여부                      OPRT_YN                2  130 = [%.2s]\n", 	ptr->OPRT_YN);
+    LogRaw( "휴일여부                      HLDD_YN                2  132 = [%.2s]\n", 	ptr->HLDD_YN);
+    LogRaw( "시작시간                      TRN_STTG_HMS           7  134 = [%.7s]\n", 	ptr->TRN_STTG_HMS);
+    LogRaw( "종료시간                      TRN_FNSH_HMS           7  141 = [%.7s]\n", 	ptr->TRN_FNSH_HMS);
+    LogRaw( "                              TRNM_TRN_TGIS_ID      51  148 = [%.51s]\n", 	ptr->TRNM_TRN_TGIS_ID);
+    LogRaw( "                              TRNM_TRN_SUB_TGIS_ID  51  199 = [%.51s]\n", 	ptr->TRNM_TRN_SUB_TGIS_ID);
+    LogRaw( "                              RCTX_TGIS_ID          51  250 = [%.51s]\n", 	ptr->RCTX_TGIS_ID);
+    LogRaw( "                              RCTX_SUB_TGIS_ID      51  301 = [%.51s]\n", 	ptr->RCTX_SUB_TGIS_ID);
+    LogRaw( "                              USE_YN                 2  352 = [%.2s]\n", 	ptr->USE_YN);
+    LogRaw( "                              FX_SYS_LSMD_ID        31  354 = [%.31s]\n", 	ptr->FX_SYS_LSMD_ID);
+    LogRaw( "                              FX_SYS_LSMD_TS        31  385 = [%.31s]\n", 	ptr->FX_SYS_LSMD_TS);
+    LogRaw( "%s", "------------------------------------------------------------------[ TB_FXB_CMG001M ]----\n");
+
+    return sizeof( TB_FXB_CMG001M);
+}
+
+int FIX_HOLIDAY_Print( FIX_HOLIDAY* ptr)
+{
+    LogRaw( "%s", "----[ FIX_HOLIDAY ]---------------------------------------------------------------------\n");
+    LogRaw( "                              FDM_ID                11    0 = [%.11s]\n", 	ptr->FDM_ID);
+    LogRaw( "                              CRCD                   4   11 = [%.4s]\n", 	ptr->CRCD);
+    LogRaw( "                              FXNG_HLDD_MD           5   15 = [%.5s]\n", 	ptr->FXNG_HLDD_MD);
+    LogRaw( "                              FX_HLDD_NM            51   20 = [%.51s]\n", 	ptr->FX_HLDD_NM);
+    LogRaw( "                              COMNT_CON            501   71 = [%.501s]\n", 	ptr->COMNT_CON);
+    LogRaw( "                              FX_SYS_LSMD_ID        31  572 = [%.31s]\n", 	ptr->FX_SYS_LSMD_ID);
+    LogRaw( "                              FX_SYS_LSMD_TS         8  603 = [%.8s]\n", 	ptr->FX_SYS_LSMD_TS);
+    LogRaw( "%s", "---------------------------------------------------------------------[ FIX_HOLIDAY ]----\n");
+
+    return sizeof( FIX_HOLIDAY);
+}
+
+int FLT_HOLIDAY_Print( FLT_HOLIDAY* ptr)
+{
+    LogRaw( "%s", "----[ FLT_HOLIDAY ]---------------------------------------------------------------------\n");
+    LogRaw( "                              FDM_ID                11    0 = [%.11s]\n", 	ptr->FDM_ID);
+    LogRaw( "                              CRCD                   4   11 = [%.4s]\n", 	ptr->CRCD);
+    LogRaw( "                              FLCT_HLDD_YMD          9   15 = [%.9s]\n", 	ptr->FLCT_HLDD_YMD);
+    LogRaw( "                              FX_HLDD_NM            51   24 = [%.51s]\n", 	ptr->FX_HLDD_NM);
+    LogRaw( "                              COMNT_CON            501   75 = [%.501s]\n", 	ptr->COMNT_CON);
+    LogRaw( "                              FX_SYS_LSMD_ID        31  576 = [%.31s]\n", 	ptr->FX_SYS_LSMD_ID);
+    LogRaw( "                              FX_SYS_LSMD_TS         8  607 = [%.8s]\n", 	ptr->FX_SYS_LSMD_TS);
+    LogRaw( "%s", "---------------------------------------------------------------------[ FLT_HOLIDAY ]----\n");
+
+    return sizeof( FLT_HOLIDAY);
+}
+
+int TB_FXB_CMG004M_Print( TB_FXB_CMG004M* ptr)
+{
+    LogRaw( "%s", "----[ TB_FXB_CMG004M ]------------------------------------------------------------------\n");
+    LogRaw( "                              CRNC_PAIR_ID           7    0 = [%.7s]\n", 	ptr->CRNC_PAIR_ID);
+    LogRaw( "                              BASE_CRCD              3    7 = [%.3s]\n", 	ptr->BASE_CRCD);
+    LogRaw( "                              COCU_CD                3   10 = [%.3s]\n", 	ptr->COCU_CD);
+    LogRaw( "                              EMP_CLCL_DCPU_RCN      8   13 = [%f]\n", 	ptr->EMP_CLCL_DCPU_RCN);
+    LogRaw( "                              EMP_CLCL_DCPU_VL       8   21 = [%f]\n", 	ptr->EMP_CLCL_DCPU_VL);
+    LogRaw( "                              CUS_CLCL_DCPU_RCN      8   29 = [%f]\n", 	ptr->CUS_CLCL_DCPU_RCN);
+    LogRaw( "                              CUS_CLCL_DCPU_VL       8   37 = [%f]\n", 	ptr->CUS_CLCL_DCPU_VL);
+    LogRaw( "                              PL_CRNC_PAIR_ID        7   45 = [%.7s]\n", 	ptr->PL_CRNC_PAIR_ID);
+    LogRaw( "                              FX_PRLOC_DCD           1   52 = [%.1s]\n", 	ptr->FX_PRLOC_DCD);
+    LogRaw( "                              FX_PCRR_UT             8   53 = [%f]\n", 	ptr->FX_PCRR_UT);
+    LogRaw( "                              DCPN_PCSN_DCD          1   61 = [%.1s]\n", 	ptr->DCPN_PCSN_DCD);
+    LogRaw( "                              SPOT_DT_CDNC_VL        8   62 = [%f]\n", 	ptr->SPOT_DT_CDNC_VL);
+    LogRaw( "                              RPSN_SQC               8   70 = [%f]\n", 	ptr->RPSN_SQC);
+    LogRaw( "                              USE_YN                 1   78 = [%.1s]\n", 	ptr->USE_YN);
+    LogRaw( "                              FX_SYS_LSMD_ID        30   79 = [%.30s]\n", 	ptr->FX_SYS_LSMD_ID);
+    LogRaw( "                              FX_SYS_LSMD_TS        21  109 = [%.21s]\n", 	ptr->FX_SYS_LSMD_TS);
+    LogRaw( "%s", "------------------------------------------------------------------[ TB_FXB_CMG004M ]----\n");
+
+    return sizeof( TB_FXB_CMG004M);
+}
+
+int JANG_PAIR_Print( JANG_PAIR* ptr)
+{
+    LogRaw( "%s", "----[ JANG_PAIR ]-----------------------------------------------------------------------\n");
+    LogRaw( "통화 페어                     CRNC_PAIR_ID           8    0 = [%.8s]\n", 	ptr->CRNC_PAIR_ID);
+    LogRaw( "상품 구분                     PDF_TNR_CLSF_ID        4    8 = [%.4s]\n", 	ptr->PDF_TNR_CLSF_ID);
+    LogRaw( "시작 일                       APSR_YMD               9   12 = [%.9s]\n", 	ptr->APSR_YMD);
+    LogRaw( "종료 일                       FNAP_YMD               9   21 = [%.9s]\n", 	ptr->FNAP_YMD);
+    LogRaw( "시작 시간                     STTG_HMS               7   30 = [%.7s]\n", 	ptr->STTG_HMS);
+    LogRaw( "종료 시간                     FNSH_HMS               7   37 = [%.7s]\n", 	ptr->FNSH_HMS);
+    LogRaw( "사용 여부                     USE_YN                 2   44 = [%.2s]\n", 	ptr->USE_YN);
+    LogRaw( "시스템 ID                     FX_SYS_LSMD_ID        31   46 = [%.31s]\n", 	ptr->FX_SYS_LSMD_ID);
+    LogRaw( "적용 시간                     FX_SYS_LSMD_TS         8   77 = [%.8s]\n", 	ptr->FX_SYS_LSMD_TS);
+    LogRaw( "%s", "-----------------------------------------------------------------------[ JANG_PAIR ]----\n");
+
+    return sizeof( JANG_PAIR);
+}
+

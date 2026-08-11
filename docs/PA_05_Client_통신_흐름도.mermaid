@@ -1,0 +1,47 @@
+---
+title: PA Client 통신 흐름도
+---
+graph TD
+    CLIENT["Client (HTS/MTS)"]
+
+    subgraph RECV["Client 수신"]
+        RX["pa_8201_tr\nClient수신\n:32011"]
+        BATCH_RX["pa_8211_tr\nBatch수신\n:32019"]
+    end
+
+    CLIENT -->|"주문/조회"| RX
+    CLIENT -->|"일괄요청"| BATCH_RX
+
+    subgraph SEND["Client 송신"]
+        TX["pa_8101_ts\nClient송신\n:32001\n(주문응답/체결)"]
+        DP_TX["pa_8111_ts\n채권DP송신\n:32009"]
+        SISE_TX["pa_8105_ts\n채권시세송신\n:32008"]
+        RDS1_TX["pa_8116_ts\nRDS01시세송신\n:32016"]
+        RDS2_TX["pa_8117_ts\nRDS01실시간\n:32017"]
+        RDS3_TX["pa_8118_ts\nRDS02실시간\n:32018"]
+    end
+
+    TX --> CLIENT
+    DP_TX --> CLIENT
+    SISE_TX --> CLIENT
+    RDS1_TX --> CLIENT
+    RDS2_TX --> CLIENT
+    RDS3_TX --> CLIENT
+
+    subgraph DISPATCH["Client 수신 분배"]
+        QUERY["pa_6001_mp\n조회처리"]
+        HANDO["pa_9001_mp\n한도관리"]
+        ORD_BOND["pa_1101_ts\n채권주문"]
+        ORD_DERIV["pa_2101_ts\n파생주문"]
+        AUTO["pa_50xxx_mp\nAuto전략 x40"]
+    end
+
+    RX -->|"FIFO"| QUERY
+    RX -->|"Start/Stop"| HANDO
+    RX -->|"DSHM"| ORD_BOND
+    RX -->|"DSHM"| ORD_DERIV
+    RX -->|"DSHM"| AUTO
+
+    QUERY -->|"FIFO"| TX
+    HANDO -->|"FIFO"| TX
+    BATCH_RX -->|"FIFO"| BATCH_TS["pa_1801_ts\n일괄수신 -> KRX"]

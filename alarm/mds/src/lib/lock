@@ -1,0 +1,320 @@
+mds/udp.c:	MDINFO	*info = ctx->info;
+mds/udp.c:	sock = ctx->sock[indx];
+mds/udp.c:		if (msgsnd(ctx->mqid[seqn], msgbuf, msgl+sizeof(TOKEN), IPC_NOWAIT|MSG_NOERROR) != 0)
+mds/setup.c:	pthread_mutex_init(&ctx->lock, NULL);
+mds/setup.c:	pthread_mutex_init(&ctx->mutex, NULL);
+mds/setup.c:	pthread_mutex_init(&ctx->islock, NULL);
+mds/setup.c:	ctx->market = market;
+mds/setup.c:		ctx->mqid[ii] = -1;
+mds/setup.c:		ctx->sock[ii] = -1;
+mds/recv.c:	rcvl = msgrcv(ctx->mqid[seqn], msgbuf, MAX_PACKET_SIZE, 0, MSG_NOERROR);
+mds/recv.c:	if (ctx->proc.recv != NULL)		// sorry !!! you must using mds_notify()'s function
+mds/recv.c:			pthread_mutex_lock(&ctx->mutex);
+mds/recv.c:			ctx->proc.recv(market, &token);
+mds/recv.c:			pthread_mutex_unlock(&ctx->mutex);
+mds/syncer.c.20180611:		if (mds_holiday(market, xymd, 1) || ctx->func->seek == NULL)
+mds/syncer.c.20180611:				if ((row = ctx->func->roff(market, folder, MSTR)) != NULL)
+mds/syncer.c.20180611:				if ((row = ctx->func->roff(market, folder, QUOT)) != NULL)
+mds/syncer.c.20180611:				if ((row = ctx->func->roff(market, folder, BOOK)) != NULL)
+mds/syncer.c.20180611:				if ((row = ctx->func->roff(market, folder, INTR)) != NULL)
+mds/syncer.c.20180611:		if (folder != NULL && ctx->isam[dbid].dodo & _DF_)
+mds/fetch.c.20180618:	ISAM	*isam = ctx->isam;
+mds/fetch.c.20180618:	if (ctx->func->fetch == NULL)
+mds/fetch.c.20180618:	return(ctx->func->fetch(market, dbid, record, mode, limit, cflag));
+mds/fetch.c.bak:	ISAM	*isam = ctx->isam;
+mds/fetch.c.bak:	if (ctx->func->fetch == NULL)
+mds/fetch.c.bak:	return(ctx->func->fetch(market, dbid, record, mode, limit, cflag));
+mds/sched.c.20180502:				pthread_mutex_lock(&ctx->mutex);
+mds/sched.c.20180502:				if (ctx->proc.open != NULL)
+mds/sched.c.20180502:					(*ctx->proc.open)(market);
+mds/sched.c.20180502:				pthread_mutex_unlock(&ctx->mutex);
+mds/sched.c.20180502:				pthread_mutex_lock(&ctx->mutex);
+mds/sched.c.20180502:				if (ctx->proc.clos != NULL)
+mds/sched.c.20180502:					(*ctx->proc.clos)(market);
+mds/sched.c.20180502:				pthread_mutex_unlock(&ctx->mutex);
+mds/sched.c.20180502:			pthread_mutex_lock(&ctx->mutex);
+mds/sched.c.20180502:			if (ctx->proc.xday != NULL)
+mds/sched.c.20180502:				(*ctx->proc.xday)(market);
+mds/sched.c.20180502:			pthread_mutex_unlock(&ctx->mutex);
+mds/sched.c.20180502:	MDINFO	*info  = ctx->info;
+mds/sched.c:				pthread_mutex_lock(&ctx->mutex);
+mds/sched.c:				if (ctx->proc.open != NULL)
+mds/sched.c:					(*ctx->proc.open)(market);
+mds/sched.c:				pthread_mutex_unlock(&ctx->mutex);
+mds/sched.c:				pthread_mutex_lock(&ctx->mutex);
+mds/sched.c:				if (ctx->proc.clos != NULL)
+mds/sched.c:					(*ctx->proc.clos)(market);
+mds/sched.c:				pthread_mutex_unlock(&ctx->mutex);
+mds/sched.c:			pthread_mutex_lock(&ctx->mutex);
+mds/sched.c:			if (ctx->proc.xday != NULL)
+mds/sched.c:				(*ctx->proc.xday)(market);
+mds/sched.c:			pthread_mutex_unlock(&ctx->mutex);
+mds/sched.c:	MDINFO	*info  = ctx->info;
+mds/backup/20181213/mds.c:	ctx->schema  = schema;
+mds/backup/20181213/mds.c:	ctx->fsiz = sizeof(MDFOLD);
+mds/backup/20181213/mds.c:	ctx->func = &_func_;
+mds/cook.c:	SCHEMA	*schema = ctx->schema;
+mds/cook.c:	ctx->proc.open  = proc->open;		// openmarket
+mds/cook.c:	ctx->proc.recv  = proc->recv;		// receiver (stream)
+mds/cook.c:	ctx->proc.clos  = proc->clos;		// close market
+mds/cook.c:	ctx->proc.xday  = proc->xday;		// open a new calendar day
+mds/cook.c:		if ((ctx->mqid[ii] = msgget(IPCK(market->xchg->ipck, ii), 0666|IPC_CREAT)) < 0)
+mds/cook.c:		if (msgctl(ctx->mqid[ii], IPC_STAT, &msqid_ds) != 0)
+mds/cook.c:			msgctl(ctx->mqid[ii], IPC_SET, &msqid_ds);
+mds/cook.c:		ctx->sock[ii] = -1;
+mds/cook.c:		ctx->sock[ii] = sock;
+mds/cook.c:		if (ctx->sock[ii] < 0 || market->xchg->from[ii].seqn <= 0)
+mds/cook.c:		pthread_create(&ctx->recver[ii], &attr, udprcv, &argval[ii]);
+mds/cook.c:	ctx->posta.sock = sock;
+mds/cook.c:		memcpy(&ctx->posta.sin, &sockin, sizeof(sockin));
+mds/cook.c:		ctx->posta.sock = sock;
+mds/cook.c:			pthread_create(&ctx->notifier[ii], &attr, notifier, &argval2[ii]);
+mds/cook.c:			pthread_create(&ctx->syncer, &attr, mds_syncer, market);
+mds/cook.c:			pthread_create(&ctx->scheduler, &attr, scheduler, market);
+mds/syncer.c:		if (mds_holiday(market, xymd, 1) || ctx->func->seek == NULL)
+mds/syncer.c:				if ((row = ctx->func->roff(market, folder, MSTR)) != NULL)
+mds/syncer.c:				if ((row = ctx->func->roff(market, folder, QUOT)) != NULL)
+mds/syncer.c:				if ((row = ctx->func->roff(market, folder, BOOK)) != NULL)
+mds/syncer.c:				if ((row = ctx->func->roff(market, folder, INTR)) != NULL)
+mds/syncer.c:		if (folder != NULL && ctx->isam[dbid].dodo & _DF_)
+mds/mds.c.bak:	ctx->schema  = schema;
+mds/mds.c.bak:	ctx->fsiz = sizeof(MDFOLD);
+mds/mds.c.bak:	ctx->func = &_func_;
+Binary file mds/.shm.c.swp matches
+mds/misc.c:	pthread_mutex_lock(&ctx->lock);
+mds/misc.c:	pthread_mutex_unlock(&ctx->lock);
+mds/misc.c:	MDINFO	*info = ctx->info;
+mds/shm.c:	ctx->fsiz = fsz;		// size of folder
+mds/shm.c:		fsize = ctx->fsiz * market->xchg->room;			// size of folder
+mds/shm.c:	ctx->info = &arch->info;				// book on a shared memory
+mds/shm.c:	fb += (ctx->fsiz * w->indx);
+mds/shm.c:		mp = fp + (m * ctx->fsiz);
+mds/shm.c:		mp = fp + (i * ctx->fsiz);
+mds/shm.c:	fp = fb + (to * ctx->fsiz);
+mds/shm.c:	tp = fp + ctx->fsiz;
+mds/shm.c:	shift = (arch->vrec - to) * ctx->fsiz;
+mds/shm.c:	memcpy(fp, (char *)fold, ctx->fsiz);
+mds/shm.c:	fb += (ctx->fsiz * new.indx);
+mds/shm.c:	memset(fb, 0, ctx->fsiz);
+mds/shm.c:	fb += (ctx->fsiz * del.indx);				// foler position to delete
+mds/shm.c:	if (ctx->func->roff != NULL)
+mds/shm.c:		if ((rp = ctx->func->roff(market, fb, MSTR)) != NULL)
+mds/shm.c:		if ((rp = ctx->func->roff(market, fb, QUOT)) != NULL)
+mds/shm.c:		if ((rp = ctx->func->roff(market, fb, BOOK)) != NULL)
+mds/shm.c:	memset(fb, 0, ctx->fsiz);				// clear all data on folder
+mds/shm.c:	qsort(fb, arch->vrec, ctx->fsiz, cmpfolder);
+mds/cisam.c.back:	pthread_mutex_lock(&ctx->islock);
+mds/cisam.c.back:	pthread_mutex_unlock(&ctx->islock);
+mds/fetch.c_cism:	ISAM	*isam = ctx->isam;
+mds/fetch.c_cism:	if (ctx->func->fetch == NULL)
+mds/fetch.c_cism:	return(ctx->func->fetch(market, dbid, record, mode, limit, cflag));
+Binary file mds/.mds.c.swo matches
+mds/mds.c_kk:	ctx->schema  = schema;
+mds/mds.c_kk:	ctx->fsiz = sizeof(MDFOLD);
+mds/mds.c_kk:	ctx->func = &_func_;
+mds/mds.c:	ctx->schema  = schema;
+mds/mds.c:	ctx->fsiz = sizeof(MDFOLD);
+mds/mds.c:	ctx->func = &_func_;
+mds/close.c:		if (ctx->scheduler != (pthread_t)0 && pthread_kill(ctx->scheduler, 0) == 0 && !pthread_equal(this, ctx->scheduler))
+mds/close.c:			pthread_cancel(ctx->scheduler);
+mds/close.c:			if (ctx->dispatcher[ii] != (pthread_t)0 && pthread_kill(ctx->dispatcher[ii], 0) == 0 && !pthread_equal(this, ctx->dispatcher[ii]))
+mds/close.c:				pthread_cancel(ctx->dispatcher[ii]);
+mds/close.c:			if (ctx->recver[ii] != (pthread_t)0 && pthread_kill(ctx->recver[ii], 0) == 0 && !pthread_equal(this, ctx->recver[ii]))
+mds/close.c:				pthread_cancel(ctx->recver[ii]);
+mds/close.c:			if (ctx->notifier[ii] != (pthread_t)0 && pthread_kill(ctx->notifier[ii], 0) == 0 && !pthread_equal(this, ctx->notifier[ii]))
+mds/close.c:				pthread_cancel(ctx->notifier[ii]);
+mds/close.c:			if (ctx->sock[ii] >= 0)
+mds/close.c:				close(ctx->sock[ii]);
+mds/close.c:			if (ctx->mqid[ii] >= 0 && msgctl(ctx->mqid[ii], IPC_STAT, &msqid_ds) == 0)
+mds/close.c:				msgctl(ctx->mqid[ii], IPC_RMID, &msqid_ds);
+mds/close.c:		if (ctx->syncer != (pthread_t)0 && pthread_kill(ctx->syncer, 0) == 0)
+mds/close.c:			pthread_cancel(ctx->syncer);
+mds/open.c:		if (ctx->schema != NULL && mds_isinit(market) != 0)	
+mds/open.c:	if (ctx->schema != NULL && mds_isopen(market) != 0)			// open cisam on schema
+mds/open.c:	if (ctx->func->init(market) != 0)
+mds/open.c:	if (ctx->func->seek == NULL)
+mds/open.c:		mdintr = ctx->func->roff(market, folder, INTR);
+mds/folder.c:	fb += (ctx->fsiz * w->indx);
+mds/folder.c:	fb += (ctx->fsiz * w->indx);
+mds/folder.c:	if (ctx->func->roff != NULL)
+mds/folder.c:		if ((r = ctx->func->roff(market, fb, MSTR)) != NULL)
+mds/folder.c:		if ((r = ctx->func->roff(market, fb, QUOT)) != NULL)
+mds/folder.c:		if ((r = ctx->func->roff(market, fb, BOOK)) != NULL)
+mds/folder.c:		if ((r = ctx->func->roff(market, fb, INTR)) != NULL)
+mds/folder.c:	if (ctx->func->sync != NULL)
+mds/folder.c:		ctx->func->sync(market, folder, dbid);
+mds/folder.c:	if (ctx->func->clear != NULL)
+mds/folder.c:		ctx->func->clear(market, folder);
+mds/folder.c:	if (ctx->func->push != NULL)
+mds/folder.c:		ctx->func->push(market, folder, event);
+mds/folder.c:	if (ctx->func->push != NULL)
+mds/folder.c:		return(ctx->func->seek(market, prefix, where));
+mds/folder.c:	if (ctx->func->type == NULL)
+mds/folder.c:		ctx->func->type(folder, &styp, &corp, &strk);
+mds/mds.c_bak:	ctx->schema  = schema;
+mds/mds.c_bak:	ctx->fsiz = sizeof(MDFOLD);
+mds/mds.c_bak:	ctx->func = &_func_;
+mds/fetch.c:    //if (ctx->posta.sock >= 0)
+mds/fetch.c:				sendto(ctx->posta.sock, send_b, sizeof(S_SENDQUOT)+1, 0, (struct sockaddr *)&ctx->posta.sin, sizeof(struct sockaddr_in));
+mds/fetch.c:					sendto(ctx->posta.sock, send_b, sizeof(S_SENDQUOT)+1, 0, (struct sockaddr *)&ctx->posta.sin, sizeof(struct sockaddr_in));
+mds/fetch.c:            	sendto(ctx->posta.sock, send_b, sizeof(MDFOLD), 0, (struct sockaddr *)&ctx->posta.sin, sizeof(struct sockaddr_in));
+mds/fetch.c:					sendto(ctx->posta.sock, send_b, sizeof(S_SENDBOOK)+1, 0, (struct sockaddr *)&ctx->posta.sin, sizeof(struct sockaddr_in));
+mds/fetch.c:						sendto(ctx->posta.sock, send_b, sizeof(S_SENDBOOK)+1, 0, (struct sockaddr *)&ctx->posta.sin, sizeof(struct sockaddr_in));
+mds/fetch.c:						sendto(ctx->posta.sock, send_b, sizeof(S_SENDBOOK)+1, 0, (struct sockaddr *)&ctx->posta.sin, sizeof(struct sockaddr_in));
+mds/cisam.c:	pthread_mutex_lock(&ctx->islock);
+mds/cisam.c:	pthread_mutex_unlock(&ctx->islock);
+mds/cisam.c_cism:	ISAM	*isam = ctx->isam;
+mds/cisam.c_cism:	pthread_mutex_lock(&ctx->islock);
+mds/cisam.c_cism:	pthread_mutex_unlock(&ctx->islock);
+mds/cisam.c_cism:	SCHEMA	*schema = (SCHEMA*)ctx->schema;
+mds/cisam.c_cism:	SCHEMA	*schema = (SCHEMA*)ctx->schema;
+mds/cisam.c_cism:	ISAM	*isam = ctx->isam;
+mds/cisam.c_cism:	ISAM	*isam = ctx->isam;
+mds/cisam.c_cism:	ISAM	*isam = ctx->isam;
+mds/cisam.c_cism:	ISAM	*isam = ctx->isam;
+mds/cisam.c_cism:	ISAM	*isam = ctx->isam;
+mds/cisam.c_cism:	ISAM	*isam = ctx->isam;
+mds/cisam.c_cism:	ISAM	*isam = ctx->isam;
+mds/cisam.c_cism:	ISAM	*isam = ctx->isam, _isam;
+mds/cisam.c_cism:	ISAM	*isam = ctx->isam;
+mds/cisam.c_cism:	ISAM	*isam = ctx->isam;
+mds/cisam.c_cism:	ISAM	*isam = ctx->isam;
+mds/cisam.c_cism:	ISAM	*isam = ctx->isam;
+mds/cisam.c_cism:	ISAM	*isam = ctx->isam;
+mds/cisam.c_cism:	ISAM	*isam = ctx->isam;
+Binary file mds/.mds.c.swp matches
+Binary file mds/.mds.c.swn matches
+sync:./mds/syncer.c:		if (mds_holiday(market, xymd, 1) || ctx->func->seek == NULL)
+sync:./mds/syncer.c:				if ((row = ctx->func->roff(market, folder, MSTR)) != NULL)
+sync:./mds/syncer.c:				if ((row = ctx->func->roff(market, folder, QUOT)) != NULL)
+sync:./mds/syncer.c:				if ((row = ctx->func->roff(market, folder, BOOK)) != NULL)
+sync:./mds/syncer.c:				if ((row = ctx->func->roff(market, folder, INTR)) != NULL)
+sync:./mds/syncer.c:		if (folder != NULL && ctx->isam[dbid].dodo & _DF_)
+sync:./mds/udp.c:	MDINFO	*info = ctx->info;
+sync:./mds/udp.c:	sock = ctx->sock[indx];
+sync:./mds/udp.c:		if (msgsnd(ctx->mqid[seqn], msgbuf, msgl+sizeof(TOKEN), IPC_NOWAIT|MSG_NOERROR) != 0)
+sync:./mds/setup.c:	pthread_mutex_init(&ctx->lock, NULL);
+sync:./mds/setup.c:	pthread_mutex_init(&ctx->mutex, NULL);
+sync:./mds/setup.c:	pthread_mutex_init(&ctx->islock, NULL);
+sync:./mds/setup.c:	ctx->market = market;
+sync:./mds/setup.c:		ctx->mqid[ii] = -1;
+sync:./mds/setup.c:		ctx->sock[ii] = -1;
+sync:./mds/recv.c:	rcvl = msgrcv(ctx->mqid[seqn], msgbuf, MAX_PACKET_SIZE, 0, MSG_NOERROR);
+sync:./mds/recv.c:	if (ctx->proc.recv != NULL)		// sorry !!! you must using mds_notify()'s function
+sync:./mds/recv.c:			pthread_mutex_lock(&ctx->mutex);
+sync:./mds/recv.c:			ctx->proc.recv(market, &token);
+sync:./mds/recv.c:			pthread_mutex_unlock(&ctx->mutex);
+sync:./mds/misc.c:	pthread_mutex_lock(&ctx->lock);
+sync:./mds/misc.c:	pthread_mutex_unlock(&ctx->lock);
+sync:./mds/misc.c:	MDINFO	*info = ctx->info;
+sync:./mds/sched.c:				pthread_mutex_lock(&ctx->mutex);
+sync:./mds/sched.c:				if (ctx->proc.open != NULL)
+sync:./mds/sched.c:					(*ctx->proc.open)(market);
+sync:./mds/sched.c:				pthread_mutex_unlock(&ctx->mutex);
+sync:./mds/sched.c:				pthread_mutex_lock(&ctx->mutex);
+sync:./mds/sched.c:				if (ctx->proc.clos != NULL)
+sync:./mds/sched.c:					(*ctx->proc.clos)(market);
+sync:./mds/sched.c:				pthread_mutex_unlock(&ctx->mutex);
+sync:./mds/sched.c:			pthread_mutex_lock(&ctx->mutex);
+sync:./mds/sched.c:			if (ctx->proc.xday != NULL)
+sync:./mds/sched.c:				(*ctx->proc.xday)(market);
+sync:./mds/sched.c:			pthread_mutex_unlock(&ctx->mutex);
+sync:./mds/sched.c:	MDINFO	*info  = ctx->info;
+sync:./mds/fetch.c:	ISAM	*isam = ctx->isam;
+sync:./mds/fetch.c:	if (ctx->func->fetch == NULL)
+sync:./mds/fetch.c:	return(ctx->func->fetch(market, dbid, record, mode, limit, cflag));
+sync:./mds/close.c:		if (ctx->scheduler != (pthread_t)0 && pthread_kill(ctx->scheduler, 0) == 0 && !pthread_equal(this, ctx->scheduler))
+sync:./mds/close.c:			pthread_cancel(ctx->scheduler);
+sync:./mds/close.c:			if (ctx->dispatcher[ii] != (pthread_t)0 && pthread_kill(ctx->dispatcher[ii], 0) == 0 && !pthread_equal(this, ctx->dispatcher[ii]))
+sync:./mds/close.c:				pthread_cancel(ctx->dispatcher[ii]);
+sync:./mds/close.c:			if (ctx->recver[ii] != (pthread_t)0 && pthread_kill(ctx->recver[ii], 0) == 0 && !pthread_equal(this, ctx->recver[ii]))
+sync:./mds/close.c:				pthread_cancel(ctx->recver[ii]);
+sync:./mds/close.c:			if (ctx->notifier[ii] != (pthread_t)0 && pthread_kill(ctx->notifier[ii], 0) == 0 && !pthread_equal(this, ctx->notifier[ii]))
+sync:./mds/close.c:				pthread_cancel(ctx->notifier[ii]);
+sync:./mds/close.c:			if (ctx->sock[ii] >= 0)
+sync:./mds/close.c:				close(ctx->sock[ii]);
+sync:./mds/close.c:			if (ctx->mqid[ii] >= 0 && msgctl(ctx->mqid[ii], IPC_STAT, &msqid_ds) == 0)
+sync:./mds/close.c:				msgctl(ctx->mqid[ii], IPC_RMID, &msqid_ds);
+sync:./mds/close.c:		if (ctx->syncer != (pthread_t)0 && pthread_kill(ctx->syncer, 0) == 0)
+sync:./mds/close.c:			pthread_cancel(ctx->syncer);
+sync:./mds/shm.c:	ctx->fsiz = fsz;		// size of folder
+sync:./mds/shm.c:		fsize = ctx->fsiz * market->xchg->room;			// size of folder
+sync:./mds/shm.c:	ctx->info = &arch->info;				// book on a shared memory
+sync:./mds/shm.c:	fb += (ctx->fsiz * w->indx);
+sync:./mds/shm.c:		mp = fp + (m * ctx->fsiz);
+sync:./mds/shm.c:		mp = fp + (i * ctx->fsiz);
+sync:./mds/shm.c:	fp = fb + (to * ctx->fsiz);
+sync:./mds/shm.c:	tp = fp + ctx->fsiz;
+sync:./mds/shm.c:	shift = (arch->vrec - to) * ctx->fsiz;
+sync:./mds/shm.c:	memcpy(fp, (char *)fold, ctx->fsiz);
+sync:./mds/shm.c:	fb += (ctx->fsiz * new.indx);
+sync:./mds/shm.c:	memset(fb, 0, ctx->fsiz);
+sync:./mds/shm.c:	fb += (ctx->fsiz * del.indx);				// foler position to delete
+sync:./mds/shm.c:	if (ctx->func->roff != NULL)
+sync:./mds/shm.c:		if ((rp = ctx->func->roff(market, fb, MSTR)) != NULL)
+sync:./mds/shm.c:		if ((rp = ctx->func->roff(market, fb, QUOT)) != NULL)
+sync:./mds/shm.c:		if ((rp = ctx->func->roff(market, fb, BOOK)) != NULL)
+sync:./mds/shm.c:	memset(fb, 0, ctx->fsiz);				// clear all data on folder
+sync:./mds/shm.c:	qsort(fb, arch->vrec, ctx->fsiz, cmpfolder);
+sync:./mds/open.c:		if (ctx->schema != NULL && mds_isinit(market) != 0)	
+sync:./mds/open.c:	if (ctx->schema != NULL && mds_isopen(market) != 0)			// open cisam on schema
+sync:./mds/open.c:	if (ctx->func->init(market) != 0)
+sync:./mds/open.c:	if (ctx->func->seek == NULL)
+sync:./mds/open.c:		mdintr = ctx->func->roff(market, folder, INTR);
+sync:./mds/mds.c:	ctx->schema  = schema;
+sync:./mds/mds.c:	ctx->fsiz = sizeof(MDFOLD);
+sync:./mds/mds.c:	ctx->func = &_func_;
+sync:./mds/folder.c:	fb += (ctx->fsiz * w->indx);
+sync:./mds/folder.c:	fb += (ctx->fsiz * w->indx);
+sync:./mds/folder.c:	if (ctx->func->roff != NULL)
+sync:./mds/folder.c:		if ((r = ctx->func->roff(market, fb, MSTR)) != NULL)
+sync:./mds/folder.c:		if ((r = ctx->func->roff(market, fb, QUOT)) != NULL)
+sync:./mds/folder.c:		if ((r = ctx->func->roff(market, fb, BOOK)) != NULL)
+sync:./mds/folder.c:		if ((r = ctx->func->roff(market, fb, INTR)) != NULL)
+sync:./mds/folder.c:	if (ctx->func->sync != NULL)
+sync:./mds/folder.c:		ctx->func->sync(market, folder, dbid);
+sync:./mds/folder.c:	if (ctx->func->clear != NULL)
+sync:./mds/folder.c:		ctx->func->clear(market, folder);
+sync:./mds/folder.c:	if (ctx->func->push != NULL)
+sync:./mds/folder.c:		ctx->func->push(market, folder, event);
+sync:./mds/folder.c:	if (ctx->func->push != NULL)
+sync:./mds/folder.c:		return(ctx->func->seek(market, prefix, where));
+sync:./mds/folder.c:	if (ctx->func->type == NULL)
+sync:./mds/folder.c:		ctx->func->type(folder, &styp, &corp, &strk);
+sync:./mds/cook.c:	SCHEMA	*schema = ctx->schema;
+sync:./mds/cook.c:	ctx->proc.open  = proc->open;		// openmarket
+sync:./mds/cook.c:	ctx->proc.recv  = proc->recv;		// receiver (stream)
+sync:./mds/cook.c:	ctx->proc.clos  = proc->clos;		// close market
+sync:./mds/cook.c:	ctx->proc.xday  = proc->xday;		// open a new calendar day
+sync:./mds/cook.c:		if ((ctx->mqid[ii] = msgget(IPCK(market->xchg->ipck, ii), 0666|IPC_CREAT)) < 0)
+sync:./mds/cook.c:		if (msgctl(ctx->mqid[ii], IPC_STAT, &msqid_ds) != 0)
+sync:./mds/cook.c:			msgctl(ctx->mqid[ii], IPC_SET, &msqid_ds);
+sync:./mds/cook.c:		ctx->sock[ii] = -1;
+sync:./mds/cook.c:		ctx->sock[ii] = sock;
+sync:./mds/cook.c:		if (ctx->sock[ii] < 0 || market->xchg->from[ii].seqn <= 0)
+sync:./mds/cook.c:		pthread_create(&ctx->recver[ii], &attr, udprcv, &argval[ii]);
+sync:./mds/cook.c:	ctx->posta.sock = sock;
+sync:./mds/cook.c:		memcpy(&ctx->posta.sin, &sockin, sizeof(sockin));
+sync:./mds/cook.c:		ctx->posta.sock = sock;
+sync:./mds/cook.c:			pthread_create(&ctx->notifier[ii], &attr, notifier, &argval2[ii]);
+sync:./mds/cook.c:			pthread_create(&ctx->syncer, &attr, mds_syncer, market);
+sync:./mds/cook.c:			pthread_create(&ctx->scheduler, &attr, scheduler, market);
+sync:./mds/cisam.c:	ISAM	*isam = ctx->isam;
+sync:./mds/cisam.c:	pthread_mutex_lock(&ctx->islock);
+sync:./mds/cisam.c:	pthread_mutex_unlock(&ctx->islock);
+sync:./mds/cisam.c:	SCHEMA	*schema = ctx->schema;
+sync:./mds/cisam.c:	SCHEMA	*schema = ctx->schema;
+sync:./mds/cisam.c:	ISAM	*isam = ctx->isam;
+sync:./mds/cisam.c:	ISAM	*isam = ctx->isam;
+sync:./mds/cisam.c:	ISAM	*isam = ctx->isam;
+sync:./mds/cisam.c:	ISAM	*isam = ctx->isam;
+sync:./mds/cisam.c:	ISAM	*isam = ctx->isam;
+sync:./mds/cisam.c:	ISAM	*isam = ctx->isam;
+sync:./mds/cisam.c:	ISAM	*isam = ctx->isam;
+sync:./mds/cisam.c:	ISAM	*isam = ctx->isam, _isam;
+sync:./mds/cisam.c:	ISAM	*isam = ctx->isam;
+sync:./mds/cisam.c:	ISAM	*isam = ctx->isam;
+sync:./mds/cisam.c:	ISAM	*isam = ctx->isam;
+sync:./mds/cisam.c:	ISAM	*isam = ctx->isam;
+sync:./mds/cisam.c:	ISAM	*isam = ctx->isam;
+sync:./mds/cisam.c:	ISAM	*isam = ctx->isam;

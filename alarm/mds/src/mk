@@ -1,0 +1,46 @@
+
+all:
+	cd lib		;	make all;
+	cd pibb		;	make all;
+	cd pibd		;	make all;
+	cd pibm		;	make all;
+	cd pibo7000	;	make all;
+	cd pibo7500	;	make all;
+	cd pibo7600	;	make all;
+	cd b2b		;	make all;
+	cd sfile	;	make all;
+	cd chck		;	make all;
+	cd cmd		;	make all;
+	cd util		;	make all;
+#	cd psys		;	make all;
+
+clean:
+	cd lib		;	make clean;
+	cd pibb		;	make clean;
+	cd pibd		;	make clean;
+	cd pibm		;	make clean;
+	cd pibo7000	;	make clean;
+	cd pibo7500	;	make clean;
+	cd pibo7600	;	make clean;
+	cd b2b		;	make clean;
+	cd sfile	;	make clean;
+	cd chck		;	make clean;
+	cd cmd		;	make clean;
+	cd util		;	make clean;
+#	cd psys		;	make clean;
+
+install:
+	cd lib		;	make install;
+	cd pibb		;	make install;
+	cd pibd		;	make install;
+	cd pibm		;	make install;
+	cd pibo7000	;	make install;
+	cd pibo7500	;	make install;
+	cd pibo7600	;	make install;
+	cd b2b		;	make install;
+	cd sfile	;	make install;
+	cd chck		;	make install;
+	cd cmd		;	make install;
+	cd util		;	make install;
+#	cd psys		;	make install;
+

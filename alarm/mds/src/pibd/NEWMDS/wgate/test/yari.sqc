@@ -1,0 +1,2401 @@
+#ifndef sqlint64
+#define sqlint64 long
+#endif
+
+#include <linux/sockios.h>
+#include <semaphore.h>
+#define _GNU_SOURCE         /* See feature_test_macros(7) */
+#include <unistd.h>
+#include <sys/syscall.h>   /* For SYS_xxx definitions */
+
+#include "comdef.h"
+#include "wfaapi.h"
+#include "comrdb.h"
+#include "mds2.h"
+#include "m365.h"
+
+#include "gcomdef.h"
+#include "mrkfee.h"
+#include "wgate.h"
+#include "W6109A04.h"
+#include "W6109A02.h"
+#include "W3370A01.h"
+/*
+#include <curl/curl.h>
+#include <curl/curlver.h>
+#include <curl/easy.h>
+#include "cJSON.h"
+#include "cJSON_Utils.h"
+*/
+
+EXEC SQL INCLUDE SQLCA;
+
+#define		FUNCMX		50
+
+//int function0 (int ac, char **av);
+int function1 (int ac, char **av);
+int function2 (int ac, char **av);
+int function3 (int ac, char **av);
+int function4 (int ac, char **av);
+int function5 (int ac, char **av);
+int function6 (int ac, char **av);
+int function7 (int ac, char **av);
+int function8 (int ac, char **av);
+int function9 (int ac, char **av);
+int function10(int ac, char **av);
+int function11(int ac, char **av);
+int function12(int ac, char **av);
+int function13(int ac, char **av);
+int function14(int ac, char **av);
+int function15(int ac, char **av);
+int function16(int ac, char **av);
+int function17(int ac, char **av);
+int function18(int ac, char **av);
+int function19(int ac, char **av);
+int function20(int ac, char **av);
+int function21(int ac, char **av);
+int function22(int ac, char **av);
+int function23(int ac, char **av){};
+int function24(int ac, char **av){};
+int function25(int ac, char **av){};
+
+typedef int (*tfunc)(int ac, char **av);
+
+static struct _funclist {
+	tfunc	f;
+	char	desc[128];
+} FUNCS[FUNCMX+1] = {
+	 [ 0]={ function1 , "test"}
+	,[ 1]={ function1 , "popen 으로 명령어 실행 및 결과 출력"}
+	,[ 2]={ function2 , "API마스트정보(get/set apistatus)"}
+	,[ 3]={ function3 , "WGMST마스트업데이트 API"}
+	,[ 4]={ function4 , "multicast test"}
+	,[ 5]={ function5 , "한도조회"}
+	,[ 6]={ function6 , "수수료조회"}
+	,[ 7]={ function7 , "고객시세원천변경API(mds_updt_custfeed) : 1801 화면 조작 후 호출"}
+	,[ 8]={ function8 , "DQ상태조회"}
+	,[ 9]={ function9 , "RFS/RFQ마크업조회(W6109A04)"}
+	,[10]={ function10, "RFQ딜러호가전송 API(mds_send_rfq)"}
+	,[11]={ function11, "MYMQ알림메시지전송 API(mds_send_alarm)"}
+	,[12]={ function12, "JSON테스트"}
+	,[13]={ function13, "RWLOCK TEST : [1=mt,2=rw,3=sp,4=sm] [wcnt] [rcnt] [loop] "}
+	,[14]={ function14, "쓰레드 DB connect 관리"}
+	,[15]={ function15, "DQ read : [DQNM] [index] [count]"}
+	,[16]={ function16, "주문테스트 : [LGEN_NO] [USDKRW] [1:TOD,2:TOM,3:현물,4:선물,6:바로환전] [1:BUY,2:SEL] [QTY]"}
+	,[17]={ function17, "CUST.USDKRW 시세 자동생성"}
+	,[18]={ function18, "DQ write test in multi-thread"}
+	,[19]={ function19, "test"}
+	,[20]={ function20, "log daemon"}
+	,[21]={ function21, ""}
+	,[22]={ function22, ""}
+	,[23]={ function23, ""}
+	,[24]={ function24, ""}
+	,[25]={ function25, ""}
+};
+/*
+struct message {
+	long	mtype;
+	unsigned char	mtext[1024*4];
+};
+*/
+uint32_t len2int(unsigned char *b)
+{
+    uint32_t l = 0;
+    int  i; 
+
+    for (i = 0; i < 4; i++) 
+    {
+        l <<= 8;
+        l += b[i];
+    }
+    return(l);
+}
+
+/*===============================================================
+ * MAIN PROCESS
+===============================================================*/
+int main(int argc, char *argv[])
+{
+	int		rc, ii, idx;
+
+//	l_db2connect();
+
+	if (argc < 2 || argv[1][0] == '?') {
+		printf("------------------\n");
+		for(ii=0; ii <= FUNCMX; ii++)
+		{
+			if (FUNCS[ii].desc[0] != NULL)
+				printf("function%02d : %s\n", ii, FUNCS[ii].desc);
+		}
+		printf("------------------\n");
+		exit(0);
+	}
+		
+	idx = atoi(argv[1]);
+	if (idx < 0 || idx > FUNCMX)
+	{
+		printf("index error..\n");
+		exit(0);
+	}
+	
+	printf("--------------------------------------------\n");
+	printf(" %s \n", FUNCS[idx].desc);
+	printf("--------------------------------------------\n");
+	rc = FUNCS[idx].f(argc-1, &argv[1]);
+	printf("\n============== return : [%d] \n", rc);
+	
+//	l_db2disconnect();
+
+	exit(0);
+}
+
+int str2hex(char *p)
+{
+	int		num=0;
+
+	while (*p)
+	{
+		if (*p >= 'A' && *p <= 'F')			num = num * 16 + *p - 'A' + 10;
+		else if (*p >= 'a' && *p <= 'f')	num = num * 16 + *p - 'a' + 10;
+		else if (*p >= '0' && *p <= '9')	num = num * 16 + *p - '0';
+		
+		p++;
+	}
+
+	return num;
+}
+
+int strsplit (char *sep, char *istr, ...)		// int agetc_gettok (char *sep, char *istr, ...)
+{
+	va_list	trc;
+	char	*tok, *ostr;
+	
+	if (sep == NULL || istr == NULL)
+		return (-1);
+	
+	va_start(trc, istr);
+	
+	tok = strtok (istr, sep);
+	while (tok != NULL)
+	{
+		tok  = strtok (AG_NULL, sep);
+		if (tok == NULL)
+			break;
+	
+		ostr = va_arg(trc, char *);
+		if (ostr == NULL)
+			break;
+	
+		sprintf (ostr, "%s", tok);
+	}
+	va_end(trc);
+
+	return(0);
+}
+
+__inline int getinput(char *istr, int sz)
+{
+	memset(istr, 0x00, sz);
+	fgets(istr, sz, stdin);
+
+	if (istr[0] == '\n')	istr[0] = 0;
+	else if (istr[strlen(istr)-1] == '\n')	istr[strlen(istr)-1] = 0;
+
+	return (strlen(istr));	
+}
+/*
+int function0(int ac, char **av)
+{
+	int		rc;
+	char	msg[128];
+	memset(msg, 0x00, sizeof(msg));
+
+	time_t	t;
+	struct timeval tv;
+	struct tm *tm;
+
+	t = time(NULL);
+	*tm = localtime(&t);
+//////////////////////////////////////////////
+
+	gettimeofday(&tv, NULL);
+	tm = localtime(&tv.tv_sec);
+	printf("1) %02d:%02d:%02d\n", tm->tm_hour, tm->tm_min, tm->tm_sec);
+{
+	gettimeofday(&tv, NULL);
+	tm = localtime(&tv.tv_sec);
+	printf("2) %02d:%02d:%02d\n", tm->tm_hour, tm->tm_min, tm->tm_sec);
+}
+return(0);
+
+	int		ii;
+	double	d=atof(av[1]);
+	double	d1, d2, d3, d4;
+	char	s1[32], s2[32], s3[32], s4[32];
+	long	l1, l2, l3, l4;
+	
+	printf("input : av[%s] d[%f] [%d]\n\n", av[1], d, (int)d);
+
+return (0);
+
+	sprintf(s1, "%.1f", d);
+	sprintf(s2, "%.2f", d);
+	sprintf(s3, "%.3f", d);
+	sprintf(s4, "%.4f", d);
+
+	printf("d [%.1f / %.2f / %.3f / %.4f]\n", d, d, d, d);
+	printf("s [%s / %s / %s / %s]\n", s1, s2, s3, s4);
+
+	l1 = (ulong)(pow(10,1)*d  + 0.5);
+	l2 = (ulong)(pow(10,2)*d  + 0.5);
+	l3 = (ulong)(pow(10,3)*d  + 0.5);
+	l4 = (ulong)(pow(10,4)*d  + 0.5);
+
+	printf("l [%ld / %ld / %ld / %ld]\n", l1, l2, l3, l4);
+printf("==================================\n");
+	
+	d1 = str2d(s1, sizeof(s1));
+	d2 = str2d(s2, sizeof(s2));
+	d3 = str2d(s3, sizeof(s3));
+	d4 = str2d(s4, sizeof(s4));
+	printf("d [%g / %g / %g / %g]\n", d1, d2, d3, d4);
+	
+	l1 = (ulong)(pow(10,1)*d1  + 0.5);
+	l2 = (ulong)(pow(10,2)*d2  + 0.5);
+	l3 = (ulong)(pow(10,3)*d3  + 0.5);
+	l4 = (ulong)(pow(10,4)*d4  + 0.5);
+	printf("l [%ld / %ld / %ld / %ld]\n", l1, l2, l3, l4);
+
+	return 0;
+}
+*/
+int function1(int ac, char **av)
+{
+	FILE *fp;
+	char	buf[1024], cmd[128], output[1024*10];
+
+	memset(cmd,    0x00, sizeof(cmd));
+	memset(buf,    0x00, sizeof(buf));
+	memset(output, 0x00, sizeof(output));
+
+	sprintf(cmd, "/fsfxwin/mymq/bin/lswho | awk '{if (NR>2 && NF>4) printf(\"%%s,%%s\\n\", substr($0,7,7), substr($0, 37,15))}' | uniq -c");
+	printf("cmd=[%s]\n", cmd);
+	if ((fp = popen(cmd, "r")) == NULL)
+		exit(-1);
+
+	while (fgets(buf, sizeof(buf), fp))
+	{
+		strncpy(&output[strlen(output)], buf, strlen(buf));
+
+		if (strlen(output) >= sizeof(output))
+			break;
+	}
+
+	printf("[%s]\n", output);
+
+	pclose(fp);
+	
+	return (0);
+}
+
+int function2(int ac, char **av)
+{
+	int		rc;
+	char	targetid[50+1], trdstat[2], autohedge[2], emsg[256];
+	
+	memset(targetid,  0x00, sizeof(targetid));
+	memset(trdstat,   0x00, sizeof(trdstat));
+	memset(autohedge, 0x00, sizeof(autohedge));
+	memset(emsg,      0x00, sizeof(emsg));
+
+	printf("targetid : ");
+	scanf("%s", targetid);
+	if (strlen(targetid) <= 0)	return (-1);
+
+	rc = getapistatus(targetid, trdstat, autohedge, emsg);
+	
+	printf("current : target[%s] trd[%.1s] hdg[%.1s] msg[%s]\n", rc, targetid, trdstat, autohedge, emsg);
+
+	printf("]nSETUP >>>>>");	
+	printf("trdstat : ");
+	scanf("%s", trdstat);
+	if (strlen(targetid) != 1)	return (-2);
+
+	printf("autohedge : ");
+	scanf("%s", autohedge);
+	if (strlen(autohedge) != 1)	return (-3);
+
+	rc = setapistatus(targetid, trdstat, autohedge, emsg);
+	if (rc < 0)
+	{
+		printf("error [%d:%s]\n", rc, emsg);
+		return (-1);
+	}
+	printf("\n## setapistatus done..\n"); 
+
+	return (0);
+}
+
+int function3(int ac, char **av)
+{
+	int		shmid;
+	char	rejmsg[128], stemp[32];
+	WGMST	*wgmst;
+
+	shmid = shmget(WG_SHMKEY, 0, 0);
+	if (shmid < 0)
+	{
+		sprintf(rejmsg,"(%s) create shared memory error (%d/%s)", __func__, errno, strerror(errno));
+		return (-1);
+	}
+
+	wgmst = (WGMST *)shmat(shmid, 0, 0);
+	if (wgmst == NULL)
+	{
+		sprintf(rejmsg, "(%s) shared memory attach error (%d/%s)", __func__, errno, strerror(errno));
+		return (-2);
+	}
+
+	printf("new mrkuptime(%.6s) : ", wgmst->updtmkup);
+	scanf("%s", stemp);
+	if (strlen(stemp) != sizeof(wgmst->updtmkup))	return (-1);
+	
+	memcpy(wgmst->updtmkup, stemp, sizeof(wgmst->updtmkup));
+
+	printf("\n>>>> update mrkuptime done.. (%.6s)\n", wgmst->updtmkup);
+
+	return (0);
+}
+
+int function4(int ac, char **av)
+{
+	int		scnt, rcnt, dmax=100;
+	int		mport=0;				// DF_RFQ_PORT
+	char	stemp[32];
+	char	mipad[16]; // = "227.10.20.10";	// DF_MDS_MCAST
+	char	rbuf[1024], sbuf[1024];
+
+	memset(mipad, 0x00, sizeof(mipad));
+
+	printf("svr / cli : ");
+	scanf("%s", stemp);
+
+	if (strcmp(stemp, "cli") == 0)
+	{
+		int		ii, c_sock, options = 1;
+		struct	in_addr		localif;
+		struct	sockaddr_in	multisock;
+
+//		printf("port (C:30020,S:30021,K:30022,E:30023,R:30024,Z:30028,B:30029) : ");
+		printf("port (C:30420,S:30410,K:30422,E:30423,R:30424,Z:30428,B:30429) : ");
+		scanf("%d", &mport);
+//		printf("multicast (apreal=227.10.20.10) : ");
+//		scanf("%s", mipad);
+
+		memset(&multisock, 0x00, sizeof(multisock));
+		memset(&localif,   0x00, sizeof(localif));
+
+		if ((c_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0)
+		{
+			printf("Cannot open a socket for AP (%d:%s)\n", errno, strerror(errno));
+			return (-1);
+		}
+
+		multisock.sin_family		= AF_INET;
+		multisock.sin_addr.s_addr	= inet_addr("127.0.0.1");
+		multisock.sin_port			= htons(mport);
+/*
+		// LOOPBACK OPTION ON
+		options = 1;
+		if (setsockopt(c_sock, IPPROTO_IP, IP_MULTICAST_LOOP, (void *)&options, sizeof(options)) != 0)
+		{
+			printf("Set socketoption Failed 1. %s.%d (%s)\n", mipad, mport, strerror(errno));
+			close(c_sock);
+			return (-1);
+		}
+
+		// TTL OPTION = 1
+		options = 1;
+		if (setsockopt(c_sock, IPPROTO_IP, IP_MULTICAST_TTL, (void *)&options, sizeof(options)) != 0)
+		{
+			printf("Set socketoption Failed 2. %s.%d (%s)", mipad, mport, strerror(errno));
+			close(c_sock);
+			return (-1);
+		}
+*/
+		// MULTICAST INTERFACE
+		/*
+		//localif.s_addr = inet_addr("10.38.111.75");
+		localif.s_addr = inet_addr("127.0.0.1");
+		if (setsockopt(c_sock, IPPROTO_IP, IP_MULTICAST_IF, (void *)&localif, sizeof(localif)) != 0)
+		{
+			printf("Set socketoption Failed 3. %s.%d (%s)", mipad, mport, strerror(errno));
+			close(c_sock);
+			return (-1);
+		}
+		*/
+		
+		char	fname[128];
+		int 	term, cnt, tcnt=0;
+
+		printf("filename : ");
+		scanf("%s", fname);
+		FILE *fp = fopen(fname, "r");
+		if (!fp) {
+			perror("fopen error : ");
+			return (-1);
+		}
+		printf("count/sec : ");
+		scanf("%d", &cnt);
+		term = 1000000 / cnt;
+
+		while (fgets(sbuf, sizeof(sbuf), fp))
+		{
+			printf("[%7d:%4d:%.140s]\n", tcnt, strlen(sbuf), sbuf);
+if (strstr(sbuf, "270=0.0") != NULL && tcnt>5000)	getchar();
+			if (sendto(c_sock, sbuf, strlen(sbuf), 0, (struct sockaddr *)&multisock, sizeof(multisock)) < 0)
+				break;
+			tcnt++;
+			usleep(term);
+			if (tcnt%cnt == 0)	sleep(2);
+
+			memset(sbuf, 0x00, sizeof(sbuf));
+		}
+
+		printf("================= send done..\n");
+		
+		fclose(fp);
+		close(c_sock);
+	}
+	else if (strcmp(stemp, "svr") == 0)
+	{
+		int		ii, rc, dlen;
+		struct timeval	tmout, tv1, tv2;
+		fd_set	fds;
+
+		memset(rbuf, 0x00, sizeof(rbuf));
+
+		int		rsock, bsize, options = 1;
+		in_addr_t addr;
+		struct	sockaddr_in svrsock, clisock;
+		struct	ip_mreq ip_mreq;
+		socklen_t socklen = sizeof(svrsock);
+
+		printf("port (C:30020,S:30021,K:30022,E:30023,R:30024,Z:30028,B:30029) : ");
+		scanf("%d", &mport);
+		printf("multicast (apreal=227.10.20.10) : ");
+		scanf("%s", mipad);
+
+		memset(&svrsock, 0, sizeof(svrsock));
+		memset(&clisock, 0, sizeof(clisock));	
+
+		if ((rsock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0)
+		{
+			printf("Cannot open a socket for %s.%d\n", mipad, mport);
+			return (-1);
+		}
+
+		options = 1;
+		setsockopt(rsock, SOL_SOCKET, SO_REUSEADDR, &options, sizeof(options));
+		
+		bsize = 80 * 1024;
+		setsockopt(rsock, SOL_SOCKET, SO_RCVBUF, &bsize, sizeof(int));
+
+		svrsock.sin_family = AF_INET;
+		svrsock.sin_addr.s_addr = INADDR_ANY;
+		svrsock.sin_port = htons(mport);
+
+		ip_mreq.imr_multiaddr.s_addr = inet_addr(mipad);
+		ip_mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+		if (setsockopt(rsock, IPPROTO_IP, IP_ADD_MEMBERSHIP, (void *)&ip_mreq, sizeof(ip_mreq)) != 0)
+		{
+			printf("Cannnot add a multicast member for %s.%d\n", mipad, mport);
+			close(rsock);
+			return (-1);
+		}
+
+		if (bind(rsock, (struct sockaddr *)&svrsock, sizeof(svrsock)) != 0)
+		{
+			printf("Cannot bind a socket for %s.%d\n", mipad, mport);
+			close(rsock);
+			return (-1);
+		}
+
+		printf("udp server start..\n");
+		
+		rcnt = 0;
+		while (1)
+		{
+			memset(rbuf, 0x00, sizeof(rbuf));
+
+			tmout.tv_sec  = 0;
+			tmout.tv_usec = 0;
+
+			FD_ZERO(&fds);
+			FD_SET(rsock, &fds);
+
+			rc = select (rsock+1, &fds, NULL, NULL, &tmout);
+			if (rc == 0)	continue;
+			if (rc < 0)		break;
+
+			if (FD_ISSET(rsock, &fds))
+			{
+				dlen = read(rsock, rbuf, sizeof(rbuf));
+				if (dlen > 0)	rcnt++;
+printf("(%d) rcv (%d:%.*s)\n", rcnt, dlen, dlen, rbuf);
+				if (rcnt >= dmax)	break;	
+				if (rcnt == 1)	gettimeofday(&tv1, NULL);
+			}
+		}
+		printf("rbuf=[%s]\n", rbuf);
+/*
+		double tdif;
+		gettimeofday(&tv2, NULL);
+		tdif = (tv2.tv_sec*1000+(tv2.tv_usec/1000))-(tv1.tv_sec*1000+(tv1.tv_usec/1000));	
+		printf("data count : %d [%f sec]\n", rcnt, tdif/1000);
+*/
+		close(rsock);
+	}
+	else	return (-1);
+
+	return (0);
+}
+
+int function5(int ac, char **av)
+{
+/*
+	WGREQ		req, *q;
+	E_MSG		e_msg;
+	char		stemp[128];
+	double		dtemp;
+
+EXEC SQL BEGIN DECLARE SECTION;
+EXEC SQL INCLUDE "ordfld.h";
+	JUM_ORD		JORD;
+	double		d_limit_s_amt;
+	double		d_limit_fa_amt;
+	double		d_limit_fb_amt;
+EXEC SQL END DECLARE SECTION;
+
+	memset(&req,   0x00, sizeof(req));
+	memset(&JORD,  0x00, sizeof(JORD));
+	memset(&e_msg, 0x00, sizeof(e_msg));
+
+	q = (WGREQ *)&req;
+
+	printf("ordr_ymd : ");
+	scanf("%s", stemp);
+	if (strlen(stemp) != sizeof(JORD.s_fx_ordr_ymd)-1)	return (-1);
+	memcpy(JORD.s_fx_ordr_ymd, stemp, sizeof(JORD.s_fx_ordr_ymd)-1);
+	memcpy(JORD.s_group_co_cd, "KB0", 3);
+	
+	printf("lgen_no : ");
+	scanf("%s", stemp);
+	if (strlen(stemp) != sizeof(JORD.s_lgen_no)-1)	return (-2);
+	memcpy(JORD.s_lgen_no, stemp, sizeof(JORD.s_lgen_no)-1);
+
+	printf("symb : ");
+	scanf("%s", stemp);
+	if (strlen(stemp) != sizeof(JORD.s_fx_prdct_cd)-1)	return (-3);
+	memcpy(JORD.s_fx_prdct_cd, stemp, sizeof(JORD.s_fx_prdct_cd)-1);
+	memcpy(JORD.s_ntnl_cncycd, JORD.s_fx_prdct_cd, 3);
+	
+	printf("qty : ");
+	scanf("%s", stemp);
+	if (strlen(stemp) <= 0)	return (-4);
+	JORD.d_ntnl_crncy_amt = atof(stemp);
+
+	printf("1=TD,2=TOM,3=Spot,4=Forward,5=FXSwap,6=바로환전 : ");
+	scanf("%s", stemp);
+	if (strlen(stemp) != sizeof(JORD.s_fx_prdct_dstcd)-1)	return (-5);
+	memcpy(JORD.s_fx_prdct_dstcd, stemp, sizeof(JORD.s_fx_prdct_dstcd)-1);
+
+	printf("1=BUY(S&B), 2=SEL(B&S) : ");
+	scanf("%s", stemp);
+	if (strlen(stemp) != sizeof(JORD.s_fx_prdct_dstcd)-1)	return (-6);
+	memcpy(JORD.s_fx_deal_dstcd, stemp, sizeof(JORD.s_fx_deal_dstcd)-1);
+
+	printf("D=차익API,1=ECM,2=ECM_WEB,4=기업뱅킹 : ");
+	scanf("%s", stemp);
+	if (strlen(stemp) != sizeof(JORD.s_chnl_dstcd)-1)	return (-7);
+	memcpy(JORD.s_chnl_dstcd, stemp, sizeof(JORD.s_chnl_dstcd)-1);
+
+//JORD.s_fr_prdct_dstcd
+//JORD.s_fr_deal_dstcd
+//JORD.s_bk_no
+
+	printf("call f_trade_amt ............");
+//===================
+	q->reqtp[0] = REQTP_RFS;
+
+	if ( f_trade_amt(&JORD, &e_msg) != 0)
+	{
+		printf("emsg=[%s:%s]\n", e_msg.code, e_msg.mesg);
+		return (ERR_SYSTEM*(-1));
+	}
+
+	// 차익 API 주문은 한도금액을 별도 관리 API 2023.11
+	if (q->reqtp[0] == REQTP_ABT || q->reqtp[0] == REQTP_API)
+	{
+	EXEC SQL
+		SELECT	SPEX_API_TRAN_SCHAMT
+		  INTO	:JORD.d_spex_tran_schamt  -- 현물환거래예정금액
+		  FROM	INST1.TSKEILM11 -- 거래참여자 CMBS한도내역
+		 WHERE	GROUP_CO_CD = :JORD.s_group_co_cd
+		   AND	LGEN_NO     = :JORD.s_lgen_no
+		WITH UR;
+
+		if (SQLCODE != SQL_SUCCESS)
+		{
+			if (SQLCODE == NO_DATA_FOUND)
+			{
+				printf("no order limit data for [%s]\n", JORD.s_fx_prdct_cd);
+				return (ERR_USR_INFO*(-1));
+			}
+			printf("(%s:%d) select error [%d:%s]\n", __func__, __LINE__, SQLCODE, SQLERRM);
+			return (ERR_SYSTEM*(-1));
+		}
+	}
+	else
+	{
+	EXEC SQL
+		SELECT A1.SPEX_TRAN_SCHAMT
+			 , A1.FWRD_BUY_SCHAMT
+			 , A1.FWRD_SELL_SCHAMT
+			 , A1.FWRD_BUY_ANTICI_EXPIR_NOMN
+			 , DECODE(B1.HOLDY_DSTCD, NULL, A1.BUY_LAST_YMD , B1.NXBIZ_YMD)
+			 , A1.FWRD_SELL_ANTICI_EXPIR_NOMN
+			 , DECODE(C1.HOLDY_DSTCD, NULL, A1.SELL_LAST_YMD, C1.NXBIZ_YMD)
+		  INTO :JORD.d_spex_tran_schamt           
+			 , :JORD.d_fwrd_buy_schamt            
+			 , :JORD.d_fwrd_sell_schamt           
+			 , :JORD.l_fwrd_buy_antici_expir_nomn 
+			 , :JORD.s_buy_last_ymd 
+			 , :JORD.l_fwrd_sell_antici_expir_nomn
+			 , :JORD.s_sell_last_ymd 
+		  FROM (
+				SELECT A.GROUP_CO_CD                        AS GROUP_CO_CD                  -- 그룹회사코드
+					 , A.SPEX_TRAN_SCHAMT                   AS SPEX_TRAN_SCHAMT             -- 현물환거래예정금액(한도금액)
+					 , A.FWRD_BUY_SCHAMT                    AS FWRD_BUY_SCHAMT              -- 선물환매입예정금액(매입한도)
+					 , A.FWRD_SELL_SCHAMT                   AS FWRD_SELL_SCHAMT             -- 선물환매도예정금액(매도한도)
+					 , A.FWRD_BUY_ANTICI_EXPIR_NOMN         AS FWRD_BUY_ANTICI_EXPIR_NOMN   -- 선물환매입예상만기월수
+					 , TO_CHAR(TO_DATE(:JORD.s_sp_pyacc_ymd, 'YYYYMMDD') + A.FWRD_BUY_ANTICI_EXPIR_NOMN MONTH, 'YYYYMMDD')
+															   AS BUY_LAST_YMD
+					 , A.FWRD_SELL_ANTICI_EXPIR_NOMN        AS FWRD_SELL_ANTICI_EXPIR_NOMN  -- 선물환매도예상만기월수
+					 , TO_CHAR(TO_DATE(:JORD.s_sp_pyacc_ymd, 'YYYYMMDD') + A.FWRD_SELL_ANTICI_EXPIR_NOMN MONTH, 'YYYYMMDD')
+															   AS SELL_LAST_YMD
+				  FROM INST1.TSKEILM11 A -- 한도내역
+				 WHERE A.GROUP_CO_CD = :JORD.s_group_co_cd
+				   AND A.LGEN_NO     = :JORD.s_lgen_no
+				   AND A.BASE_YMD    = :JORD.s_fx_ordr_ymd
+			   ) A1
+			 , INST1.TSKEIAM95 B1 -- 영업일정보(BUY) 
+			 , INST1.TSKEIAM95 C1 -- 영업일정보(SELL)
+		 WHERE A1.GROUP_CO_CD   = B1.GROUP_CO_CD(+)
+		   AND '00'             = B1.CLND_DSTCD (+)
+		   AND A1.BUY_LAST_YMD  = B1.BASE_YMD   (+)
+		   AND A1.GROUP_CO_CD   = C1.GROUP_CO_CD(+)
+		   AND '00'             = C1.CLND_DSTCD (+)
+		   AND A1.SELL_LAST_YMD = C1.BASE_YMD   (+)
+	
+		;
+	}
+
+	d_limit_s_amt  = 0.0;
+	d_limit_fa_amt = 0.0;
+	d_limit_fb_amt = 0.0;
+
+	EXEC SQL
+	SELECT CAST(ROUND(:JORD.d_ote_usd_bid_amt + :JORD.d_ote_usd_bid_namt + :JORD.d_ote_usd_ask_amt + :JORD.d_ote_usd_ask_namt, 2) AS DECIMAL(20, 2))
+		 , CAST(ROUND(:JORD.d_fwd_usd_bid_amt + :JORD.d_fwd_usd_bid_namt, 2) AS DECIMAL(20,2))
+		 , CAST(ROUND(:JORD.d_fwd_usd_ask_amt + :JORD.d_fwd_usd_ask_namt, 2) AS DECIMAL(20,2))
+	  INTO :d_limit_s_amt
+		 , :d_limit_fb_amt
+		 , :d_limit_fa_amt
+	  FROM SYSIBM.DUAL
+	;
+
+	if (SQLCODE != SQL_SUCCESS)
+	{
+		printf("select error 2 [%d:%s]\n", SQLCODE, SQLERRM);
+		return (-1);
+	}
+	printf("\n==========================================");
+	printf("현물환    한도금액(달러) = [%lf] \n", JORD.d_spex_tran_schamt);
+	printf("선물환매수한도금액(달러) = [%lf] \n", JORD.d_fwrd_buy_schamt );
+	printf("선물환매도한도금액(달러) = [%lf] \n", JORD.d_fwrd_sell_schamt);
+	printf("선물환매수가능최종일자   = [%s]  \n", JORD.s_buy_last_ymd    );
+	printf("선물환매도가능최종일자   = [%s]  \n", JORD.s_sell_last_ymd   );
+
+	printf("현물환    매매금액(달러) = [%.10f] \n", d_limit_s_amt );
+	printf("선물환매수매매금액(달러) = [%.10f] \n", d_limit_fb_amt);
+	printf("선물환매도매매금액(달러) = [%.10f] \n", d_limit_fa_amt);
+
+	//---------------------------------------------------------------------
+	// 3.E.2 한도금액을 체크한다.
+	//---------------------------------------------------------------------
+	// SWAP은 FAR만 체크하기로 함. : 2023.03.07 BY P.B.Y
+	//---------------------------------------------------------------------
+	if (JORD.s_fx_prdct_dstcd[0] == ECM_PRDCT_DSTCD_SWAP)
+	{
+		// ------------------------------------------------------
+		// FAR 체크
+		// ------------------------------------------------------
+		if (JORD.s_fr_prdct_dstcd[0] == ECM_PRDCT_DSTCD_TOD ||
+			JORD.s_fr_prdct_dstcd[0] == ECM_PRDCT_DSTCD_TOM ||
+			JORD.s_fr_prdct_dstcd[0] == ECM_PRDCT_DSTCD_SP  )
+		{
+			// TOD, TOM, SP인 경우
+			if (d_limit_s_amt > JORD.d_spex_tran_schamt)
+			{
+				printf("1 [%4d] 총액 > 한도금액 = [%.10f]>[%.10f]\n", __LINE__, d_limit_s_amt, JORD.d_spex_tran_schamt);
+				return (RET_FAILURE);
+			}
+		}
+		else
+		{
+			// FWD 인 경우
+			if (JORD.s_fr_deal_dstcd[0] == ECM_DEAL_DSTCD_BUY)
+			{
+				if (d_limit_fb_amt > JORD.d_fwrd_buy_schamt)
+				{
+					printf("2 [%4d] 매수금액 > 매수한도금액 = [%.10f]>[%.10f]\n", __LINE__, d_limit_fb_amt, JORD.d_fwrd_buy_schamt);
+					return (RET_FAILURE);
+				}
+			}
+			else
+			{
+				if (d_limit_fa_amt > JORD.d_fwrd_sell_schamt)
+				{
+					printf("3 [%4d] 매도금액 > 매도한도금액 = [%.10f]>[%.10f]\n", __LINE__, d_limit_fa_amt, JORD.d_fwrd_sell_schamt);
+					return (RET_FAILURE);
+				}
+			}
+		}
+	}
+	else
+	{
+		if (JORD.s_fx_prdct_dstcd[0] == ECM_PRDCT_DSTCD_TOD ||
+			JORD.s_fx_prdct_dstcd[0] == ECM_PRDCT_DSTCD_TOM ||
+			JORD.s_fx_prdct_dstcd[0] == ECM_PRDCT_DSTCD_SP  ||
+			JORD.s_fx_prdct_dstcd[0] == ECM_PRDCT_DSTCD_MAR )
+		{
+			// TOD, TOM, SPOT, MAR인경우
+			if (d_limit_s_amt > JORD.d_spex_tran_schamt)
+			{
+				printf("4 [%4d] 총액 > 한도금액 = [%.10f]>[%.10f]\n", __LINE__, d_limit_s_amt, JORD.d_spex_tran_schamt);
+				return (RET_FAILURE);
+			}
+		}
+		else
+		{
+			// FWD                인경우 
+			if (JORD.s_fx_deal_dstcd[0] == ECM_DEAL_DSTCD_BUY)
+			{
+				if (d_limit_fb_amt > JORD.d_fwrd_buy_schamt)
+				{
+					printf("5 [%4d] 매수금액 > 매수한도금액 = [%.10f]>[%.10f]\n", __LINE__, d_limit_fb_amt, JORD.d_fwrd_buy_schamt);
+					return (RET_FAILURE);
+				}
+			}
+			else
+			{
+				if (d_limit_fa_amt > JORD.d_fwrd_sell_schamt)
+				{
+					printf("6 [%4d] 매도금액 > 매도한도금액 = [%.10f]>[%.10f]\n", __LINE__, d_limit_fa_amt, JORD.d_fwrd_sell_schamt);
+					return (RET_FAILURE);
+				}
+			}
+		}
+	}
+	
+	printf("\n한도체크 OK..\n");
+*/
+	return (0);
+}
+
+int function6(int ac, char **av)
+{
+	E_MSG		e_msg;
+	MRKFEE_ST	mrgn;
+	char		stemp[128];
+
+	memset(&mrgn,  0x00, sizeof(mrgn));
+	memset(&e_msg, 0x00, sizeof(e_msg));
+/*
+typedef struct {
+    char      s_proc_gb          [  1+1];  // [INPUT] 고객구분('1'-고객, '2'-직원)
+    char      s_base_ymd         [  8+1];  // 기준일자
+    char      s_lgen_no          [ 10+1];  // [INPUT] 고객구분에 따라 시장참여자번호(10) OR 트레이더번호(4)
+    char      s_fx_prdct_dstcd   [  1+1];  // [INPUT] FX상품구분드(FX상품구분코드 : '1'-TOD', '2'-'TOM', '3'-'SP(현물환)', '4'-'FWD', '5'-'SW', '6'-'바로현물환', '7'-NDF, '8'-MAR)
+                                           // '3', '6', '8' --> SPOT 마크업, 마진. 필요..
+                                           // '3', '6', '8' 제외하면 --> SPOT, SWAP 마크업, 마진필요.
+    char      s_fx_prdct_cd      [  6+1];  // [INPUT] FX상품코드
+    char      s_pyacc_ymd_gb     [  1+1];  // [INPUT] 만기년월일구분('1'-고객, '2'-직원)
+    char      s_fx_pyacc_ymd     [  8+1];  // [INPUT] FX만기년월일
+    char      s_fx_deal_dstcd    [  1+1];  // [INPUT] FX매매구분코드('1'-매수(Sell&Buy), '2'-매도(Buy&Sell))
+    char      s_mrkoper_dstcd    [  1+1];  // [INPUT] 장운영구분코드('1'-SMBS마감전, '2'-SMBS마감후)
+    char      s_mrkup_group_id   [  3+1];  // [OUTPUT]마크어그룹ID
+    double    d_spot_mrkup              ;  // [OUTPUT]마크업
+    double    d_spot_mrgn               ;  // [OUTPUT]마진(수수료)
+    double    d_swap_mrkup              ;  // [OUTPUT]마크업
+    double    d_swap_mrgn               ;  // [OUTPUT]마진(수수료)
+} MRKFEE_ST;
+*/
+	printf("base_ymd : ");
+	scanf("%s", stemp);
+	if (strlen(stemp) != sizeof(mrgn.s_base_ymd)-1)	return (-1);
+	memcpy(mrgn.s_base_ymd, stemp, sizeof(mrgn.s_base_ymd)-1);
+
+	printf("lgen_no : ");
+	scanf("%s", stemp);
+	if (strlen(stemp) != sizeof(mrgn.s_lgen_no)-1)	return (-2);
+	memcpy(mrgn.s_lgen_no, stemp, sizeof(mrgn.s_lgen_no)-1);
+
+	printf("1=TD,2=TOM,3=Spot,4=Forward,5=FXSwap,6=바로환전 : ");
+	scanf("%s", stemp);
+	if (strlen(stemp) != sizeof(mrgn.s_fx_prdct_dstcd)-1)	return (-5);
+	memcpy(mrgn.s_fx_prdct_dstcd, stemp, sizeof(mrgn.s_fx_prdct_dstcd)-1);
+
+	printf("symb : ");
+	scanf("%s", stemp);
+	if (strlen(stemp) != sizeof(mrgn.s_fx_prdct_cd)-1)	return (-3);
+	memcpy(mrgn.s_fx_prdct_cd, stemp, sizeof(mrgn.s_fx_prdct_cd)-1);
+
+	printf("exp_ymd : ");
+	scanf("%s", stemp);
+	if (strlen(stemp) != sizeof(mrgn.s_fx_pyacc_ymd)-1)	return (-1);
+	memcpy(mrgn.s_fx_pyacc_ymd, stemp, sizeof(mrgn.s_fx_pyacc_ymd)-1);
+	
+	printf("1=BUY(S&B), 2=SEL(B&S) : ");
+	scanf("%s", stemp);
+	if (strlen(stemp) != sizeof(mrgn.s_fx_prdct_dstcd)-1)	return (-6);
+	memcpy(mrgn.s_fx_deal_dstcd, stemp, sizeof(mrgn.s_fx_deal_dstcd)-1);
+////////////////////	
+	mrgn.s_mrkoper_dstcd[0] = '3';	// [INPUT] 장운영구분코드('1'-SMBS마감전, '2'-SMBS마감후, '3'-자동)
+	mrgn.s_pyacc_ymd_gb[0]	= '1';			// [INPUT] 만기년월일구분('1'-고객, '2'-직원)
+	mrgn.s_proc_gb[0]		= '1';			// [INPUT] 고객구분('1'-고객, '2'-직원)
+
+	printf("call f_get_mrkup_fee ........");
+	//int f_get_mrkup_fee(MRKFEE_ST *mrkfee_st, E_MSG *e_msg)
+//	if (f_get_mrkup_fee(&mrgn, &e_msg) < 0)
+	{
+		printf("f_get_mrkup_fee error (%s:%s)\n", e_msg.code, e_msg.mesg);
+		return (-1);
+	}
+
+	printf("s_mrkup_group_id =[%f]\n", mrgn.s_mrkup_group_id);  // [OUTPUT]마크업그룹ID
+	printf("d_spot_mrkup     =[%f]\n", mrgn.d_spot_mrkup    );  // [OUTPUT]마크업
+	printf("d_spot_mrgn      =[%f]\n", mrgn.d_spot_mrgn     );  // [OUTPUT]마진(수수료)
+	printf("d_swap_mrkup     =[%f]\n", mrgn.d_swap_mrkup    );  // [OUTPUT]마크업
+	printf("d_swap_mrgn      =[%f]\n", mrgn.d_swap_mrgn     );  // [OUTPUT]마진(수수료)
+
+	return (0);
+}
+
+int function7(int ac, char **av)
+{
+	int		rc;
+	char	symb[6+1], stemp[36];
+	char	rejmsg[128];
+
+	memset(symb, 0x00, sizeof(symb));
+	memset(rejmsg, 0x00, sizeof(rejmsg));
+
+	printf("symb : ");
+	scanf("%s", stemp);
+	if (strlen(stemp) != 6)		return (-1);
+	memcpy(symb, stemp, 6);
+
+	rc = mds_updt_custfeed("CUST", symb, rejmsg);
+
+	printf("rc=[%d] msg=[%s]\n", rc, rejmsg);
+
+	return (0);
+}
+
+int function8(int ac, char **av)
+{
+	int			ii, rc, rwno[2];
+	AG_DQUE		dque;
+
+//dque.hdr.wno
+//dque.ano[AQ_REC_PIO];
+//dque.hdr.rno[AQ_REC_PIO];		//16
+
+	memset(&dque,  0x00, sizeof(dque));
+
+	AG_DQUECLS(&dque);
+
+//dque.hdr.wno
+//dque.ano[AQ_REC_PIO];
+//dque.hdr.rno[AQ_REC_PIO];		//16
+
+	//int agdque_at_io (Ag_Dque dque)
+	//int agdque_rinfo (char *dpath, char *ddir, char *dfnam, Adq_Hdr dqhdr)
+	//int agdque_gcnt (Ag_Dque dque, char *dpath, char *ddir, char *dfnam, int semk, int aid, char amod)
+	//int agdque_at (Ag_Dque dque, char *dpath, char *ddir, char *dfnam, int semk, int rsiz)
+	//rc = agdque_at (&dque, WG_DAT_DIR, NULL, DQ_RCVRQ, SEM_RCVRQ, sizeof(rbuf));
+	printf("dqname with full path : ");
+	scanf("%s", dque.dfnm);
+
+	rc = agdque_at_io(&dque);
+	//rc = agdque_at (&dque, "/fsfxwin/wfa/dat", NULL, "WGRCVRQ", 0, 0);
+	//rc = agdque_at (&dque, "/fsfxwin/wfa", "dat", "YARIQ", 0, 0);
+	if (rc < 0)
+	{
+		printf("(%s) queue in agdque_at error (%d)\n ", __func__, rc);
+		return (0);
+	}
+	printf("dfnm=[%s] dsnm=[%s]\n", dque.dfnm, dque.dsnm);
+	//printf("rsz=[%d], semk=[0x%0x]\n", dque.rsz, dque.semk);
+
+struct tm *ct, *ut;
+
+ct = localtime(&dque.hdr.ctime.now.tv_sec);
+ut = localtime(&dque.hdr.utime.now.tv_sec);
+
+	printf("create [%02d%02d%02d %02d:%02d:%02d] update [%02d%02d%02d %02d:%02d:%02d]\n", 
+		ct->tm_year+1900, ct->tm_mon+1, ct->tm_mday, ct->tm_hour, ct->tm_min, ct->tm_sec,
+		ut->tm_year+1900, ut->tm_mon+1, ut->tm_mday, ut->tm_hour, ut->tm_min, ut->tm_sec);
+
+	printf("wno=[%d] \n", dque.hdr.wno);
+	
+	for (ii=0; ii<16; ii++)
+	{
+		if (dque.hdr.rno[ii] > 0)
+			printf("(%d:%d) ", ii, dque.hdr.rno[ii]);
+	}
+
+	printf("\n");
+
+#if 0		// DQ read count 조정
+	rc = agdque_at (&dque, WG_DAT_DIR, NULL, DQ_RCVRQ, SEM_RCVRQ, sizeof(rbuf));
+	if (rc < 0)	{
+		printf("\n agdque_at error.. [%d]\n", rc);
+		exit(0);
+	}
+	
+	memset(&rwno, 0x00, sizeof(rwno));
+	
+	printf("set aid[%d] read no [%d -> %d]\n", idx, dque.hdr.rno[idx], dque.hdr.wno);
+	rwno[0] = dque.hdr.wno;
+	rc = agdque_rwi_io (&dque, idx, &rwno); 
+	if (rc < 0)	{
+		printf("\n agdque_rwi_io error.. [%d]\n", rc);
+		exit(0);
+	}
+#endif
+
+	return; 
+}
+
+int function9(int ac, char **av)
+{
+	int			v_snln = 0, v_rcvl = 0;
+	char		v_sndb[1024*4] = {0};
+	char		*v_rcvb = NULL;
+	MyMQ		*mymq;
+	COMHDR		*comhdr_i, *comhdr_o;
+	W6109A04_I	*trin;
+	W6109A04_O	*trout;
+
+	memset(v_sndb, 0x00, sizeof(v_sndb));
+	comhdr_i = (COMHDR *)&v_sndb[0];
+
+	// 공통헤더 세팅
+	zsedit(comhdr_i->trxc, "W6109A04" );
+	zsedit(comhdr_i->loip, "127.0.0.1");  //16 로컬 IP      
+	zsedit(comhdr_i->auip, "127.0.0.1");  //16 공인 IP      
+	zsedit(comhdr_i->maca, "127.0.0.1");  //20 하드웨어 MACW3202E01
+	zsedit(comhdr_i->ctyp, "A" ); // 접속매체구분:기업API
+	zsedit(comhdr_i->usid, "system");
+//	GetDateTime(comhdr_i->lgtm);
+
+	// TR INPUT 세팅
+	trin = (W6109A04_I *)&v_sndb[COMHDR_LEN];
+
+	char	stemp[32];
+	
+	printf("lgenNo(0000104041) : ");	scanf("%s", stemp);		if (strlen(stemp) != 10)	return (-1);
+	strcpy(trin->LgenNo, stemp);					// 거래참여자번호 0000101507(RFQ), 0000104041(RFS)
+	printf("SPT=3,FWD=4,SWP=5 : ");	scanf("%s", stemp);		if (strlen(stemp) != 1)	return (-2);
+	trin->PrdctClsfi[0] = stemp[0];					// 상품구분 : TD=1, TOM=2, 현물환=3, 선물환=4, 스왑=5, 바로환전=6, NDF=7, MAR=8  
+	printf("symb : ");		scanf("%s", stemp);		if (strlen(stemp) != 6)		return (-1);
+	memcpy(trin->PrdctCd, stemp, 6);				// 상품코드  
+	printf("side(0/1/2) : ");	scanf("%s", stemp);		if (strlen(stemp) != 1)		return (-3);
+	trin->DealDstic[0] = stemp[0];					// 매매구분 0:양방향 1:buy 2:sell
+	printf("expdate : ");	scanf("%s", stemp);		if (strlen(stemp) != 8)		return (-4);
+	memcpy(trin->NearExpireDate, stemp, 8);			// Near만기일
+if (trin->PrdctClsfi[0] == '5') {
+	printf("far date : ");	scanf("%s", stemp);		if (strlen(stemp) != 8)		return (-5);
+	memcpy(trin->FarExpireDate,  stemp, 8);			// Far만기일 
+}
+	memcpy(trin->BaseCncycd, trin->PrdctCd, 3);		// 기준통화코드
+	printf("qty : ");	scanf("%s", stemp);		if (strlen(stemp) <= 0)		return (-6);
+	strcpy(trin->BaseCrncyAmt, stemp);			// 기준통화금액  
+//	trin->Winkey              ;						// 요청자 WindowKey
+
+	//int mymq_call(MyMQ *mymq, const char *host, const char *xchg, const char *rkey, const char *sndb, int sndl, char **rcvb, int timeout)
+	v_rcvl = mymq_call(mymq, NULL, "dom", "W6109A04", v_sndb, sizeof(COMHDR) + sizeof(W6109A04_I), &v_rcvb, 5);
+
+	comhdr_o = (COMHDR *)v_rcvb;
+	trout    = (W6109A04_O *)(v_rcvb+COMHDR_LEN);
+
+	printf("COMHDR return [%d:%.1s:%.5s:%s]\n", v_rcvl, comhdr_o->rtyp, comhdr_o->rcod, comhdr_o->eflg);
+	printf("----------------------------------------------------------\n");
+if (comhdr_o->eflg[0] == '0') {
+	printf("TranPtrncd      =[%.*s]\n", sizeof(trout->TranPtrncd      ), trout->TranPtrncd          );  // 거래유형코드 1:RFS 2:RFQ 
+	printf("RFSKey          =[%.*s]\n", sizeof(trout->RFSKey          ), trout->RFSKey              );  // RFS키
+	printf("UpdatCycl       =[%.*s]\n", sizeof(trout->UpdatCycl       ), trout->UpdatCycl           );  // 갱신주기(초)
+	// SPOT 마크업은 Near, Far에서 공통으로 사용됨.
+	// FWD/FWD 스왑인 경우에도. Near는 SPOT 가격으로 계산됨.
+	printf("bid_mrkup       =[%.*s]\n", sizeof(trout->bid_mrkup       ), trout->bid_mrkup           );  // SPOT BID마크업
+	printf("ask_mrkup       =[%.*s]\n", sizeof(trout->ask_mrkup       ), trout->ask_mrkup           );  // SPOT ASK마크업
+	printf("bid_prc         =[%.*s]\n", sizeof(trout->bid_prc         ), trout->bid_prc             );  // SPOT BID가격 
+	printf("ask_prc         =[%.*s]\n", sizeof(trout->ask_prc         ), trout->ask_prc             );  // SPOT ASK가격 
+	printf("bid_swapmrkup   =[%.*s]\n", sizeof(trout->bid_swapmrkup   ), trout->bid_swapmrkup       );  // SWAP BID마크업
+	printf("ask_swapmrkup   =[%.*s]\n", sizeof(trout->ask_swapmrkup   ), trout->ask_swapmrkup       );  // SWAP ASK마크업
+	printf("bid_swapprc     =[%.*s]\n", sizeof(trout->bid_swapprc     ), trout->bid_swapprc         );  // SWAP BID가격 
+	printf("ask_swapprc     =[%.*s]\n", sizeof(trout->ask_swapprc     ), trout->ask_swapprc         );  // SWAP ASK가격 
+	printf("KRWbid_mrkup    =[%.*s]\n", sizeof(trout->KRWbid_mrkup    ), trout->KRWbid_mrkup        );  // SPOT BID마크업
+	printf("KRWask_mrkup    =[%.*s]\n", sizeof(trout->KRWask_mrkup    ), trout->KRWask_mrkup        );  // SPOT ASK마크업
+	printf("KRWbid_prc      =[%.*s]\n", sizeof(trout->KRWbid_prc      ), trout->KRWbid_prc          );  // SPOT BID가격 
+	printf("KRWask_prc      =[%.*s]\n", sizeof(trout->KRWask_prc      ), trout->KRWask_prc          );  // SPOT ASK가격
+	printf("KRWbid_swapmrkup=[%.*s]\n", sizeof(trout->KRWbid_swapmrkup), trout->KRWbid_swapmrkup    );  // SWAP BID마크업
+	printf("KRWask_swapmrkup=[%.*s]\n", sizeof(trout->KRWask_swapmrkup), trout->KRWask_swapmrkup    );  // SWAP ASK마크업
+	printf("KRWbid_swapprc  =[%.*s]\n", sizeof(trout->KRWbid_swapprc  ), trout->KRWbid_swapprc      );  // SWAP BID가격
+	printf("KRWask_swapprc  =[%.*s]\n", sizeof(trout->KRWask_swapprc  ), trout->KRWask_swapprc      );  // SWAP ASK가격
+	printf("mrgn_prc        =[%.*s]\n", sizeof(trout->mrgn_prc        ), trout->mrgn_prc            );  // 마진가격
+} else
+	printf("tr call error return \n\n");  // 에러리턴
+
+	free(v_rcvb);
+
+	return (0);	
+}
+
+int function10(int ac, char **av)
+{
+/*
+	struct _rfq {	// W6109A02 서비스에 선언된 broadcast 용 구조체
+		char	RspnsCd[ 1];	//응답코드(1:제시, 2:거부)
+		char	Winkey [20];	//WindowKey
+		char	RFQKey [15];	//RFQ키
+		char	BidPrc [20];	//BID최종가격
+		char	AskPrc [20];	//ASK최종가격
+		char	NearPrc[20];	//NEAR가격 
+		char	FarPrc [20];	//FAR가격
+	} ps;
+	
+	int		ii, shmid, scnt=0, ucnt=1;
+	double	sbid, sask;
+	char	rejmsg[128];
+	WGMST	*wgmst;
+	WGREQ	*wgreq, *p;
+	
+//	if (ac > 1)		ucnt = atoi(av[1]);
+	
+	shmid = shmget(WG_SHMKEY, 0, 0);
+	if (shmid < 0)
+	{
+		printf("(%s) create shared memory error (%d/%s)\n", __func__, errno, strerror(errno));
+		return (-1);
+	}
+	
+	wgmst = (WGMST *)shmat(shmid, NULL, 0);
+	if (wgmst == NULL)
+	{
+		printf("(%s) shared memory attach error (%d/%s)\n", __func__, errno, strerror(errno));
+		return (-2);
+	}
+	wgreq = (WGREQ *)((char *)wgmst + sizeof(WGMST));
+
+	p = (WGREQ *)wgreq;
+
+	printf("bid : ");
+	scanf("%f", &sbid);
+	printf("ask : ");
+	scanf("%f", &sask);
+
+	for (ii=0; ii < MX_WGREQ; ii++, p++)
+	{
+		memset(rejmsg, 0x00, sizeof(rejmsg));
+		memset(&ps,    0x00, sizeof(ps));
+
+		if (p->useyn == DF_OFF)		break;
+		if (p->reqtp[0] != REQTP_RFQ)	continue;
+		if (memcmp(p->symb, "USDKRW", 6) != 0)	continue;
+
+		ps.RspnsCd[0] = '1';
+		memcpy(ps.RFQKey, p->rfs.rfskey, sizeof(p->rfs.rfskey));
+	
+		sprintf(ps.BidPrc, "%f", sbid); //p->zCustdiv, p->quot[0].bid/pow(10, p->zCustdiv));
+		sprintf(ps.AskPrc, "%f", sask); //p->zCustdiv, p->quot[0].ask/pow(10, p->zCustdiv));
+	
+		if (mds_send_rfq((char *)&ps, sizeof(ps), rejmsg) <= 0)
+			break;
+
+		scnt++;
+//		if (ucnt <= ++scnt)		break;
+	}
+
+	printf("send done..[%d] [%s]\n", scnt, rejmsg);
+
+	shmdt(wgmst);
+*/	
+	return (0);
+}
+
+static int f11(int *msgid, int idx, char *sbuf, int dlen)
+{
+	int		ret;
+	struct message	msg;
+	
+	memset(&msg, 0x00, sizeof(msg));
+
+	msg.mtype = idx;
+	memcpy(msg.mtext, sbuf, dlen);
+
+	while(1)
+	{
+		ret = msgsnd(14, &msg, dlen, IPC_NOWAIT);
+		printf("ret=(%d)\n", ret);
+		if(ret < 0)
+		{
+			if(errno == EINTR)
+				continue;
+
+			if(errno == EAGAIN)
+				return 0;
+
+			*msgid = (-1);
+			printf("(%s) msgsnd error (%d:%s)\n", __func__, errno, strerror(errno));
+		}
+		break;
+	}
+
+	return (ret);
+}
+
+int func11(char *mcod, char *msg)
+{
+	int		slen=-1, key;
+	char	sbuf[1024];
+	static	__thread int qid=(-1);
+
+	if((key = l_token(ECM_SMSSENDQUE, 'Q')) < 0) {		// /fsfxwin/wfg/inc/glb/gcomdef.h
+		printf("l_token error..(%d:%s) \n", errno, strerror(errno));
+		return (-1);
+	}
+
+	if ((qid = msgget(key, 0666)) < 0) {
+		printf("msgget error..(%d:%s) \n", errno, strerror(errno));
+		return (-1);
+	}
+
+	memset(sbuf, 0x00, sizeof(sbuf));
+
+	// HEADER = 고객구분[1] + 알림메세지코드[5] + 거래ID[10] + 수신고객ID[10] + 발송직원번호[10] + 북번호[11]
+	// 헤더 중 고객구분(C:고객,E:직원) 과 메시지코드(E0200) 만 세팅하고, 메시지 내용을 뒤로 붙임.
+	// 세팅된 문구 중 '@'에 대체될 문자열과 대체열구분자'|'를 붙여서 전송함
+	sprintf(sbuf, "E%-5.5s                                         %s|", mcod, msg);
+	if (f11(&qid, 100L, sbuf, strlen(sbuf)) < 0)
+		printf("msgsnd error..(%d:%s) \n", errno, strerror(errno));
+
+	return (0);
+}
+
+int function11(int ac, char **av)
+{
+	int		rc;
+	char	sndmsg[256];
+	
+	memset(sndmsg, 0x00, sizeof(sndmsg));
+
+	printf("send msg : ");
+	scanf("%s", sndmsg);
+	
+	if (func11("E0200", sndmsg) < 0)
+		printf("send error..\n");
+
+	return (0);
+}
+
+static size_t func12( char *ptr, size_t size, size_t nmemb, void *response)
+{
+	size_t	count = size * nmemb;
+	if (response != NULL && count > 0)
+		strncat(response, ptr, count);
+
+	return count;
+}
+
+int function12(int ac, char **av)
+{
+/*
+	char	stoken[256];
+	char	stitle[128];
+	char	sbody[1024];
+
+	memset(stoken, 0x00, sizeof(stoken));
+	memset(stitle, 0x00, sizeof(stitle));
+	memset(sbody,  0x00, sizeof(sbody));
+
+	printf("enter token : ");
+	fgets(stoken, sizeof(stoken), stdin);
+	printf("enter title : ");
+	fgets(stitle, sizeof(stitle), stdin);
+	printf("enter body : ");
+	fgets(sbody, sizeof(sbody), stdin);
+
+	stoken[strlen(stoken)-1] = 0x00;
+	stitle[strlen(stitle)-1] = 0x00;
+	sbody[strlen(sbody)-1]   = 0x00;
+
+	// curl 초기화
+	curl_global_init(CURL_GLOBAL_DEFAULT);
+	
+	CURL *curl = curl_easy_init();
+	if (curl == NULL)	return (-1);
+
+	// rest api 주소 세팅
+	static const char *url="http://10.180.111.81:8090/firebase/api/firebase/push";
+//	static const char *url="https://zfxt.kbstar.com/firebase/api/firebase/push";
+	curl_easy_setopt(curl, CURLOPT_URL, url);
+
+	// SET POST DATA with cJSON
+	cJSON *fmt = cJSON_CreateObject();
+	cJSON_AddStringToObject(fmt, "token", stoken);
+	cJSON_AddStringToObject(fmt, "title", stitle);
+	cJSON_AddStringToObject(fmt, "body",  sbody );
+	char *jsonStr = cJSON_Print(fmt);
+    //curl_easy_setopt(curl, CURLOPT_POST, 1L);
+	curl_easy_setopt(curl, CURLOPT_POSTFIELDS, jsonStr);
+	cJSON_Delete(fmt);
+printf("SEND=[%s]\n", jsonStr);
+
+	// response 응답 콜백 등록
+	char	response[1024];
+	memset(response, 0x00, sizeof(response));
+	curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 1L);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, func12);		// 수신한 응답데이터 저장함수 선언
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, response);		// 응답데이터 저장포인터 선언
+
+	// http request 헤더
+	struct curl_slist *slist;
+
+	slist = curl_slist_append(slist, "Accept: application/json");
+	slist = curl_slist_append(slist, "Content-Type: application/json; charset=EUR-KR");
+//	slist = curl_slist_append(slist, "charset: utf-8");
+	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, slist);
+
+	// http GET send
+	CURLcode err_code = curl_easy_perform(curl);
+	if (err_code != CURLE_OK) {
+		printf("http GET send error : %s\n", curl_easy_strerror(err_code));
+		printf("http GET send error : %s\n", response);
+		return (-2);
+	}
+	// receive response data
+	size_t	response_code;
+	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+	printf("response code : %s(%d)\n", response, response_code);
+	
+	// release resource
+	curl_slist_free_all(slist);
+	curl_easy_cleanup(curl);
+	curl_global_cleanup();
+
+	printf(">>>>>>>>> %s end\n", __func__);
+*/	
+	return (0);
+}
+
+// ############  int function13(int ac, char **av)
+static void signal_block(sigset_t *sigsave) {
+    sigset_t sig;
+    sigfillset(&sig);
+    sigdelset(&sig, SIGINT);
+    sigprocmask(SIG_BLOCK, &sig, sigsave);
+}
+
+static void signal_unblock(sigset_t *sigsave) {
+    sigprocmask(SIG_SETMASK, sigsave, NULL);
+}
+
+#define		RWLOCK
+struct _y {
+	pthread_mutex_t		mt;
+	pthread_rwlock_t	rw;
+	pthread_spinlock_t	sp;
+	sem_t				sm;
+
+	int		count;
+} y;
+
+int	LOOPCNT = 200;
+
+void *proc_read(void *argv)
+{
+	int 		i, ltype;
+	pthread_t	tid, lwp;
+	struct timeval	tv;
+	sigset_t sigset;		// 기존 시그널 저장
+
+	tid = syscall(SYS_gettid);	//pthread_self();
+	ltype = *((int *)argv);
+
+	int	rsleep=0;
+	
+	rsleep = (rand()%1000) + 1;
+	printf(">> [%d] %s.. usleep set=%d\n", tid, __func__, rsleep);
+	while (y.count < LOOPCNT) {
+		gettimeofday(&tv, NULL);
+		printf(">> [%d] %s.. read lock         [%ld.%06ld]\n", tid, __func__, tv.tv_sec, tv.tv_usec);
+
+if (ltype == 1)		// 1=mutex, 2=rwlock, 3=spin, 4=sem
+	pthread_mutex_lock(&y.mt);
+else if (ltype == 2)
+	pthread_rwlock_rdlock(&y.rw);
+else if (ltype == 4)
+	sem_wait(&y.sm);
+
+		gettimeofday(&tv, NULL);
+		printf(">> [%d] %s.. read count[%5d] [%ld.%06ld]\n", tid, __func__, y.count, tv.tv_sec, tv.tv_usec);
+//if (tid%10 == 2)	usleep(100000);
+
+if (ltype == 1)		// 1=mutex, 2=rwlock, 3=spin, 4=sem
+	pthread_mutex_unlock(&y.mt);
+else if (ltype == 2)	
+	pthread_rwlock_unlock(&y.rw);
+else if (ltype == 4)
+	sem_post(&y.sm);
+
+		usleep(rsleep);
+	}
+	printf(">> [%d] %s.. done [%d]\n", tid, __func__, y.count);
+	pthread_exit(NULL) ;
+}
+
+void *proc_write(void *argv)
+{
+	int 		i, ltype;
+	pthread_t	tid;
+	struct timeval	tv;
+	sigset_t sigset;		// 기존 시그널 저장
+
+	tid = syscall(SYS_gettid);	//pthread_self();
+	ltype = *((int *)argv);
+
+	int	rsleep=0;
+	
+	rsleep = (rand()%1000) + 1;
+	printf(">> [%d] %s.. usleep set=%d\n", tid, __func__, rsleep);
+	
+	while (y.count < LOOPCNT) {
+		gettimeofday(&tv, NULL);
+		printf(">> [%d] %s. writ lock         [%ld.%06ld]\n", tid, __func__, tv.tv_sec, tv.tv_usec);
+signal_block(&sigset);
+
+if (ltype == 1)		// 1=mutex, 2=rwlock, 3=spin, 4=sem
+	pthread_mutex_lock(&y.mt);
+else if (ltype == 2)
+	pthread_rwlock_wrlock(&y.rw);
+else if (ltype == 4)
+	sem_wait(&y.sm);
+
+		if (y.count >= LOOPCNT)
+		{
+			printf(">> [%d] %s.. write break\n", tid, __func__);
+
+if (ltype == 1)		// 1=mutex, 2=rwlock, 3=spin, 4=sem
+	pthread_mutex_unlock(&y.mt);
+else if (ltype == 2)
+	pthread_rwlock_unlock(&y.rw);
+else if (ltype == 4)
+	sem_post(&y.sm);
+
+signal_unblock(&sigset);
+			break;
+		}
+		y.count++;
+		gettimeofday(&tv, NULL);
+		printf(">> [%d] %s. writ count[%5d] [%ld.%06ld]\n", tid, __func__, y.count, tv.tv_sec, tv.tv_usec);
+		usleep(rsleep);
+
+if (ltype == 1)		// 1=mutex, 2=rwlock, 3=spin, 4=sem
+	pthread_mutex_unlock(&y.mt);
+else if (ltype==2)
+	pthread_rwlock_unlock(&y.rw);
+else if (ltype == 4)
+	sem_post(&y.sm);
+
+signal_unblock(&sigset);
+		usleep(rsleep);
+	}
+	printf(">> [%d] %s.. done [%d]\n", tid, __func__, y.count);
+	pthread_exit(NULL) ;
+}
+
+int function13(int ac, char **av)
+{
+	int		ltype=0, wcnt=0, rcnt=0;
+
+if (ac == 5) {
+	ltype = atoi(av[1]);
+	wcnt = atoi(av[2]);
+	rcnt = atoi(av[3]);
+	LOOPCNT = atoi(av[4]);
+} else {
+	printf("lock type (1=mutex, 2=rwlock, 3=spin, 4=sem) : ");
+	scanf("%d", &ltype);
+	printf("write thread count : ");
+	scanf("%d", &wcnt);
+	printf("read thread count : ");
+	scanf("%d", &rcnt);
+
+	printf("loop count : ");
+	scanf("%d", &LOOPCNT);
+}
+	memset(&y, 0x00, sizeof(struct _y));
+
+	pthread_mutexattr_t mutattr;
+	pthread_mutexattr_init(&mutattr);
+	pthread_mutexattr_setpshared(&mutattr, PTHREAD_PROCESS_SHARED);
+	pthread_mutex_init(&y.mt, &mutattr);
+	pthread_mutexattr_destroy(&mutattr);
+
+	pthread_rwlockattr_t rw_attr;
+	pthread_rwlockattr_init (&rw_attr);
+	pthread_rwlockattr_setpshared (&rw_attr, PTHREAD_PROCESS_SHARED);
+	pthread_rwlock_init(&y.rw, &rw_attr);
+	pthread_rwlockattr_destroy(&rw_attr);
+
+	pthread_condattr_t cattr1;
+	pthread_condattr_init(&cattr1);
+	pthread_condattr_setpshared(&cattr1, PTHREAD_PROCESS_SHARED);
+	pthread_cond_init(&y.sp, &cattr1);
+	pthread_condattr_destroy(&cattr1);
+
+	sem_init(&y.sm, 1, 1);
+
+	int		rc, ii;
+	pthread_t	tids[1024];
+
+	for (ii=0; ii<rcnt; ii++)
+	{
+		pthread_create(&tids[ii], NULL, proc_read, (void *)&ltype);
+		printf("[%d] thread create\n", ii);
+		//usleep(10000);
+	}
+
+	for (ii=rcnt; ii<rcnt+wcnt; ii++)
+	{
+		pthread_create(&tids[ii], NULL, proc_write, (void *)&ltype);
+		printf("[%d] thread create\n", ii);
+		//usleep(10000);
+	}
+
+	for (ii=0; ii<rcnt+wcnt; ii++)
+		pthread_join(tids[ii], NULL);
+
+printf(" #########################\n");
+printf("count [%d] <> [%d]\n", y.count, LOOPCNT);
+	return (0);
+}
+
+// ############  int function14(int ac, char **av)
+int _printDb2SessionID(char *ssid)
+{
+EXEC SQL BEGIN DECLARE SECTION;
+    char    c_ssid  [128];  
+EXEC SQL END DECLARE SECTION;
+
+    memset(c_ssid, 0x00, sizeof(c_ssid));
+
+EXEC SQL
+    SELECT APPLICATION_ID() 
+      INTO :c_ssid 
+      FROM SYSIBM.SYSDUMMY1
+    ;
+    if (SQLCODE != 0)
+    {
+        printf("[%s] get sesstion ID error.. [%d:%s]\n", __func__, SQLCODE, SQLERRM);
+        return(-1);
+    }
+
+    l_rtrim(c_ssid);
+    strcpy(ssid, c_ssid);
+
+    return (0);
+}
+
+void *dbtest(void *argv)
+{
+	int		rc, idx;
+	pthread_t	tid;
+	pid_t		pid;
+
+	tid = pthread_self();
+	pid = syscall(SYS_gettid);
+//	pthread_detach(tid);
+
+	idx = *((int *)argv) + 5;
+	
+	printf("[%lu] thread start..[%d]\n", pid, idx);
+	rc = l_db2connect();
+	if (rc != 0) {
+		printf("[%lu] thread connect error [%d:%s]\n", pid, rc, SQLERRM);
+		return (0);
+	}
+	char	ssid[128];
+	_printDb2SessionID(ssid);
+	printf("[%lu] thread connect...[ %s ]\n", pid, ssid);
+
+EXEC SQL BEGIN DECLARE SECTION;
+	char	v_date[8+1];
+	char	c_stm[6+1];
+EXEC SQL END DECLARE SECTION;
+
+	memset(v_date, 0x00, sizeof(v_date));
+	memset(c_stm,  0x00, sizeof(c_stm));
+
+	sprintf(c_stm, "%06d", idx);
+	l_rtrim(c_stm);
+
+EXEC SQL
+	UPDATE INST1.TSKEIAM88 SET APLY_START_HMS = :c_stm
+	 WHERE FX_PRDCT_CD = 'AUDUSD'
+	   AND FCM_ID = 'SMBS'
+	;
+	printf("(%lu) update set stm=[%s]\n", pid, c_stm);
+
+sleep (idx);
+	l_db2commit();
+
+	printf("(%lu) commit [%s] [%d:%s]\n", pid, c_stm, SQLCODE, SQLERRM);
+
+	rc = l_db2disconnect();
+	printf("[%lu] thread disconnect...[%d:%s]\n", pid, rc, SQLERRM);
+
+	return (0);
+}
+
+int function14(int ac, char **av)
+{
+	int		ii, rc;
+	pthread_t	tid[10];
+
+EXEC SQL BEGIN DECLARE SECTION;
+	char	v_date[8+1];
+EXEC SQL END DECLARE SECTION;
+
+//	rc = l_db2connect();	printf("connect...[%d:%s]\n", rc, SQLERRM);
+
+for (ii=0; ii<3; ii++)
+{
+	pthread_create(&tid[ii], NULL, dbtest, (char *)&ii);
+	usleep(200000);		// sleep 없이는 쓰레드 내에서 connect 할 때 코어 발생
+}
+
+/*
+	memset(v_date, 0x00, sizeof(v_date));
+
+	EXEC SQL
+		SELECT	TO_CHAR(CURRENT DATE+1 DAY, 'YYYYMMDD')
+		  INTO :v_date
+		  FROM	SYSIBM.DUAL
+		WITH UR;
+
+	printf("(%s) select [%s] [%d:%s]\n", __func__, v_date, SQLCODE, SQLERRM);
+*/
+
+for (ii=0; ii<5; ii++)
+	pthread_join(tid[ii], NULL);
+
+//	rc = l_db2disconnect();		printf("disconnect...[%d:%s]\n", rc, SQLERRM);
+
+	return (0);
+}
+
+int function15(int ac, char **av)
+{
+	int			ii, idx=0, cnt, spos=1, rtn, rwno[2];
+	char		rbuf[1024*2];
+	AG_DQUE		dque;
+
+	memset(&dque,  0x00, sizeof(dque));
+
+	AG_DQUECLS(&dque);
+
+	dque.xha |= AQ_XHA_OPN;
+	dque.xha |= AG_XAS_LIV;
+
+if (ac >= 4) {
+	strcpy(dque.dfnm, av[1]);
+	idx = atoi(av[2]);
+	cnt = atoi(av[3]);
+} else {
+	printf("dqname with full path : ");
+	scanf("%s", dque.dfnm);
+	printf("index : ");
+	scanf("%d", &idx);
+	printf("read count (all=0) : ");
+	scanf("%d", &cnt);
+}
+	rtn = agdque_at_io(&dque);
+	//rc = agdque_at (&dque, "/fsfxwin/wfa/dat", NULL, "WGRCVRQ", 0, 0);
+	//rc = agdque_at (&dque, "/fsfxwin/wfa", "dat", "YARIQ", 0, 0);
+	if (rtn < 0)
+	{
+		printf("(%s) queue in agdque_at_io error (%d)\n ", __func__, rtn);
+		return (0);
+	}
+	if (cnt <= 0)	cnt = dque.hdr.wno;
+	printf("TOT CNT : %d\n", dque.hdr.wno);
+	
+	spos = (dque.hdr.wno>cnt?dque.hdr.wno-cnt:0);
+	rwno[0] = spos;
+	rtn = agdque_rwi_io (&dque, idx, &rwno);
+
+	// dque 사용 시 semk 지정하지 않으면, 이름을 base로 semkey를 생성하게 되어 있다. 
+	rtn = agdque_semget (&dque, AG_ZERO, AG_DQ_ENV);
+	if (rtn < 0)
+	{
+		printf("(%s) queue in agdque_semget error (%d)\n ", __func__, rtn);
+		return (0);
+	}
+
+//	printf("dfnm=[%s] dsnm=[%s]\n", dque.dfnm, dque.dsnm);
+
+	// 시세 수신
+	while (1) {
+		memset(rbuf, 0x00, sizeof(rbuf));
+// dque.semk에 NULL 값이 있어 이벤트 발생 안함.
+//		rtn = agdque_rdn (&dque, NULL, NULL, dque.dfnm, dque.semk, rbuf, sizeof(rbuf), idx, (-1), &rwno);
+// 1/10초당 1건씩 read로 변경
+		rtn = agdque_rdn (&dque, NULL, NULL, dque.dfnm, dque.semk, rbuf, sizeof(rbuf), idx, 100000, &rwno);
+		if (rtn == 0) {
+			if (ac >= 4)	break;
+			continue;
+		} else if (rtn < 0)	{
+			printf("agdque_rdn error : %d\n", rtn);
+			break;
+		}
+		for (ii=0; ii<rtn; ii++)
+			if(rbuf[ii] == NULL)	rbuf[ii]='_';
+
+		printf("[%d/%d] [%d:%s]\n", rwno[0], rwno[1], rtn, rbuf);
+	}
+
+	return (0);
+}
+
+int call_W3370A01(MDFOLD *pfold, char *lgen_no, char prdct_dstcd, char side, char *ordqty)
+{
+	int			slen = 0, rlen = 0;
+	double		d_ordqty;
+	char		sndbuf[1024*4] = {0};
+	char		stemp[128];
+	char		*prcv;
+	MyMQ		*mymq;
+	COMHDR		*pcom;
+	W3370A01_I	*tri;
+	W3370A01_O	*tro;
+
+EXEC SQL BEGIN DECLARE SECTION;
+	char v_bizdate	[ 8+1];
+	char v_tnr_cd	[ 2+1];
+	char v_furdate	[ 8+1];
+	char v_fx_prdct_cd [ 6+1];
+EXEC SQL END DECLARE SECTION;
+
+	memset(sndbuf, 0x00, sizeof(sndbuf));
+	pcom = (COMHDR *)sndbuf;
+
+    char    msid          [14];  // 209 WTS(master,sub id) ADD-202211
+
+	// 공통헤더 세팅
+	zsedit(pcom->trxc, "W3370A01" );
+	zsedit(pcom->loip, "127.0.0.1");	//16 로컬 IP
+	zsedit(pcom->auip, "127.0.0.1");	//16 공인 IP
+	zsedit(pcom->ctyp, "W");			//"A" );		// 접속매체구분 : 주문쪽 요청으로 일단 'W'로 변경함.
+	zsedit(pcom->usid, lgen_no);		//whoami);		// 주문쪽 요청으로 일단 사용자 Lgen_No로 변경
+	//zsedit(pcom->msid, "");			// FXGO CNSH
+	//zsedit(pcom->msid, "");			// FXGO CNSH
+
+	memset(pcom->msid,     0x00, sizeof(pcom->msid));
+	memset(v_bizdate,     0x00, sizeof(v_bizdate));
+	memset(v_furdate,     0x00, sizeof(v_furdate));
+	memset(v_tnr_cd,      0x00, sizeof(v_tnr_cd));
+	memset(v_fx_prdct_cd, 0x00, sizeof(v_fx_prdct_cd));
+
+EXEC SQL
+	SELECT 영업년월일 INTO :v_bizdate FROM INST1.TSKEIAM00 WITH UR;
+	if (SQLCODE != 0)
+	{
+		printf("select bizdate error.. [%d:%s]\n", SQLCODE, SQLERRM);
+		return (-1);
+	}
+
+	d_ordqty = atof(ordqty);
+
+// tri->fx_prdct_dstcd               // FX상품구분(1-TD, 2-TOM, 3-현물환, 4-선물환, 5-스왑, 6-바로환전, 7-NDF)
+	if (prdct_dstcd == '1')			strcpy(v_tnr_cd, "00");
+	else if (prdct_dstcd == '2')	strcpy(v_tnr_cd, "01");
+	else if (prdct_dstcd == '3')	strcpy(v_tnr_cd, "02");
+	else if (prdct_dstcd == '4')	strcpy(v_tnr_cd, "10");
+	else if (prdct_dstcd == '6')	strcpy(v_tnr_cd, "02");
+	else	return (-2);
+
+	memcpy(v_fx_prdct_cd, pfold->symb, sizeof(pfold->symb));
+EXEC SQL
+	SELECT EXPIR_YMD INTO :v_furdate FROM INST1.TSKEIMU55
+	WHERE REGI_YMD    = (SELECT MAX(REGI_YMD) FROM INST1.TSKEIMU55)
+	  AND ANOUN_TIME  = '000000'
+	  AND TNR_CD      = :v_tnr_cd
+	  AND FX_PRDCT_CD = :v_fx_prdct_cd;
+	if (SQLCODE != 0)
+	{
+		printf("select furdate error.. [%d:%s]\n", SQLCODE, SQLERRM);
+		return (-3);
+	}
+
+	// TR INPUT 세팅
+	tri = (W3370A01_I *)&sndbuf[COMHDR_LEN];
+
+// tri->fx_ordr_ymd                  // FX주문년월일
+	memcpy(tri->fx_ordr_ymd, v_bizdate, sizeof(tri->fx_ordr_ymd));
+// tri->lgen_no                      // lgen_no
+	memcpy(tri->lgen_no, lgen_no, sizeof(tri->lgen_no));	// "0000101936"
+// tri->fx_ordr_dstcd                // FX주문구분코드(1-신규, 2-정정, 3-취소)	
+	tri->fx_ordr_dstcd[0] = '1';
+// tri->fx_tran_ptrncd               // FX거래유형코드('1'-일반, '2'-MAR, '3'-RFQ, '4'-RFS)
+	tri->fx_tran_ptrncd[0] = '1';
+// tri->auto_tran_dstcd              // 자동거래구분코드('1'-일반, '2'-AH, '3'-MM, '4'-AH(MAR), '5'-AH(API))
+	tri->auto_tran_dstcd[0] = '1';
+// tri->fx_prdct_dstcd               // FX상품구분(1-TD, 2-TOM, 3-현물환, 4-선물환, 5-스왑, 6-바로환전, 7-NDF)
+	tri->fx_prdct_dstcd[0] = prdct_dstcd;
+// tri->fx_prdct_cd                  // FX상품코드
+	memcpy(tri->fx_prdct_cd, pfold->symb, sizeof(tri->fx_prdct_cd));
+// tri->pyacc_ymd                    // 결제년월일
+	memcpy(tri->pyacc_ymd, v_furdate, sizeof(v_furdate));
+// tri->fx_deal_dstcd                // FX매매구분코드(1-매수(BID-BUY, SELL & BUY), 2-매도(ASK-SELL, BUY & SELL))
+	tri->fx_deal_dstcd[0] = side;
+// tri->fx_ofpr_dstcd                // FX호가구분코드('1'-시장가, '2'-지정가, '3'-예약(STOP), '4'-OCO, '5'-SOR)
+	tri->fx_ofpr_dstcd[0] = '1';
+// tri->fx_ordr_prc                  // FX주문가격
+	double prc = (side=='1'?pfold->offerlast:pfold->bidlast);
+	sprintf(stemp, "%.*f", pfold->zCustdiv, prc);
+	memcpy(tri->fx_ordr_prc, stemp, sizeof(tri->fx_ordr_prc));
+// tri->ordr_qanty                   // FX주문수량
+	MEMCPY(tri->ordr_qanty, ordqty);//, sizeof(o->orderqty));			// o->orderqty[16] 가 더 작음.
+// tri->base_cncycd                  // 기준통화코드
+	memcpy(tri->base_cncycd, pfold->symb, sizeof(tri->base_cncycd));
+// tri->base_crncy_amt               // 기준통화금액
+	MEMCPY(tri->base_crncy_amt, ordqty);//, sizeof(tri->ordr_qanty));
+// tri->cnprt_cncycd                 // 상대통화코드
+	memcpy(tri->cnprt_cncycd, &pfold->symb[3], sizeof(tri->cnprt_cncycd));
+// tri->cnprt_crncy_amt              // 상대통화금액
+	sprintf(stemp, "%.6f", prc * d_ordqty);
+	MEMCPY(tri->cnprt_crncy_amt, stemp);
+// tri->ntnl_cncycd                  // 관념통화코드
+	memcpy(tri->ntnl_cncycd, pfold->symb, sizeof(tri->ntnl_cncycd));
+// tri->ntnl_crncy_amt               // 관념통화금액
+	MEMCPY(tri->ntnl_crncy_amt, ordqty);//, sizeof(tri->ntnl_crncy_amt));
+// tri->ordr_end_ymd                 // 주문종료일자
+	memcpy(tri->ordr_end_ymd, tri->fx_ordr_ymd, sizeof(tri->ordr_end_ymd));
+
+tri->fx_spot_prc[0]           = '0';
+tri->fx_spot_prc_mrkup[0]     = '0';
+tri->fx_spot_prc_mrgn[0]      = '0';
+tri->fx_swap_prc[0]           = '0';
+tri->fx_swap_prc_mrkup[0]     = '0';
+tri->fx_swap_prc_mrgn[0]      = '0';
+tri->fx_ordr_prc_mrkup[0]     = '0';
+tri->fx_ordr_prc_mrgn[0]      = '0';
+tri->fx_obsr_dmnd_prc[0]      = '0';
+tri->fx_obsr_pfrm_ordr_prc[0] = '0';
+
+	//int mymq_call(MyMQ *mymq, const char *host, const char *xchg, const char *rkey, const char *sndb, int sndl, char **rcvb, int timeout)
+	rlen = mymq_call(mymq, NULL, "dom", "W3370A01", sndbuf, sizeof(COMHDR) + sizeof(W3370A01_I), &prcv, 5);
+
+	pcom = (COMHDR *)prcv;
+	tro  = (W3370A01_O *)(prcv+COMHDR_LEN);
+
+	printf("return comhdr [%d:%.1s:%.5s:%s]\n", rlen, pcom->rtyp, pcom->rcod, pcom->eflg);
+
+	if (pcom->eflg[0] != '0') {
+		printf("ERR : (%s) service(W3370A01) call error! (%.1s:%.5s)\n", __func__, pcom->rtyp, pcom->rcod);
+		return (-1);
+	}
+
+	printf("[%s] OUT >>>>>>>>>>>>>>>>>>>>>>> \n",pcom->trxc);
+	printf("fx_ordr_ymd   =[%.*s]\n", sizeof(tro->fx_ordr_ymd), tro->fx_ordr_ymd);  // FX주문년월일 
+	printf("fx_ordr_no    =[%.*s]\n", sizeof(tro->fx_ordr_no ), tro->fx_ordr_no );  // FX주문번호
+
+	free(prcv);
+
+	return (0);
+}
+
+int function16(int ac, char **av)
+{
+	char	msg[128], prdct, side, lgen_no[10+1];
+	char	symb[6+1], ordqty[16+1];
+	MDFOLD *pfold; 
+
+	memset(lgen_no, 0x00, sizeof(lgen_no));
+	memset(symb,    0x00, sizeof(symb));
+	memset(ordqty,  0x00, sizeof(ordqty));
+
+	if (ac != 6) return (-1);
+
+	l_db2connect();
+// [LGEN_NO] [USDKRW] [1:TOD,2:TOM,3:현물,4:선물,6:바로환전] [1:BUY,2:SEL] [QTY]
+	
+	strcpy(lgen_no, av[1]);
+	strcpy(symb, av[2]);
+	prdct = av[3][0];
+	side  = av[4][0];
+	strcpy(ordqty, av[5]);
+
+printf("INPUT : lgen=%s, symb=%s, prdct=%c, side=%c, qty=%s\n", lgen_no, symb, prdct, side, ordqty);
+
+//	주문자정보 : 0000101936 (고정)
+//	대상통화 : "USDKRW" (필요 시 arg 로 처리)
+
+	pfold = mds_getfold("CUST", symb, msg);
+	if (pfold == NULL) {
+		printf("mds_getfold error [%s]\n", msg);
+		return (-1);
+	}
+
+//int call_W3370A01(MDFOLD *pfold, char prdct_dstcd, char side)
+// prdct : FX상품구분 (1-TD, 2-TOM, 3-현물환, 4-선물환, 5-스왑, 6-바로환전, 7-NDF)
+// side  : 매매구분 (1-BUY, 2-SEL)
+	call_W3370A01(pfold, lgen_no, prdct, side, ordqty);
+
+	l_db2disconnect();
+
+	return (0);
+}
+
+int function17(int ac, char **av)
+{
+	int		sterm=1, scnt, rcnt, dmax=100;
+	int		port=30428;				// CUST PORT
+	char	stemp[32];
+	char	*ipad="127.0.0.1";
+	char	rbuf[1024], sbuf[1024], msg[128];
+	MDSSISE	*p=sbuf;
+	
+	if (ac > 1)		sterm = atoi(av[1]);
+
+	int		ii, c_sock, options = 1;
+	struct	in_addr		localif;
+	struct	sockaddr_in	multisock;
+
+	memset(&multisock, 0x00, sizeof(multisock));
+	memset(&localif,   0x00, sizeof(localif));
+
+	if ((c_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0)
+	{
+		printf("Cannot open a socket for AP (%d:%s)\n", errno, strerror(errno));
+		return (-1);
+	}
+
+	multisock.sin_family		= AF_INET;
+	multisock.sin_addr.s_addr	= inet_addr(ipad);
+	multisock.sin_port			= htons(port);
+
+	MDFOLD	 *pfold;
+
+	pfold = mds_getfold("SMBS", "USDKRW", msg);
+	if (pfold == NULL) {
+		printf("mds_getfold error [%s]\n", msg);
+		return (-1);
+	}
+
+	time_t	t;
+	struct tm *tm;
+	struct timeval tv;
+	
+	while (1)
+	{
+		memset(sbuf, 0x00, sizeof(sbuf));
+		memset(stemp, 0x00, sizeof(stemp));
+
+		t = gettimeofday(&tv, NULL);
+		tm = localtime(&tv.tv_sec);
+
+		p->excode[0] = 'S';
+		memcpy(p->symb, pfold->symb, sizeof(p->symb));
+		sprintf(stemp, "%04d%02d%02d", tm->tm_year+1900, tm->tm_mon+1, tm->tm_mday);
+		memcpy(p->date, stemp, sizeof(p->date));
+		sprintf(stemp, "%02d%02d%02d%03d", tm->tm_hour, tm->tm_min, tm->tm_sec, tv.tv_usec/1000);
+		memcpy(p->time, stemp, sizeof(p->time));
+		p->bidprc		= pfold->bidlast - (tm->tm_sec%10 * 0.01);
+		p->bidbestprc	= pfold->bidbest;
+		p->bidqty		= 1000000;
+		p->offerprc		= pfold->offerlast + (tm->tm_sec%10 * 0.01);
+		p->offerbestprc	= pfold->offerbest;
+		p->offerqty		= 1000000;
+
+		if (sendto(c_sock, sbuf, sizeof(MDSSISE), 0, (struct sockaddr *)&multisock, sizeof(multisock)) < 0)
+			break;
+
+		if (sterm <= 0)		getchar();
+		else				sleep(sterm);
+	}
+	printf("================= send done..\n");
+
+	close(c_sock);
+		
+	return (0);
+}
+
+uint32_t getnextday(int n)
+{
+    time_t  clock;  
+    struct  tm tm;  
+    int ymd;
+    
+    int d = n*24;
+    
+    clock = time(NULL);
+    clock += (d*60*60);
+    localtime_r(&clock, &tm);
+    ymd = YMD((tm.tm_year+1900), (tm.tm_mon+1), tm.tm_mday);
+
+    return (ymd);
+}
+
+AG_DQUE		qcom;
+int			semk=0xffff0001;
+
+void *func18(void *argv)
+{
+	int		ii, rc, slen, idx;
+	char	sbuf[512];
+	
+	memset(sbuf, 0x00, sizeof(sbuf));
+	
+	idx = *((int *)argv);
+	printf("[%d] start >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> \n", idx);
+
+	for (ii=0; ii<1000; ii++) {
+		sprintf(sbuf, "%d.%d", idx, ii);
+		slen = strlen(sbuf);
+		rc = agdque_wrn (&qcom, WG_DAT_DIR, NULL, "YTEST", semk, 1024, sbuf, slen);
+		usleep(10000);
+	}
+
+	printf("[%d] end >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> \n", idx);
+	pthread_exit(NULL);
+}
+
+int function18(int ac, char **av)
+{
+	int		ii, cnt, tot=1;
+	pthread_t	tids[1024];
+	memset(&qcom, 0x00, sizeof(qcom));
+
+	AG_DQUECLS(&qcom);
+
+	qcom.xha |= AQ_XHA_OPN;
+	qcom.xha |= AG_XAS_LIV;
+
+	if (ac > 1)		tot=atoi(av[1]);
+	
+	for (ii=0; ii<tot; ii++) {
+		cnt=ii;
+		pthread_create(&tids[ii], 0, func18, (void *)&cnt);
+		usleep(50000);
+	}
+
+	for (ii=0; ii<tot; ii++)
+		pthread_join(tids[ii], NULL);
+
+	return (0);
+}
+
+int function19(int ac, char **av)
+{
+	int		rc, idx=1;
+	char	sbuf[1024];
+	JNLF	ejnl;
+
+	memset(&ejnl, 0x00, sizeof(ejnl));
+	sprintf(ejnl.jfname, "%s/%s", DF_AGR_JNL_PATH, DF_AGR_JNL_NAME);
+
+printf("[%s]\n", ejnl.jfname);
+
+	rc = JFopen(&ejnl, idx, 1);
+	if (rc != 0)
+	{
+		printf("(%s) jfopen error.. (%d) (%s)\n", __func__, rc, strerror(errno));
+		return (-1);
+	}
+	
+	while (1)
+	{
+		memset(sbuf, 0x00, sizeof(sbuf));
+
+		printf("write buff : ");
+		scanf("%s", sbuf);
+
+		ejnl.sndb = &sbuf;
+		ejnl.sndl = strlen(sbuf);
+		rc = JFpush(&ejnl);
+	}
+
+	return (0);
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////
+#define		DF_DLOG_QKEY		0x00990099
+#define		MXLOGS		128
+
+struct _dlog {
+	char	pname	[128];
+	int		logdate	;
+	FILE	*logf	;
+} dlogs[MXLOGS];
+
+int f20(struct _dlog *plog, int loglen, char *logmsg)
+{
+	char	logpath[128];
+	struct tm *tm;
+
+	time_t	t=time(NULL);
+	tm = localtime(&t);
+	
+	struct stat fst;
+	sprintf(logpath, "%s-%04d%02d%02d.log", plog->pname, tm->tm_year+1900, tm->tm_mon+1, tm->tm_mday);
+
+pid_t	lwp;
+lwp = syscall(SYS_gettid);	//pthread_self();
+
+	if (plog->logf == NULL || plog->logdate != tm->tm_mday)
+	{
+		if (plog->logf)		fclose(plog->logf);
+	
+		plog->logf    = fopen(logpath, "a+");
+		plog->logdate = tm->tm_mday;
+	}
+	else
+	{
+		fstat(fileno(plog->logf), &fst);
+	
+		if (fst.st_nlink <= 0)
+			plog->logf = fopen(logpath, "a+");
+	}
+
+flock(plog->logf, LOCK_EX);
+
+	fprintf(plog->logf, "%u] %.*s\n", lwp, loglen, logmsg);
+	fflush(plog->logf);
+
+flock(plog->logf, LOCK_UN);
+
+	return 0;
+}
+
+int func20(int dlen, char *rbuf)
+{
+	int		ii, msglen;
+	char	*logmsg;
+	char	pname[128];
+	
+	memset(pname, 0x00, sizeof(pname));
+
+	for (ii=0; ii<dlen; ii++)
+	{
+		if (rbuf[ii] == ':') {
+			memcpy(pname, rbuf, ii>sizeof(pname)?sizeof(pname):ii);
+			logmsg = &rbuf[ii+1];
+			msglen = dlen-ii-1;
+
+			break;
+		}
+	}
+	if (ii >= dlen)		return (-1);
+
+//printf("pname=[%s] logmsg=[%d:%.*s]\n", pname, msglen, msglen, logmsg);
+
+	struct tm *tm;
+	time_t	t=time(NULL);
+	tm = localtime(&t);
+
+	// find pname
+	for (ii=0; ii<MXLOGS; ii++)
+	{
+		if (strcmp(pname, dlogs[ii].pname) != 0)	continue;
+			
+		f20(&dlogs[ii], msglen, logmsg);
+
+		return 0;
+	}
+
+	// new pname
+	for (ii=0; ii<100; ii++)
+	{
+		// 일자가 지났거나 빈자리에 할당
+		if (dlogs[ii].pname[0] == 0x00 || dlogs[ii].logdate != tm->tm_mday)
+		{
+			printf("\t allocate (%d) new pname (%s)\n", ii, pname);
+
+			if (dlogs[ii].logf)		fclose(dlogs[ii].logf);
+
+			memset(&dlogs[ii], 0x00, sizeof(struct _dlog));
+			strncpy(dlogs[ii].pname, pname, sizeof(dlogs[ii].pname));
+			dlogs[ii].logdate = tm->tm_mday;
+
+			f20(&dlogs[ii], msglen, logmsg);
+
+			return 0;
+		}
+	}
+
+	return (-1);
+}
+
+void *thrd20(void *arg)
+{
+	int			rtn, qsize, msgid, idx=0;
+	ssize_t		dlen;
+	key_t		mkey;
+	struct	message	msg;
+	struct	msqid_ds msg_ds;
+
+pid_t	lwp;
+lwp = syscall(SYS_gettid);	//pthread_self();
+
+printf("thread start..(%u)\n", lwp);
+
+SETDMSG :
+
+	if (msgid < 0)
+	{
+		qsize = 1024*1024;
+
+		msgid = msgget(DF_DLOG_QKEY, IPC_CREAT | 0666);
+		if(msgid < 0)
+		{
+			return -1;
+		}
+		memset(&msg_ds, 0x00, sizeof(msg_ds));
+		if (msgctl(msgid, IPC_STAT, &msg_ds) == 0)
+		{
+			msg_ds.msg_qbytes = qsize;
+			msgctl(msgid, IPC_SET, &msg_ds);
+		}
+	}
+
+	while (1)
+	{
+		memset(&msg, 0x00, sizeof(msg));
+    	
+//		dlen = msgrcv(msgid, &msg, blen, idx, IPC_NOWAIT);
+		dlen = msgrcv(msgid, &msg, qsize, idx, MSG_NOERROR);		// 버퍼보다 클 경우 잘라서 수신
+
+		if(dlen == (ssize_t)-1)
+		{
+			usleep(500000);
+			printf("(%s) msgrcv error (%d:%s)\n", __func__, errno, strerror(errno));
+			
+			msgid = (-1);
+			goto SETDMSG;
+		}
+
+		if ((rtn=func20(dlen, msg.mtext)) < 0)
+			printf("func20 error (%d)\n", rtn);
+	}
+
+	return (0);
+}
+
+int function20(int ac, char **av)
+{
+	int		ii, tot=5;
+	pid_t	tids[10];
+
+	for (ii=0; ii<tot; ii++) {
+		pthread_create(&tids[ii], 0, thrd20, NULL);
+		usleep(50000);
+	}
+
+	for (ii=0; ii<tot; ii++)
+		pthread_join(&tids[ii], NULL);
+
+	return 0;
+}
+
+/*
+static inline int _sendtoLogQ(char *logname, int loglen, char *logmsg)
+{
+	int		psz, lsz, retry=0;
+	struct	message	msg;
+	static __thread int msgid = -1;
+
+	int		df_dlog_qkey = 0x00990099;
+
+GETMSGID :
+	if (msgid < 0)
+	{
+		msgid = msgget(df_dlog_qkey, 0);
+		if(msgid < 0)	return -1;
+	}
+
+	memset(&msg, 0x00, sizeof(msg));
+
+	psz = (strlen(logname) > 20 ? 20 : strlen(logname));		// logfile명 구분자는 최대 20자리로.
+	lsz = (loglen > sizeof(msg.mtext) - psz ? sizeof(msg.mtext) - psz : loglen);
+
+	msg.mtype = 1;
+	sprintf(msg.mtext, "%.*s:%.*s", psz, logname, lsz, logmsg);
+
+RESEND :
+	if (msgsnd(msgid, &msg, strlen(msg.mtext), 0) < 0)
+	{
+		if (errno == EIDRM)			// The message queue was removed
+		{
+			msgid = (-1);
+			goto GETMSGID;
+		}
+		else if (errno == EINTR)	// Sleeping on a full message queue condition, the process caught a signal.
+		{
+			if (++retry < 5)
+			{
+				usleep(10000);
+				goto RESEND;
+			}
+		}
+
+		msgid = (-1);
+		return (errno*(-1));
+	}
+
+	return 0;
+}
+*/
+
+#include "quelog.h"
+int function21(int ac, char **av)
+{
+/*	
+	int		rtn, msgid;
+	char	buff[2048];
+	struct	message	msg;
+
+	msgid = msgget(DF_DLOG_QKEY, 0);
+	if(msgid < 0)	return -1;
+
+int	fnm=0;
+*/
+	int		ii, tcnt=0;
+	char	logname[128];
+	char	logmsg[1024];
+	char	pname[2];
+
+	memset(pname, 0x00, sizeof(pname));
+	pname[0] = 'a';
+	pname[1] = 'a';
+
+	int div=5;
+
+	if (ac > 1)		div = atoi(av[1]);
+
+	struct _A {
+		int		seq;
+		char	pname[128];
+	} A[50];
+	memset(&A, 0x00, sizeof(A));
+
+	for (ii=0; ii<div; ii++) {
+		A[ii].seq = 0;
+		memcpy(A[ii].pname, pname, sizeof(pname));
+		pname[0]++; 	pname[1]++;
+//		printf("[%s]\n", A[ii].pname);
+	}
+
+	int		a;
+		
+	while (1) {
+		a = rand()%div;
+		memset(logmsg, 0x00, sizeof(logmsg));
+		sprintf(logmsg, "%05d", ++(A[a].seq));
+		printf("[%d:%s:%s]\n", a, A[a].pname, logmsg);
+		_sendtoLogQ(A[a].pname, NULL, strlen(logmsg), logmsg);
+
+		if (tcnt++ > 10000)	break;
+	}
+
+	return 0;
+}
+
+//////////////////////////////////////////////////////////////////////////
+
+#define		mxarr		5
+
+typedef struct {
+	char	c1[10];
+	char	c2;
+	int		i1;
+	double	d1;
+	double	d2;
+	char	c3[32];
+} AAA;
+
+pthread_mutex_t		gmutex = PTHREAD_MUTEX_INITIALIZER;
+static __thread int gint=0;
+static AAA aaa[mxarr]={0,};
+
+void *func22(void *arg)
+{
+	pid_t		lwp;
+	int		v;
+
+	lwp = syscall(SYS_gettid);
+
+	v = *((int *)arg);
+
+pthread_mutex_unlock(&gmutex);
+aaa[v].i1 += v;
+printf("[%7u]  v[%d] aaa[%.10s:%c:%d:%g:%g:%.32s]\n", lwp, v, aaa[v].c1 ,aaa[v].c2 ,aaa[v].i1 ,aaa[v].d1 ,aaa[v].d2 ,aaa[v].c3);
+
+//	gint += v;
+//	printf("[%u] v=[%d] [%d:0x%x]\n", lwp, v, gint, &gint);
+	sleep(1);
+	pthread_exit(NULL);
+}
+
+int function22(int ac, char **av)
+{
+	int			ii;
+	pthread_t	tid[mxarr];
+
+	memset(&aaa, 0x00, sizeof(aaa));
+
+	for (ii=0; ii<mxarr; ii++)
+	{
+		aaa[ii].i1 = ii;
+		sprintf(aaa[ii].c3, "%d", ii);
+		sprintf(aaa[ii].c1, "%d", ii);
+		aaa[ii].c2 = aaa[ii].c1[0];
+printf("main.creat  [%d] aaa[%.10s:%c:%d:%g:%g:%.32s]\n", ii, aaa[ii].c1 ,aaa[ii].c2 ,aaa[ii].i1 ,aaa[ii].d1 ,aaa[ii].d2 ,aaa[ii].c3);
+
+pthread_mutex_lock(&gmutex);
+		pthread_create(&tid[ii], NULL, func22, (void *)&ii);
+	}
+
+	for (ii=0; ii<mxarr; ii++)
+	{
+printf("main.join   [%d] aaa[%.10s:%c:%d:%g:%g:%.32s]\n", ii, aaa[ii].c1 ,aaa[ii].c2 ,aaa[ii].i1 ,aaa[ii].d1 ,aaa[ii].d2 ,aaa[ii].c3);
+		pthread_join(tid[ii], NULL);
+	}
+
+	return 0;
+}

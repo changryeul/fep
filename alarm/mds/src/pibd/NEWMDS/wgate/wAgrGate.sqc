@@ -1,0 +1,4009 @@
+/*#####################################################################
+// VER1 : 
+■ 고객주문은 "최종고객가"로 유입되므로, 즉시 체결하려면 "원가+markup+수수료"로 분리해야 하기 떄문에 원가기준 체결로 구현은 어려움
+	- 시세로 수신한 원가와 고객의 주문가를 직접 비교하기 위해서는 복잡한 계산이 필요하다.
+	- 원가로 주문이 유입되는 '차익API'의 경우는 메모리의 원가와 직접 비교하여 체결처리 가능. (단, 체결가는 수수료 적용된 환율)
+
+■ 고객의 한도는 request 등록 시에 체크하여 호가 제공 가능여부 판단
+
+■ 즉시 체결가능 조건
+	1) 체결기준 : 주문접수 시점에 계산된 환율과 비교하는게 아니고, 유효시간 내의 quote 가격인지 비교
+	2) 유효시간내에 제공한 환율 저장
+	3) 차익거래api 등 원가로 시세 제공하던 부분도 수수료 붙여서 제공하여 일관된 기준 적용
+	4) 체결 시 원장에 전달해야 하는 분리된 값은 메모리에 적재된 값 기준임. 시점별로 관리는 불가
+
+■ 주문조건별 체결기준
+	1) 지정가 : 유효시간내 quote 히스토리 비교하여 맞으면 체결
+	2) 시장가 : quote 최종가격과 비교하여 맞으면 체결. (현재가가 아닌 제공시세 최종가)
+	3) IOC/FOK : 최대치(1백만 등) 주문금액 기준이 있어야 처리 가능
+
+■ 고객의 시세요청 접수 시
+	1) 시세요청 통화쌍에 대한 고객 수수료 정보 등 기초 데이터 세팅 : setreq_user(), setreq_info()
+	2) 해당 request 를 위한 쓰레드 기동 : handler_quot()
+	3) 각 쓰레드는 multicast로 시세(APSISE) 수신 후 해당 고객용 환율데이터 계산 하여 Feeding
+	4) 해당 request 의 유효시간이 지나거나 주문이 실행되면 자동 종료 : wgreq_free()
+
+■ 고객에게 전송된 시세는 GarcePeriod 동안 메모리 보관. 주문접수 시 유효성 검증에 사용
+
+■	Channel				Tag35			Proc		Result	wGate				E-CM
+	Login				A	▶					
+							X						성공	응답없음		
+							X						실패	응답없음		
+	MarketDataRequest	V	▶					
+							X						성공	응답없음		
+						Y	◀	Sync	main		실패	거부처리		
+	MarketDataSnapshot	W	◀	Async	handlerQ	성공	시세송신		
+	NewOrder			D	▶						
+						8	◀	Sync	main		성공	주문접수처리		>>>	접수내역
+						8	◀	Sync	main		실패	거부코드 세팅		
+						8	◀	Sync	main		성공	즉시체결/잔량취소	>>>	
+	Excution			8	◀	Async	handlerE	성공	주문체결처리		<<<	엔진체결
+#####################################################################*/
+
+#define __USE_ORD_TP__			// W3370A01 고객주문 서비스 호출사용 (즉시응답, 즉시체결, 오토헷지 미사용)
+
+#include "mds2.h"
+#include "wgate.h"
+#include "agque.h"
+#include "agdef.h"
+#include "comrdb.h"
+#include "m365.h"
+#include "jnlfile.h"
+#include "ordfld.h"
+#include "gcomdef.h"
+#include "mrkfee.h"
+
+#include "W6109A04.h"
+#include "W3370A01.h"
+
+EXEC SQL INCLUDE SQLCA;
+
+// Defines ===========================================================
+
+#define		BID0			q->markup[0].bsmkup[BIDPOS].prc
+#define		ASK0			q->markup[0].bsmkup[ASKPOS].prc
+#define		BID1			q->markup[1].bsmkup[BIDPOS].prc
+#define		ASK1			q->markup[1].bsmkup[ASKPOS].prc
+#define		BID2			q->markup[2].bsmkup[BIDPOS].prc
+#define		ASK2			q->markup[2].bsmkup[ASKPOS].prc
+#define		BID3			q->markup[3].bsmkup[BIDPOS].prc
+#define		ASK3			q->markup[3].bsmkup[ASKPOS].prc
+
+#define		REQ_ALLOC(p)	p->useyn=DF_ALLOC
+#define		REQ_ON(p)		p->useyn=DF_ON
+#define		REQ_OFF(p)		p->useyn=DF_OFF
+
+// Global Variables ========================================================
+char	*whoami="wAgrGate";
+WGMST	*wgmst;
+WGREQ	*wgreq;
+
+AG_DQUE		qin, qout;
+static int ordflag = 0;		// SMB 주문전송을 위한 송신가능상태값
+static int gi_smb_ord_mqid = 0;
+
+static __thread FILE *logF=NULL;
+static __thread int  logdate=0;
+
+// Function Define =========================================================
+void exitproc(int );
+void _set_pad(char *p, int len);
+int _rtrim(char *p, int len);
+void *handler_quot(void *);		// 시장 시세수신처리
+void *handler_rfq(void *);		// RFQ  시세수신처리
+void *handler_exec(void *);		// 원장 체결수신처리
+
+int get_symbinfo(WGREQ *pq);
+
+int setreq_user(WGREQ *q,  WGCOM *cr, char *rejmsg);
+int setreq_info(WGREQ *pq, WGCOM *cr, char *rejmsg);
+int setreq_free(WGREQ *pq, char pbuf, int plen);
+
+int wgreq_new(WGCOM *pc, char *rejmsg);
+int wgreq_get(WGCOM *pc);
+void wgreq_free(WGREQ *p);
+
+int make_send_ack(WGCOM *cr, WGCOM *cs);
+int make_send_cncl(WGCOM *cr, WGCOM *cs);
+int make_send_fill(WGREQ *pq, WGCOM *cr, WGCOM *cs);
+int make_send_quote(WGREQ *q, APSISE *r, WGCOM *c, double bid2, double ask2);		// RFQ를 위한 FAR 가격
+int make_send_close(WGREQ *pq, WGCOM *cs, int rejcd, char *rejmsg);
+int make_send_rej(WGCOM *cr, WGCOM *cs, int rejcd, char *rejmsg);
+
+int check_ord_limit(WGREQ *pq, char *rejmsg);
+int check_ord_valid(WGREQ *pq, WGCOM *cr, WGCOM *cs, char *rejmsg);
+
+int mymqcall_W6109A04(WGREQ *q, W6109A04_O *p, char *rejmsg);
+int mymqcall_W3370A01(WGREQ *q, WG_ORD *o, char *rejmsg);
+
+int get_errmsg(char *msgtp, char *msgcd, char *rejmsg);
+void printreq(WGREQ *p);
+void wg_log(int level, const char *format, ...);
+
+/*==============================================================================
+ * EXITPROC
+==============================================================================*/
+void exitproc(int exitval)
+{
+	int		ii, rc, pos=-1;
+	char	sbuf[1024], msg[128];
+	WGCOM	*cs=sbuf;
+	WGREQ	*p;
+
+	wg_log(LV_MUST, "Program Terminated.. exitval (%d)", exitval);
+
+	// exitproc() 호출전에 정상처리 대상은 commit() 해야 함.
+	l_db2rollback();
+
+	if (l_db2disconnect() != 0)
+		wg_log(LV_ERR, "(%s) l_db2disconnect failed : (%d:%s)",__func__, SQLCODE, SQLERRM);
+
+	if (wgmst)
+	{
+		p = (WGREQ *)wgreq;
+
+		for (ii=0; ii < MX_WGREQ; ii++, p++)
+		{
+			if (p->useyn != DF_OFF)	{	// ★★★TODO : FXGO 에러코드로 하드코딩
+				memset(sbuf, 0x00, sizeof(sbuf));
+
+				make_send_close(p, cs, ERR_FXGO_OTHR, "system is going down");
+				wgreq_free(p);	//, sbuf, slen);
+			}
+		}
+		shmdt(wgmst);
+	}
+	printf("\nProgram Terminated.. exitval[%d]\n\n", exitval);
+
+//	raise(int sig);
+
+	exit(exitval);
+}
+
+void Usage(int exitval)
+{
+	printf("\n\t Usage : %s ....\n", whoami);
+	exitproc(exitval);
+}
+
+static void signal_block(sigset_t *sigsave) {
+	sigset_t sig;
+
+	sigfillset(&sig);
+	sigdelset(&sig, SIGINT);
+	sigprocmask(SIG_BLOCK, &sig, sigsave);
+}
+
+static void signal_unblock(sigset_t *sigsave) {
+	sigprocmask(SIG_SETMASK, sigsave, NULL);
+}
+
+/*==============================================================================
+ * MAIN PROCESS
+==============================================================================*/
+int main(int argc, char *argv[])
+{
+	int		ii, rc;
+
+	signal(SIGHUP,  SIG_IGN);				// 시그널 임시 조치
+//	signal(SIGINT,  (void *)exitproc);		// 시그널 임시 조치
+//	signal(SIGTERM, (void *)exitproc);		// 시그널 임시 조치
+//	signal(SIGQUIT, (void *)exitproc);		// 시그널 임시 조치
+//	signal(SIGSEGV, (void *)exitproc);		// 시그널 임시 조치
+
+	wg_log(LV_MUST, "\n\n\n%s START !! ===========================================", whoami);
+
+	/*===============================================================
+	 * SHARED MEMORY 초기화
+	===============================================================*/
+	int 	shmid;
+	int		shmsz;
+	struct  shmid_ds shmid_ds;
+
+	// SharedMemory : WGMST + WGREQ[MX_WGREQ]
+	shmsz = sizeof(WGMST) + sizeof(WGREQ)*MX_WGREQ;
+
+	if ((shmid = shmget(WG_SHMKEY, 0, 0666)) >= 0)
+	{
+		shmctl(shmid, IPC_STAT, &shmid_ds);
+		if (shmid_ds.shm_segsz != shmsz) {
+			shmctl(shmid, IPC_RMID, &shmid_ds);
+			wg_log(LV_MUST, "(%s) shared memory delete..", __func__);
+		}
+	}
+
+	shmid = shmget(WG_SHMKEY, shmsz, 0666|IPC_CREAT);
+	if (shmid < 0)
+	{
+		wg_log(LV_ERR, "(%s) create shared memory error (%d/%s)", __func__, errno, strerror(errno));
+		exitproc(-1);
+	}
+
+	wgmst = (WGMST *)shmat(shmid, NULL, 0);
+	if (wgmst == NULL)
+	{
+		wg_log(LV_ERR, "(%s) shared memory attach error (%d/%s)", __func__, errno, strerror(errno));
+		exitproc(-2);
+	}
+	wgreq = (WGREQ *)((char *)wgmst + sizeof(WGMST));
+
+	// 초기 mutex unlock
+	for (ii=0; ii < MX_WGREQ; ii++)
+		pthread_mutex_unlock(&(wgreq+ii)->mutex);
+
+	/*===============================================================
+	 * DATABASE CONNECT
+	===============================================================*/
+	rc = l_db2connect();		// 접속자 수수료정보 조회용
+	if (rc != 0)
+	{
+		wg_log(LV_ERR, "(%s) l_db2connect failed : (%d:%s)",__func__, SQLCODE, SQLERRM);
+		exitproc(-3);
+	}
+	wg_log(LV_MUST, "(%s) db connect OK ", __func__);
+
+	/*===============================================================
+	 * MAST SharedMemory INIT CHECK
+	 * 기동일자 다르면 초기화 진행
+	===============================================================*/
+	char	sdate[9];
+	struct timeval	tv;
+	struct tm *lt;
+
+EXEC SQL BEGIN DECLARE SECTION;
+	char	v_biz_ymd	[8+1];
+EXEC SQL END DECLARE SECTION;
+	memset(v_biz_ymd, 0x00, sizeof(v_biz_ymd));
+
+	// 영업일자 조회
+EXEC SQL
+	SELECT	거래기준년월일
+	  INTO	:v_biz_ymd
+	  FROM	INST1.TSKEIAM00
+	WITH UR;
+
+	if (SQLCODE != 0)
+	{
+		wg_log(LV_ERR, "(%s) (%s) select 거래기준년월일 error (%d:%s)", __FUNCTION__,v_biz_ymd, SQLCODE, SQLERRM);
+		exitproc(-4);
+	}
+
+	l_rtrim(v_biz_ymd);
+/*
+	gettimeofday(&tv, NULL);
+	lt = localtime(&tv.tv_sec);
+	sprintf (sdate, "%04d%02d%02d",lt->tm_year+1900, lt->tm_mon+1, lt->tm_mday);
+*/
+	// 마스터메모리의 영업일 다르면 초기화
+	if (memcmp(wgmst->bizdate, v_biz_ymd, sizeof(wgmst->bizdate)) != 0)
+	{
+		memset(wgmst, 0x00, sizeof(WGMST));
+		wg_log(LV_MUST, "(%s) shared memory initialized. ", __func__);
+
+		memcpy(wgmst->bizdate, v_biz_ymd, sizeof(wgmst->bizdate));
+	
+		memset(wgreq, 0x00, sizeof(WGREQ)*MX_WGREQ);
+
+		// 최초 로딩 시 365 기준 시점 세팅
+		char	ctime[6+1];
+		struct timeval	tmout, tv;
+		struct tm *lt;
+
+		gettimeofday(&tv, NULL);
+		lt = localtime(&tv.tv_sec);
+
+		sprintf(ctime, "%02d%02d%02d", lt->tm_hour, lt->tm_min, lt->tm_sec);
+		memcpy(wgmst->updtmkup, ctime, sizeof(wgmst->updtmkup));
+	}
+	wg_log(LV_MUST, "(%s) shared memory attach OK ", __func__);
+
+	/*===============================================================
+	 * THREAD 속성 초기화
+	===============================================================*/
+	pthread_t	tid;
+	size_t	stacksize=0;
+	pthread_attr_t attr;
+
+	pthread_attr_init(&attr);
+	pthread_attr_getstacksize(&attr, &stacksize);
+
+	if (stacksize < (2048*1024))
+	{
+		stacksize = 2048 * 1024;
+		pthread_attr_setstacksize(&attr, stacksize);
+	}
+
+	/*===============================================================
+	 * REQUEST 메모리 초기화
+	===============================================================*/
+	wgreq_clear();
+
+	/*===============================================================
+	 * 원장체결내역 처리 쓰레드 기동
+	===============================================================*/
+	int imod = 1;
+	pthread_create(&tid, &attr, handler_exec, (void *)&imod);
+	usleep(100000);
+
+	/*===============================================================
+	 * REQUEST READ DQUEUE INIT
+	===============================================================*/
+	int		rwno[2];
+	char	rbuf[1024], sbuf[1024];
+	
+	memset(&qin,  0x00, sizeof(qin));
+	memset(&rwno, 0x00, sizeof(rwno));
+
+	AG_DQUECLS(&qin);
+
+//dque->xas&AG_XAS_MTI : 해줘야 agipc_do_rlock() 호출
+	qin.xha |= AQ_XHA_OPN;
+	qin.xha |= AG_XAS_LIV;
+	qin.xha |= AG_XAS_CFM;  // 필요 ? 
+
+	rc = agdque_at (&qin, WG_DAT_DIR, NULL, WGDQ_RCVRQ, WGSEM_RCVRQ, sizeof(rbuf));
+	if (rc < 0)
+	{
+		wg_log(LV_ERR, "(%s) queue in agdque_at error (%d) ", __func__, rc);
+		exitproc(-4);
+	}
+	wg_log(LV_MUST, "(%s) queue in init ok..", __func__);
+
+	/*===============================================================
+	 * SEND DQUEUE INIT   >>> SOCKET(SEND/RECV) 으로 변경예정
+	===============================================================*/
+	int		slen, dsiz=1024;
+
+	memset(&qout, 0x00, sizeof(qout));
+	AG_DQUECLS(&qout);
+
+	qout.xha |= AQ_XHA_OPN;
+	qout.xha |= AG_XAS_LIV;
+
+	rc = agdque_at (&qout, WG_DAT_DIR, NULL, WGDQ_SNDRS, WGSEM_SNDRS, sizeof(sbuf));
+	if (rc < 0)
+	{
+		wg_log(LV_ERR, "(%s) queue out agdque_at error (%d) ", __func__, rc);
+		exitproc(-5);
+	}
+	wg_log(LV_MUST, "(%s) queue out init ok..", __func__);
+
+	/*===============================================================
+	 * READ JOURNAL INIT
+	===============================================================*/
+	JNLF	ojnl;
+	char	*aphome;
+
+	aphome = getenv("APPL_HOME");
+	if (aphome == (char *)NULL)
+	{
+		wg_log(LV_ERR, "(%s:%lu) get APPL_HOME Error..", __func__, tid);
+		pthread_exit(NULL);
+	}
+
+	// EXEC JOURNAL
+	memset(&ojnl, 0x00, sizeof(ojnl));
+	sprintf(ojnl.jfname, "%s/%s", DF_JNL_PATH, DF_ORD_JNL);
+
+// 저널 Open 실패하는 경우가 있어 Loop 추가
+while (1)
+{
+	rc = JFopen(&ojnl, 0, 0);
+	if (rc != 0)
+	{
+		wg_log(LV_ERR, "(%s:%lu) jfopen error.. (%d) (%s)", __func__, tid, rc, strerror(errno));
+		//pthread_exit(NULL);
+		sleep(2);	continue;
+	}
+	break;
+} // while
+
+	/*===============================================================
+	 * MAIN FUNCTION
+	===============================================================*/
+	int		dlen, pos;
+	char	rejmsg[1024];
+
+	WGREQ	*pq = NULL;
+
+	WGCOM *cr = (WGCOM *)&rbuf;
+	WGCOM *cs = (WGCOM *)&sbuf;
+
+	WGKEY *kr = &cr->wgkey;
+	WGKEY *ks = &cs->wgkey;
+
+	WG_QUOT_REQ *qr = (WG_QUOT_REQ *)(cr->data);
+	WG_QUOT_RES *qs = (WG_QUOT_RES *)(cs->data);
+	WG_QUOT_RES *qz = (WG_QUOT_RES *)(cr->data);	// FXGO 에서 수신한 quote 종료
+
+	WG_ORD      *or = (WG_ORD      *)(cr->data);
+	WG_ORD_EXC  *os = (WG_ORD_EXC  *)(cs->data);
+
+	wg_log(LV_MUST, "(%s) wait for request from client ........................ ", __func__);
+
+	int fvol = 0;	// 즉시체결 대상 수량
+
+	while (1)
+	{
+		/*------------------------------------------------------
+		 * READ Request from DQUEUE
+		------------------------------------------------------*/
+		memset(rbuf,   0x00, sizeof(rbuf));
+		memset(sbuf,   0x00, sizeof(sbuf));
+		memset(rejmsg, 0x00, sizeof(rejmsg));
+
+		dlen = agdque_rdn (&qin, WG_DAT_DIR, NULL, WGDQ_RCVRQ, WGSEM_RCVRQ, rbuf, sizeof(rbuf), 0, (-1), &rwno);		// AQ_DWAITM -> (-1)
+		if (dlen == 0){
+			//wg_log(LV_DEBUG, "agdque_rdn timeout (%d) (%d/%d)", rc, rwno[0], rwno[1]);
+			continue;
+		}
+		if (dlen < 0) {
+			wg_log(LV_ERR, "agdque_rdn error (%d)", rc);
+			break;
+		}
+		_set_pad(rbuf, dlen);
+
+		wg_log(LV_DEBUG, "\n\n\n");
+		wg_log(LV_DEBUG, "(%s) RCV(%d/%d) (%d:%.*s) >>>>>>>>>>>>>>>>>>>>>>>>", __func__, rwno[0], rwno[1], dlen, dlen, (char *)rbuf);
+
+		memset(rejmsg, 0x00, sizeof(rejmsg));
+
+		// 수신 WGKEY를 송신버퍼로 COPY
+		memcpy((char *)&cs->wgkey, (char *)&cr->wgkey, WG_KEYLEN);
+
+		switch (cr->msgtp[0])
+		{
+		//================================================================
+		// RECEIVE QUOTE REQUEST
+		//================================================================
+		case MSG_QTREQ :		// Quote Request(subscribe)
+
+			// SEND BUF KEY COPY : targetcompid+sendcompid+sendsubid+userid+symb
+			memcpy(qs->echoTags, qr->echoTags, sizeof(qs->echoTags));
+
+wg_log(LV_DEBUG, "[R] msgtp      =[%.*s]",sizeof(cr->msgtp     ), cr->msgtp     );	// 'R' Quote Request(subscribe)
+wg_log(LV_DEBUG, "[R] sendcompid =[%.*s]",sizeof(kr->sendcompid), kr->sendcompid);	// 49(SenderCompID)
+wg_log(LV_DEBUG, "[R] sendsubid  =[%.*s]",sizeof(kr->sendsubid ), kr->sendsubid );	// 50(SenderSubID)
+wg_log(LV_DEBUG, "[R] keysymb    =[%.*s]",sizeof(kr->keysymb   ), kr->keysymb   );	// 55(Symbol)
+wg_log(LV_DEBUG, "[R] tag35      =[%.*s]",sizeof(qr->tag35     ), qr->tag35     );	// 35(MsgType) // (R = QuoteRequest, Z = QuoteCancel, V = MarketDataRequest)
+wg_log(LV_DEBUG, "[R] subtp      =[%.*s]",sizeof(qr->subtp     ), qr->subtp     );	// 1:subscribe,  2:unsubscribe
+wg_log(LV_DEBUG, "[R] reqID      =[%.*s]",sizeof(qr->reqID     ), qr->reqID     );	// 131(QuoteReqID) // API:내부생성, RFS/RFQ:Tag117=QuoteID (Tag131=QuoteReqID, Tag262=MDReqID)
+wg_log(LV_DEBUG, "[R] stype      =[%.*s]",sizeof(qr->stype     ), qr->stype     );	// 167(SecurityType) // (S:FXSPOT,F:FXFWD,W:FXSWAP)
+wg_log(LV_DEBUG, "[R] symb       =[%.*s]",sizeof(qr->symb      ), qr->symb      );	// 55(Symbol) // (swap 인 경우 near)
+wg_log(LV_DEBUG, "[R] setldate   =[%.*s]",sizeof(qr->setldate  ), qr->setldate  );	// 64(FutSettDate) // 결제일(YYYYMMDD) (swap 인 경우 near)
+wg_log(LV_DEBUG, "[R] setldate2  =[%.*s]",sizeof(qr->setldate2 ), qr->setldate2 );	// 193(FutSettDate2) // SWAP 인 경우 far 결제일(YYYYMMDD)
+wg_log(LV_DEBUG, "[R] side       =[%.*s]",sizeof(qr->side      ), qr->side      );	// 54(Side) // '0'=2way, '1'=buy, '2'=sell
+wg_log(LV_DEBUG, "[R] orderqty   =[%.*s]",sizeof(qr->orderqty  ), qr->orderqty  );	// 38(OrderQty) // RFS, RFQ 인 경우 필수
+wg_log(LV_DEBUG, "[R] currency   =[%.*s]",sizeof(qr->currency  ), qr->currency  );	// 15(Currency)
+wg_log(LV_DEBUG, "[R] echoTags   =[%.*s]",sizeof(qr->echoTags  ), qr->echoTags  );	// echo tags to send back
+wg_log(LV_DEBUG, "===========================================================");
+
+			pos = wgreq_get(cr);		// KEY컬럼의 시작위치
+
+			if (qr->subtp[0] == '2')	// unsubscribe quote (Quote Cancel)
+			{
+				if (pos < 0) {
+					// 거부처리 : 거부패킷 생성 및 excqid 로 송신 (to FIX Server)
+					wg_log(LV_ERR, "(%s) not found request for market data. ", __func__);
+					sprintf(rejmsg, "not found request for market data");
+
+//					make_send_rej(cr, cs, ERR_REQ_NODATA, rejmsg);			// FIX send
+
+					break;	// switch (cr->msgtp[0]) case MSG_QTREQ
+				}
+
+				pq = (WGREQ *)(wgreq + pos);
+
+				//setreq_free(pq, NULL, 0);		// FXGO 종료 수신하면 종료처리만 함.(응답X)
+				wgreq_free(pq);
+				wg_log(LV_DEBUG, "(%s) unsubscribe request done.......................", __func__);
+
+				break;
+			}
+
+			// KEY 중복오류처리
+			if (pos >= 0) {
+				// 거부처리 : 거부패킷 생성 및 excqid 로 송신 (to FIX Server)
+				wg_log(LV_ERR, "(%s) duplicate request error !! pos=[%d]", __func__, pos);
+				sprintf(rejmsg, "duplicate request error !! ");
+
+				make_send_rej(cr, cs, ERR_REQ_DUP, rejmsg);			// FIX send
+
+				break;	// switch (cr->msgtp[0]) case MSG_QTREQ
+			}
+
+			//------------------------------------------------------
+			// REQUEST 빈 슬롯 할당 : 사용 해제된 슬롯 중 순차적으로 사용전환
+			// 1)빈슬롯 찾고 2)mutex 잡고 3)상품별수수료조회 4)기타정보세팅 5)mutex 해제 6)쓰레드 기동(offset전달)
+			//------------------------------------------------------
+			pos = wgreq_new(cr, rejmsg);		// useyn 상태 : DF_ALLOC (할당 상태)
+			if (pos < 0)
+			{
+				// 거부처리 : 거부패킷 생성 및 excqid 로 송신 (to FIX Server)
+				wg_log(LV_ERR, "(%s) no empty slot for FIX request..(%d)", __func__, pos);
+				make_send_rej(cr, cs, pos, rejmsg);			// FIX send
+				break;	// switch (cr->msgtp[0]) case MSG_QTREQ
+			}
+
+			pq = (WGREQ *)(wgreq + pos);
+
+			// 수신정보로 REQ 메모리 세팅
+			rc = setreq_info(pq, cr, rejmsg);
+			if (rc != 0)
+			{
+				// 거부처리 : 거부패킷 생성 및 excqid 로 송신 (to FIX Server)
+				wg_log(LV_ERR, "(%s) setreq_info error return (%d)", __func__, rc);
+				if (!rejmsg)	sprintf(rejmsg, "system error for FIX request.");
+
+				make_send_rej(cr, cs, rc, rejmsg);
+				wgreq_free(pq);
+				break;	// switch (cr->msgtp[0]) case MSG_QTREQ
+			}
+
+			// 사용자 수수료정보 세팅
+			rc = setreq_user(pq, cr, rejmsg);
+			if (rc != 0)
+			{
+				// 거부처리 : 거부패킷 생성 및 excqid 로 송신 (to FIX Server)
+				wg_log(LV_ERR, "(%s) setreq_user error return (%d)", __func__, rc);
+				if (!rejmsg)	sprintf(rejmsg, "system error for FIX request.");
+
+				make_send_rej(cr, cs, rc, rejmsg);
+				wgreq_free(pq);
+				break;	// switch (cr->msgtp[0]) case MSG_QTREQ
+			}
+printreq(pq);
+
+			// TODO : 쓰레드 관리기준 검토
+			// 현재는 모든 request 별 쓰레드 기동 후 시세처리
+			REQ_ON(pq);
+
+			if (pq->req.reqtp[0] == REQTP_RFQ)
+				pthread_create(&tid, &attr, handler_rfq,  (void *)&pos);
+			else
+				pthread_create(&tid, &attr, handler_quot, (void *)&pos);
+			
+//			usleep(1000);
+
+			wg_log(LV_DEBUG, "(%s) regist request done.......................", __func__);
+			break;		// switch (cr->msgtp[0]) case MSG_QTREQ
+
+		//================================================================
+		// ORDER RECEIVE
+		//================================================================
+		case MSG_ORDER :		// New/Amend/Cncl Order
+
+			wg_log(LV_DEBUG, "(%s) msgtp input MSG_ORDER (%c)", __func__, rbuf[0]);
+/*
+			if (dlen != sizeof(WG_ORD)) {
+				wg_log(LV_ERR, "(%s) receive packet(WG_ORD) size error (%d:%d)", __func__, sizeof(WG_ORD), dlen);
+				break;	// switch (cr->msgtp[0]) case MSG_ORDER
+			}
+*/
+wg_log(LV_DEBUG, "[R] msgtp       =[%.*s]", sizeof(cr->msgtp		), cr->msgtp		);		// 'O' New/Amend/Cncl Order
+wg_log(LV_DEBUG, "[R] sendcompid  =[%.*s]", sizeof(kr->sendcompid	), kr->sendcompid	);		// 49(SenderCompID)
+wg_log(LV_DEBUG, "[R] sendsubid   =[%.*s]", sizeof(kr->sendsubid	), kr->sendsubid	);		// 50(SenderSubID)
+wg_log(LV_DEBUG, "[R] keysymb     =[%.*s]", sizeof(kr->keysymb      ), kr->keysymb      );		// 55(Symbol)
+wg_log(LV_DEBUG, "[R] tag35       =[%.*s]", sizeof(or->tag35		), or->tag35		);		// 수신 Tag35
+wg_log(LV_DEBUG, "[R] quotID      =[%.*s]", sizeof(or->quotID		), or->quotID		);		// RFS인 경우 주문에 연동된 시세패킷 QuoteID (Tag117=QuoteID)
+wg_log(LV_DEBUG, "[R] account     =[%.*s]", sizeof(or->account		), or->account		);		// Dealer ID
+wg_log(LV_DEBUG, "[R] userid      =[%.*s]", sizeof(or->userid       ), or->userid       );		// UUID for FXGO : 803(PartySubIDType)='2' && Tag523(PartySubID)
+wg_log(LV_DEBUG, "[R] clordid     =[%.*s]", sizeof(or->clordid		), or->clordid		);		// TAG-11 기관주문번호     : 기관 주문번호
+wg_log(LV_DEBUG, "[R] ordid       =[%.*s]", sizeof(or->ordid		), or->ordid		);		// TAG-37 주문번호         : 데몬에서 채번한 KB주문번호
+wg_log(LV_DEBUG, "[R] origordid   =[%.*s]", sizeof(or->origordid	), or->origordid	);		// TAG-37 내부원주문번호   : 취소주문(35=F)인 경우 고객이 보낸 KB원주문번호
+wg_log(LV_DEBUG, "[R] stype       =[%.*s]", sizeof(or->stype		), or->stype		);		// Tag167=SecurityType or Tag9063=Tenor Code (S:FXSPOT,F:FXFWD,W:FXSWAP)
+wg_log(LV_DEBUG, "[R] symb        =[%.*s]", sizeof(or->symb			), or->symb			);		// 55(Symbol) // (swap 인 경우 near)
+wg_log(LV_DEBUG, "[R] setldate    =[%.*s]", sizeof(or->setldate		), or->setldate		);		// 결제일(YYYYMMDD) (swap 인 경우 near)
+wg_log(LV_DEBUG, "[R] side        =[%.*s]", sizeof(or->side			), or->side			);		// '0'=2way, '1'=buy, '2'=sell
+wg_log(LV_DEBUG, "[R] orderqty    =[%.*s]", sizeof(or->orderqty		), or->orderqty		);		// 밴드구분 기준 값 (ex. 주문금액) : RFS, RFQ 인 경우 필수
+wg_log(LV_DEBUG, "[R] currency    =[%.*s]", sizeof(or->currency		), or->currency		);		// Primary Currency
+wg_log(LV_DEBUG, "[R] price       =[%.*s]", sizeof(or->price		), or->price		);		// 주문가격
+wg_log(LV_DEBUG, "[R] ordtype     =[%.*s]", sizeof(or->ordtype		), or->ordtype		);		// 주문유형 : '1'-Market '2'-Limit
+wg_log(LV_DEBUG, "[R] timeinforce =[%.*s]", sizeof(or->timeinforce	), or->timeinforce	);		// 체결조건 : '0'-For Day
+wg_log(LV_DEBUG, "[R] setldate2   =[%.*s]", sizeof(or->setldate2	), or->setldate2	);		// SWAP 인 경우 far 결제일(YYYYMMDD)
+wg_log(LV_DEBUG, "[R] price2      =[%.*s]", sizeof(or->price2		), or->price2		);		// 주문가격 for FAR in SWAP
+wg_log(LV_DEBUG, "[R] echoTags    =[%.*s]", sizeof(or->echoTags		), or->echoTags		);		// echo tags to send back
+wg_log(LV_DEBUG, "===========================================================");
+
+			// SEND BUF KEY COPY : sendcompid+sendsubid+symbol
+			memcpy((char *)&cs->wgkey, (char *)&cr->wgkey,  WG_KEYLEN);
+			memcpy(os->echoTags, or->echoTags, sizeof(os->echoTags));
+
+			//------------------------------------------------------
+			// 해당 REQ 슬롯 검색 (by KEY 103 byte)
+			//------------------------------------------------------
+			pos = wgreq_get(cr);
+			if (pos < 0)
+			{
+				// 거부처리 : 거부패킷 생성 및 excqid 로 송신 (to FIX Server)
+				wg_log(LV_ERR, "(%s) request is not found.", __func__);
+				sprintf(rejmsg, "request is not found.");
+
+				make_send_rej(cr, cs, ERR_REQ_NODATA, rejmsg);
+				break;	// switch (cr->msgtp[0]) case MSG_ORDER
+			}
+
+			pq = (WGREQ *)(wgreq + pos);
+
+			//------------------------------------------------------
+			// 주문정합성 검증
+			// 		return > 0 : 즉시체결대상 있음 (체결가 ps->lastpx 세팅됨))
+			// 		return = 0 : 즉시체결대상 없음 (원장으로 주문접수 전달)
+			// 		return < 0 : 거부 및 오류 처리
+			//------------------------------------------------------
+			fvol = check_ord_valid(pq, cr, cs, rejmsg);
+			// ◆ ps(WG_ORD_EXC) 패킷 데이터 SET
+			//	msgtp, tag35, quotID, account, clordid, stype, setldate, setldate2, side, orderamt
+			//	currency, price, ordtype, timeinforce, echoTags
+			//	lastpx(★), commission(???)
+			if (fvol < 0)	// 주문거부처리
+			{
+				wg_log(LV_ERR, "(%s) check_ord_valid failed. reject order. (%d)", __func__, fvol);
+				// 거부처리 : 거부패킷 생성 및 excqid 로 송신 (to FIX Server)
+				make_send_rej(cr, cs, fvol, rejmsg);
+				wgreq_free(pq);	//"request is closed by order reject.");		// make_close() & FIX send & wgreq_free()
+				break;	// switch (cr->msgtp[0]) case MSG_ORDER
+			}
+// #####################################################################################################
+#ifdef __USE_ORD_TP__	// 고객주문서비스 호출
+			if (mymqcall_W3370A01(pq, or, rejmsg) < 0)		// 주문거부처리
+			{
+				wg_log(LV_ERR, "(%s) order service call failed. reject order. (%d)", __func__);
+				// 거부처리 : 거부패킷 생성 및 excqid 로 송신 (to FIX Server)
+				make_send_rej(cr, cs, ERR_SYSTEM, rejmsg);
+				wgreq_free(pq);		// "request is closed by order reject.");		// make_close() & FIX send & wgreq_free()
+			}
+			wg_log(LV_ERR, "(%s) ######## SEND ORDER TO ECM.. DONE..", __func__);
+
+			break;	// switch (cr->msgtp[0]) case MSG_ORDER
+// #####################################################################################################
+#else
+			switch (or->tag35[0])
+			{
+			//------------------------------------------------------
+			// 신규주문
+			//------------------------------------------------------
+			case 'D' :
+				// 즉시접수응답, 즉시체결, 한도체크, 오토헷지주문전송 기능
+				// 주문번호 채번 및 접수응답 송신 (to FIX)
+				// ◆ ps(WG_ORD_EXC) 패킷 데이터 SET
+				//	ordid, ordstatus, exectype
+
+// ★★★★ CHECK : FXGO 는 응답을 받지 않는다. 
+
+//				make_send_ack(cr, cs);
+
+				//------------------------------------------------------
+				// 즉시 체결대상인 경우 체결처리 (부분체결 없음. 전량 체결)
+				//------------------------------------------------------
+				if (fvol > 0)
+				{
+					// ◆ ps(WG_ORD_EXC) 패킷 데이터 SET
+					//	execid, lastqty, ordstatus, exectype, commission(???)
+					make_send_fill(pq, cr, cs);
+
+					// AutoHedge 가 세팅되어 있고 최소 주문금액 이상인 경우
+					double ordvol = str2d(or->orderqty, sizeof(or->orderqty));		// AutoHedge 최소 주문금액 비교
+					// ★TODO 1) : 오토헷지 진입기준 추가 필요 : SPOT(?), USDKRW(?) 등
+					if (pq->user.autohedge[0] == TRD_ON && ordvol >= DF_AUTOHEDGE_MIN)
+					{
+						// ★★★★★ TODO : 고객의 환율은 수수료 포함이기 떄문에 원가 햇지하려면 주문가격 다시 계산해야 함.
+						rc = send_autohedge(cr, cs);
+						if (rc < 0)
+							wg_log(LV_ERR, "(%s) send_autohedge error (%d) !!!!!!!!!!!!!!!!!!!!!!!", __func__, rc);
+					}
+					else
+						wg_log(LV_DEBUG, "(%s) autohedge skip (%.1s:%.f)", __func__, pq->user.autohedge, ordvol);
+
+					//부분체결 없음. 전량 체결
+					wgreq_free(pq);		//, 0, "the request is closed with excuted order.");
+				}
+				// IOC, FOK 주문이 즉시체결 조건이 아니면 주문 취소처리(spec 8.5 참조)
+				else if (fvol == 0 && or->timeinforce[0] == API_ORDTF_IOC || or->timeinforce[0] == API_ORDTF_FOK)
+				{
+					make_send_cncl(cr, cs);
+					wgreq_free(pq);		//, 0, "request is closed by excuted order.");
+
+					break;	// switch (cr->msgtp[0]) case MSG_ORDER  switch (or->tag35[0]) case 'D'
+				}
+
+				//------------------------------------------------------
+				// 체결/주문패킷 ORDER JNLF 로 PUSH (to 주문접수 및 체결 후처리 데몬)
+				//		1) 즉시체결없는 주문은 접수패킷을 원장으로 전달 (체결엔진에서 처리)
+				//		2) 즉시체결있는 주문은 체결패킷을 원장으로 전달 (체결 강제처리)
+				//------------------------------------------------------
+/* 원장 처리 안되므로 전송 BLOCK
+				ojnl.sndb = &sbuf;
+				ojnl.sndl = dlen;
+				rc = JFpush(&ojnl);
+*/
+				wg_log(LV_DEBUG, "(D:%s) >>>>>>>  SEND TO AP JOURNAL(JFpush) (%d:%d)", __func__, rc, ojnl.jferrn);
+				wg_log(LV_DEBUG, "===========================================================");
+				break;	// switch (cr->msgtp[0]) case MSG_ORDER  switch (or->tag35[0]) case 'D'
+
+			//------------------------------------------------------
+			// 취소주문
+			//------------------------------------------------------
+			case 'F' :
+
+				// 취소주문은 응답주지 않고 원장에서의 확인/거부를 사용한다. (접수응답 후 거부처리가 없음)
+				//make_send_ack(cr, cs);
+				//api_qsend(1, excqid, sbuf, dlen);
+
+				// ====================================================================
+				// 체결/주문패킷 ORDER JNLF 로 PUSH (to 주문접수 및 체결 후처리 데몬)
+				// ====================================================================
+/* 원장 처리 안되므로 전송 BLOCK
+				ojnl.sndb = &sbuf;
+				ojnl.sndl = dlen;
+
+				rc = JFpush(&ojnl);
+*/
+				wg_log(LV_DEBUG, "(F:%s) >>>>>>>  SEND TO AP JOURNAL(JFpush) (%d:%d)", __func__, rc, ojnl.jferrn);
+				wg_log(LV_DEBUG, "===========================================================");
+				break;	// switch (cr->msgtp[0]) case MSG_ORDER  switch (or->tag35[0]) case 'F'
+
+			default : 
+				wg_log(LV_ERR, "(%s) input tag35 error (%.1s) !!!!! ", __func__, or->tag35);
+				break;	// switch (cr->msgtp[0]) case MSG_ORDER  switch (or->tag35[0]) default
+			}
+			break;	// switch (cr->msgtp[0]) case MSG_ORDER
+#endif
+// #####################################################################################################
+		default :
+			wg_log(LV_ERR, "(%s) msgtp error (%c):", __func__, rbuf[0]);
+			break;
+
+		}	// switch (cr->msgtp[0])
+
+	}	// while (1)
+
+	wg_log(LV_ERR, ".....Termination function..");
+
+	exitproc(-99);
+}
+
+/*===============================================================
+ * GET EMPTY REQUEST SLOT
+===============================================================*/
+int wgreq_new(WGCOM *c, char *rejmsg)
+{
+	int		ii, pos=-1;
+	WGREQ	*p;
+	
+	p = (WGREQ *)wgreq;
+
+	for (ii=0; ii < MX_WGREQ; ii++, p++)
+	{
+		if (p->useyn == DF_OFF)
+		{
+			pthread_mutex_lock(&p->mutex);
+			
+			// 초기화
+			memset(&(p->useyn), 0x00, sizeof(WGREQ) - sizeof(pthread_mutex_t));	
+			REQ_ALLOC(p);			// 할당만 된 상태.. 데이터 세팅 중
+			memcpy((char *)&p->wgkey, (char *)&c->wgkey, WG_KEYLEN);
+
+pthread_mutex_unlock(&p->mutex);
+			pos = ii;
+			break;
+		}
+/* // ★★★★ CHECK : wgreq_get() 에서 WGKEY + symbol 까지 체크하기 때문에 중복검사는 된 상태임
+		else
+		{
+			// 각 패킷별, reqtp 별로 부가KEY로 사용할 필드를 비교 함. 현재는 SYMBOL
+			// ◆◆◆◆ TODO : 세션별user별로 복수의 종목에 대한 Request가 필요하면 부가KEY 변경이 필요함.
+			if (memcmp((char *)&p->wgkey, (char *)&c->wgkey, WG_KEYLEN) == 0)
+			{
+				sprintf(rejmsg, "request key duplication error..");
+				return (ERR_KEY_DUP*(-1));
+			}
+		}
+*/
+	}
+
+	if (pos < 0)
+	{
+		sprintf(rejmsg, "no empty slot for FIX request.");
+		return (ERR_REQ_MAX*(-1));
+	}
+
+	// req maxpos 갱신	
+	if (pos > wgmst->mxreqpos)
+	{
+		pthread_mutex_lock(&wgmst->mutex);
+		wgmst->mxreqpos = pos;
+		pthread_mutex_unlock(&wgmst->mutex);
+	}
+wg_log(LV_DEBUG, "(%s) request is allocated in (%d/%d)", __func__, pos, wgmst->mxreqpos);
+
+	return pos;
+}
+
+int wgreq_get(WGCOM *pc)
+{
+	int		ii, pos=-1;
+	WGREQ		*pq;
+
+	pq = (WGREQ *)wgreq;
+
+	// WGKEY로 한번 검색
+	for (ii=0; ii < MX_WGREQ; ii++, pq++)
+	{
+		if (pq->useyn == DF_OFF)		continue;
+
+		if (memcmp((char *)&pq->wgkey, (char *)&pc->wgkey, WG_KEYLEN) == 0)
+			return (ii);
+/*
+	WG_QUOT_REQ *qr=pc->data;
+	WG_QUOT_RES *qs=pc->data;
+	WG_QUOT     *qt=pc->data;
+	WG_ORD      *or=pc->data;
+	WG_ORD_EXC  *os=pc->data;
+
+			// 각 패킷별, reqtp 별로 부가KEY로 사용할 필드를 비교 함. 현재는 SYMBOL
+			// ◆◆◆◆ CHECK : 세션별user별로 복수의 종목에 대한 Request가 필요하면 부가KEY 변경이 필요함.
+			switch (pc->msgtp[0]) {
+				case MSG_QTREQ :
+					if (memcmp(qr->symb, pq->symb, sizeof(pq->symb)) == 0)	return (ii);
+					break;
+				case MSG_QUOTE :
+					if (memcmp(qt->symb, pq->symb, sizeof(pq->symb)) == 0)	return (ii);
+					break;
+				case MSG_ORDER :
+					if (memcmp(or->symb, pq->symb, sizeof(pq->symb)) == 0)	return (ii);
+					break;
+				case MSG_ORDEXC :
+					if (memcmp(os->symb, pq->symb, sizeof(pq->symb)) == 0)	return (ii);
+					break;
+				default : break;
+			}
+*/
+	}
+wg_log(LV_DEBUG, "(%s) not found with key in request !!!! ", __func__);
+	
+	// ◆◆◆◆ CHECK : FXGO 호가 중단이 올라올 때는 49, 56, 131 tag 만 올라옴
+	if (pc->msgtp[0] != MSG_QTREQ)	return (-1);
+
+	pq = (WGREQ *)wgreq;
+	WG_QUOT_REQ *qr=pc->data;
+
+	// reqID로 한번 더 검색
+	for (ii=0; ii < MX_WGREQ; ii++, pq++)
+	{
+		if (pq->useyn == DF_OFF)		continue;
+
+		if (memcmp(pq->wgkey.targetcompid, pc->wgkey.targetcompid, sizeof(pq->wgkey.targetcompid)) == 0 &&
+			memcmp(pq->wgkey.sendcompid,   pc->wgkey.sendcompid,   sizeof(pq->wgkey.sendcompid))   == 0 &&
+			memcmp(qr->reqID, pq->reqID, sizeof(pq->reqID)) == 0)	return (ii);
+	}
+wg_log(LV_DEBUG, "(%s) not found with reqID in request !!!! ", __func__);
+
+	return (-1);
+}
+
+void wgreq_free(WGREQ *p)
+{
+	int		ii;
+	WGREQ	*m;
+
+//printreq(p);
+	pthread_mutex_lock(&p->mutex);
+	REQ_OFF(p);
+	pthread_mutex_unlock(&p->mutex);
+
+	m = (WGREQ *)(wgreq + (MX_WGREQ-1));
+
+	for (ii=MX_WGREQ-1; ii >= 0; ii--, m--)
+	{
+		if (m->useyn != DF_OFF)	break;
+	}
+	pthread_mutex_lock(&wgmst->mutex);
+	wgmst->mxreqpos = ii;
+	pthread_mutex_unlock(&wgmst->mutex);
+
+wg_log(LV_DEBUG, "(%s) request (%.20s/%.20s/%.30s) is initialized (mx=%d)", __func__, p->wgkey.sendcompid, p->wgkey.sendsubid, p->reqID, wgmst->mxreqpos);
+
+	return ;
+}
+
+/*===============================================================
+ * 재기동 시 REQ 처리
+   > 유효시간이 남은 REQ : 쓰레드 기동
+   > 유효시간이 지난 REQ : 종료처리
+===============================================================*/
+void wgreq_clear()
+{
+	int		ii, pos=-1;
+	char	ctime [ 9+1];		// quote end time (HHMMssSSS)
+	WGREQ	*p;
+	
+	// initial mutex for request
+	size_t	stacksize=0;
+	pthread_t	tid;
+	pthread_attr_t 			attr;
+	pthread_mutexattr_t		mattr;
+
+	pthread_mutexattr_init (&mattr);
+	pthread_mutexattr_setpshared(&mattr, PTHREAD_PROCESS_SHARED);
+	pthread_mutex_init (&wgmst->mutex, &mattr);
+
+	pthread_attr_init(&attr);
+	pthread_attr_getstacksize(&attr, &stacksize);
+	if (stacksize < (2048*1024)){
+		stacksize = 2048 * 1024;
+		pthread_attr_setstacksize(&attr, stacksize);
+	}
+
+	// 현재시간 기준으로 종료된 request 판단
+	struct timeval	tmout, tv;
+	struct tm *lt;
+
+	gettimeofday(&tv, NULL);
+	lt = localtime(&tv.tv_sec);
+
+	sprintf(ctime, "%02d%02d%02d%03d",lt->tm_hour,lt->tm_min,lt->tm_sec,tv.tv_usec/1000);
+
+	p = (WGREQ *)wgreq;
+
+	for (ii=0; ii < MX_WGREQ; ii++, p++)
+	{
+		pthread_mutex_init(&p->mutex, &mattr);
+
+		if (p->useyn == DF_OFF)		continue;
+
+		// 유효시간이 종료된 RFS,RFQ 해제  또는  유효한 request 용 thread 기동
+		if (((p->req.reqtp[0] == REQTP_RFS || p->req.reqtp[0] == REQTP_RFQ) && memcmp(p->req.etime, ctime, sizeof(p->req.etime)) < 0) ||
+			p->useyn == DF_ALLOC)
+			wgreq_free(p);
+		else
+		{
+			pthread_create(&tid, &attr, handler_quot, (void *)&ii);
+			usleep(100000);
+		}
+	}
+
+wg_log(LV_DEBUG, "(%s) request info restarted. mx(%d)", __func__, wgmst->mxreqpos);
+
+	return pos;
+}
+
+/*===============================================================
+ * REQUEST별 시세 관리 쓰레드
+===============================================================*/
+void *handler_quot(void *argv)
+{
+	int		ii, rc, dlen, idx;
+	char	rbuf[1024], sbuf[1024], tbuf[1024];
+	pthread_t	tid;
+
+	tid = pthread_self();
+	pthread_detach(tid);
+
+	idx = *((int *)argv);
+
+	wg_log(LV_MUST, "(%s:%lu) thread handler_quot start ! ..", __func__, tid);
+
+	memset(rbuf, 0x00, sizeof(rbuf));
+	memset(sbuf, 0x00, sizeof(sbuf));
+	memset(tbuf, 0x00, sizeof(tbuf));
+
+	/*===============================================================
+	 * MULTICAST 수신 초기화 (CUST.new.cfg 기준 AP시세 수신)
+	 * xml 파싱으로 하기에는 변동의 여지가 적어 헤더파일에 정의
+	===============================================================*/
+	int		mport     = DF_MDS_PORT;
+	char	mipad[16] = DF_MDS_MCAST;
+
+	int		rsock, bsize, options = 1;
+	in_addr_t addr;
+	struct	sockaddr_in svrsock, clisock;
+	struct	ip_mreq ip_mreq;
+	socklen_t socklen = sizeof(svrsock);
+
+	memset(&svrsock, 0, sizeof(svrsock));
+	memset(&clisock, 0, sizeof(clisock));	
+
+	addr = ntohl(inet_addr(mipad));
+
+	if ((rsock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0)
+	{
+		wg_log(LV_ERR, "(%s:%lu) Cannot open a socket for %s.%d", __func__, tid, mipad, mport);
+		pthread_exit(NULL);
+	}
+
+	options = 1;
+	setsockopt(rsock, SOL_SOCKET, SO_REUSEADDR, &options, sizeof(options));
+	
+	bsize = 80 * 1024;
+	setsockopt(rsock, SOL_SOCKET, SO_RCVBUF, &bsize, sizeof(int));
+
+	svrsock.sin_family = AF_INET;
+	svrsock.sin_addr.s_addr = INADDR_ANY;
+	svrsock.sin_port = htons(mport);
+
+	ip_mreq.imr_multiaddr.s_addr = inet_addr(mipad);
+	ip_mreq.imr_interface.s_addr = INADDR_ANY;
+	if (setsockopt(rsock, IPPROTO_IP, IP_ADD_MEMBERSHIP, (void *)&ip_mreq, sizeof(ip_mreq)) != 0)
+	{
+		wg_log(LV_ERR, "(%s:%lu) Cannnot add a multicast member for %s.%d", __func__, tid, mipad, mport);
+		close(rsock);
+		pthread_exit(NULL);
+	}
+
+	if (bind(rsock, (struct sockaddr *)&svrsock, sizeof(svrsock)) != 0)
+	{
+		wg_log(LV_ERR, "(%s:%lu) Cannot bind a socket for %s.%d", __func__, tid, mipad, mport);
+		close(rsock);
+		pthread_exit(NULL);
+	}
+	
+	wg_log(LV_MUST, "(%s:%lu) Start to receive from %s.%d", __func__, tid, mipad, mport);
+
+	/*===============================================================
+	 * MAIN PROCESS : 시세 수신 및 처리
+	===============================================================*/
+	APSISE		*pr;
+	WGREQ		*pq;
+
+	pr = (APSISE *)rbuf;
+
+	WGCOM   *cs = sbuf;
+	WG_QUOT	*ps = cs->data;
+
+	int		waitflag = 0;
+	int 	tmic = 1000; // wait for data
+	memset(tbuf, 0x00, sizeof(tbuf));
+
+	struct timeval	tmout, tv;
+	struct tm *tm;
+	fd_set	fds;
+	double	dtm1, dtm2;
+	char	ctime [9+1];		// current time (HHMMssSSS)
+
+	// 대상 request와 코드비교
+	pq = (WGREQ *)(wgreq + idx);
+
+wg_log(LV_DEBUG, "(%s:%lu) (%d) reqinfo (%.20s/%.20s) tp:%.1s (%.1s/%.6s/%.6s)", __func__, tid, idx,
+		pq->wgkey.sendcompid, pq->reqID, pq->req.reqtp, pq->stype, pq->symb, pq->symb4r);
+
+	long	sndcnt=0;
+	char	rejmsg[1024];
+
+	while (1)
+	{
+		/*===============================================================
+		 * MULTICAST 수신
+		===============================================================*/
+		memset(rbuf, 0x00, sizeof(rbuf));
+		memset(sbuf, 0x00, sizeof(sbuf));
+
+		dlen = 0;
+		tmout.tv_sec  = 0;
+		tmout.tv_usec = tmic;
+		
+		FD_ZERO(&fds);
+		FD_SET(rsock, &fds);
+
+		rc = select (rsock+1, &fds, NULL, NULL, &tmout);
+		if (rc < 0)
+		{
+			if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
+				continue;
+
+			break;
+		}
+		if (FD_ISSET(rsock, &fds))
+			dlen = read(rsock, rbuf, sizeof(rbuf));
+		//===================================================================================
+		// 초당 전송제한(5건) 관리
+		// 1. 5건전의 전송시간과 비교하여 1초 미만이면 임시버퍼로 카피 후 continue
+		// 2. udp 수신에 timeout 설정 (1/1000초)
+		// 3. udp select
+		// 3-1. timeout : 수신데이터 없고, 1초가 지났으면 임시버퍼(tbuf) 데이터를 (지연)전송
+		// 3-2. 데이터수신
+		// 3-2.1  > 여전히 1초 미만이면 최종 수신데이터를 임시버퍼로 다시 카피 continue
+		// 3-2.2  > 1초 지났으면 최종 수신데이터로 데이터 처리 진행
+		//===================================================================================
+		gettimeofday(&tv, NULL);
+		tm = localtime(&tv.tv_sec);
+		dtm1 = tv.tv_sec + tv.tv_usec/1000000.;
+
+		/*===============================================================
+		 * 전송대상 조건 체크
+		 * RFS인 경우 주문실행으로 REQ 종료되었을 경우는 쓰레드 종료
+		===============================================================*/
+		if (pq->useyn == DF_OFF) {
+			// request 당 쓰레드 기동인 경우는 바로 종료
+			wg_log(LV_DEBUG, "(%s:%lu) request is unsubscribed (%.20s) useyn=(%d)", __func__, tid, pq->reqID, pq->useyn);
+			break;
+		}
+
+		// RFS인경우 시간체크
+		sprintf(ctime, "%02d%02d%02d000", tm->tm_hour, tm->tm_min, tm->tm_sec);
+		if (memcmp(pq->req.etime, ctime, sizeof(pq->req.etime)) < 0)
+		{
+			wg_log(LV_DEBUG, "(%s:%lu) RFS(%.20s) feed time end. (%.9s~%.9s) auto stop..", __func__, tid, pq->reqID, pq->regtime, pq->req.etime);
+
+			memset(sbuf, 0x00, sizeof(sbuf));
+			make_send_close(pq, cs, 0, "request time is over..");
+			wgreq_free(pq);
+
+			break;
+		}
+
+		if (pq->useyn == DF_ALLOC)		continue;
+
+		if (dlen == 0)
+		{
+			// 마크업의 변경으로 365가 갱신되었을 경우 : setreq_user() 다시 호출하여 적용
+			// RFS, RFQ는 최초 요청시점에 조회한 365데이터를 기준으로 호가제공 (업데이트 없음)
+			if (memcmp(pq->updtmkup, wgmst->updtmkup, sizeof(pq->updtmkup)) != 0 && pq->req.reqtp[0] != REQTP_RFS && pq->req.reqtp[0] != REQTP_RFQ)
+			{
+				wg_log(LV_INFO, "(%s:%lu) 365 markup update !!!!  [%.6s > %.6s]", __func__, tid, pq->updtmkup, wgmst->updtmkup);
+				setreq_user(pq, NULL, rejmsg);
+			}
+
+			// 최초 기동 시 첫 시세 전송
+			if (sndcnt <= 0 && pq->useyn == DF_ON && pq->req.reqtp[0] != REQTP_RFQ)
+			{
+				memcpy(pr->symb, pq->markup[0].symb, sizeof(pr->symb));
+				pr->bidprc   = pq->markup[0].bsmkup[BIDPOS].orgprc;
+				pr->offerprc = pq->markup[0].bsmkup[ASKPOS].orgprc;
+
+				wg_log(LV_DEBUG, "(%s) send 1st quot with mast SHM.. ", __func__);
+				goto send1stQUOT;
+			}
+
+			// 현재시간으로 초당 제한 조건 비교하여 넘은 경우 continue
+			dtm2 = pq->quot[DF_MAXFEED -1].qtm.tv_sec + pq->quot[DF_MAXFEED -1].qtm.tv_usec/1000000.;
+			if ((dtm1 - dtm2) < 1.0 && (dtm1 - dtm2) > .0)
+			{
+				//wg_log(LV_DEBUG, "(%s:%lu) timeout.. under 1 sec (%f).  continue ", __func__, tid, dtm1-dtm2);
+				continue;
+			}
+
+			// 수신한 데이터가 없고(timeout) 건수제한시간 지났으면, 최종데이터인 tbuf를 처리대상으로 카피
+			if (waitflag) {
+				memcpy(rbuf, tbuf, sizeof(rbuf));
+				waitflag = DF_OFF;
+				wg_log(LV_DEBUG, "(%s:%lu) timeout.. over 1 sec (%f).  send last data ", __func__, tid, dtm1-dtm2);
+			}
+			else	continue;
+		}
+
+		// 수신한 시세와 request 종목 비교
+		// 재정종목인 경우 USDKRW 는 항상 처리
+		if (!((memcmp(pr->symb, pq->symb4r, sizeof(pq->symb4r)) == 0) ||
+		      (memcmp(pr->symb, DF_USRKRW,  sizeof(pq->symb4r)) == 0 && pq->crosyn == DF_ON)))
+			continue;
+
+		if (pr->usdbid <= .0 || pr->usdoffer <= .0 || pr->bidprc <= .0 || pr->offerprc <= .0)
+		{
+			wg_log(LV_WARN, "(%s:%lu) bad tick (%.6s) (%f:%f:%f:%f) !!! ", __func__, tid, pr->symb, 
+						pr->usdbid, pr->usdoffer, pr->bidprc, pr->offerprc);
+			continue;
+		}
+
+		// 시간비교
+//		gettimeofday(&tv, NULL);
+		dtm1 = tv.tv_sec + tv.tv_usec/1000000.;
+		dtm2 = pq->quot[DF_MAXFEED -1].qtm.tv_sec + pq->quot[DF_MAXFEED -1].qtm.tv_usec/1000000.;
+
+//wg_log(LV_DEBUG, "(%s:%lu) (%.6s) feed term (%f) ", __func__, tid, pr->symb, dtm1-dtm2);
+		if ((dtm1 - dtm2) < 1.0 && (dtm1 - dtm2) > .0)
+		{
+			// 수신데이터가 있는 상태에서 1초가 지나지 않았으면 최종 수신데이터를 tbuf에 보관 후 다시 continue
+			memset(tbuf, 0x00, sizeof(tbuf));
+			memcpy(tbuf, rbuf, sizeof(tbuf));
+			waitflag = DF_ON;
+			// 이후 데이터가 들어오지 않을 수 있으므로 timeout 을 통해 시간체크. 1초 지난 시점에 최종 데이터 전송
+//			tmic = 10000;	// TODO : timeout : 1/100 sec 변경해야 함
+			//wg_log(LV_DEBUG, "(%s:%lu) data count over in 1 sec (%.2f). continue. ", __func__, tid, dtm1-dtm2);
+			continue;
+		}
+//		tmic = -1; // wait for data
+
+// REQ요청 후 첫시세는 마스터메모리 종가로 보냄.
+send1stQUOT :
+
+		/*===============================================================
+		 * 고객시세 생성 및 FIX엔진 전달
+		===============================================================*/
+		if (make_send_quote(pq, pr, cs, 0., 0.) < 0)
+		{ 
+			wg_log(LV_ERR, "(%s:%lu) make_quote error (%.6s) (%f:%f:%f:%f) !!! ", __func__, tid, pr->symb, 
+						pr->usdbid, pr->usdoffer, pr->bidprc, pr->offerprc);
+			continue;
+		}
+//if (sndcnt%1000 == 0)
+wg_log(LV_DEBUG, "(%s:%lu) (%.20s/%.20s) (%.1s/%.6s) feeding (%d)", __func__, tid, cs->wgkey.sendcompid, ps->reqID, ps->stype, ps->symb, sndcnt);
+
+		sndcnt++;
+	}
+
+	close(rsock);
+	
+	wg_log(LV_ERR, "(%s:%lu) is terminated..", __func__, tid);
+
+	pthread_exit(NULL);	
+}
+
+/*===============================================================
+ * 원장체결내역 수신 및 FIX 전송
+===============================================================*/
+void *handler_exec(void *argv)
+{
+	int		ii, rc, idx, pos;
+	int		dsiz=1024, dlen, slen=sizeof(WGCOM)+sizeof(WG_ORD_EXC);
+	char	rbuf[1024], sbuf[1024], *aphome;
+	pthread_t	tid;
+
+	tid = pthread_self();
+	pthread_detach(tid);
+
+	idx = *((int *)argv);
+
+	wg_log(LV_MUST, "(%s:%lu) thread handler_exec start ! ..", __func__, tid);
+
+	/*===============================================================
+	 * READ JOURNAL INIT
+	===============================================================*/
+	JNLF	ejnl;
+
+	aphome = getenv("APPL_HOME");
+	if (aphome == (char *)NULL)
+	{
+		wg_log(LV_ERR, "(%s:%lu) get APPL_HOME Error..", __func__, tid);
+		pthread_exit(NULL);
+	}
+
+	// EXEC JOURNAL
+	memset(&ejnl, 0x00, sizeof(ejnl));
+	sprintf(ejnl.jfname, "%s/%s", DF_AGR_JNL_PATH, DF_AGR_JNL_NAME);
+
+// 저널 Open 실패하는 경우가 있어 Loop 추가
+while (1)
+{
+	rc = JFopen(&ejnl, idx, 1);
+	if (rc != 0)
+	{
+		wg_log(LV_ERR, "(%s:%lu) jfopen error.. (%d) (%s)", __func__, tid, rc, strerror(errno));
+		//pthread_exit(NULL);
+		sleep(2);	continue;
+	}
+	break;
+} // while(1)
+
+wg_log(LV_ERR, "(%s:%lu) jfopen OK.... ", __func__, tid);
+
+	ejnl.rcvb = rbuf;
+
+	WGCOM       *cr = ejnl.rcvb;
+	WG_ORD_EXC	*pr = cr->data;
+	WGKEY		*kr = &cr->wgkey;
+
+	// 저널에서 체결데이터 읽고 (TCP/dque)로 전송
+	while (1)
+	{
+		/*===============================================================
+		 * 체결실시간 READ (저널API)
+		===============================================================*/
+		dlen = JFpop(&ejnl, 10);		// int jfpop(JNLF *jnlf, int timeval)
+		if (dlen == 0)	continue;
+
+		if (dlen < 0)
+		{
+			if (ejnl.jferrn == EAGAIN)
+			{
+				wg_log(LV_DEBUG, "(%s:%lu) jfpop timeout. (%d)", __func__, tid, dlen);
+				continue;
+			}
+			wg_log(LV_ERR, "(%s:%lu) jfpop error. (%d/%d)", __func__, tid, dlen, ejnl.jferrn);
+			break;
+		}
+
+wg_log(LV_DEBUG, "[J] msgtp       = [%.*s]", sizeof(cr->msgtp		) , cr->msgtp		);	// 'E' Order Ack/Execution
+wg_log(LV_DEBUG, "[J] sendcompid  = [%.*s]", sizeof(kr->sendcompid	) , kr->sendcompid	);	// 49(SenderCompID)
+wg_log(LV_DEBUG, "[J] sendsubid   = [%.*s]", sizeof(kr->sendsubid	) , kr->sendsubid	);	// 50(SenderSubID)
+wg_log(LV_DEBUG, "[J] keysymb     = [%.*s]", sizeof(kr->keysymb     ),  kr->keysymb     );	// 55(Symbol)
+
+wg_log(LV_DEBUG, "[J] tag35       = [%.*s]", sizeof(pr->tag35		) , pr->tag35		);	// 송신 Tag35
+wg_log(LV_DEBUG, "[J] quotID      = [%.*s]", sizeof(pr->quotID		) , pr->quotID		);	// RFS인 경우 주문에 연동된 시세패킷 QuoteID (Tag117=QuoteID)
+wg_log(LV_DEBUG, "[J] account     = [%.*s]", sizeof(pr->account		) , pr->account		);	// Dealer ID
+wg_log(LV_DEBUG, "[J] userid      = [%.*s]", sizeof(pr->userid		) , pr->userid		);	// UUID for FXGO : Tag803(PartySubIDType)='2' && Tag523(PartySubID)
+wg_log(LV_DEBUG, "[J] clordid     = [%.*s]", sizeof(pr->clordid		) , pr->clordid		);	// TAG-11 기관주문번호     : 기관 주문번호
+wg_log(LV_DEBUG, "[J] ordid       = [%.*s]", sizeof(pr->ordid		) , pr->ordid		);	// TAG-37 주문번호         : 데몬에서 채번한 KB주문번호
+wg_log(LV_DEBUG, "[J] origordid   = [%.*s]", sizeof(pr->origordid	) , pr->origordid	);	// TAG-37 내부원주문번호   : 취소주문(35=F)인 경우 고객이 보낸 KB원주문번호
+wg_log(LV_DEBUG, "[J] stype       = [%.*s]", sizeof(pr->stype		) , pr->stype		);	// Tag167=SecurityType or Tag9063=Tenor Code (S:FXSPOT,F:FXFWD,W:FXSWAP)
+wg_log(LV_DEBUG, "[J] symb        = [%.*s]", sizeof(pr->symb		) , pr->symb		);	// 55(Symbol) // (swap 인 경우 near)
+wg_log(LV_DEBUG, "[J] setldate    = [%.*s]", sizeof(pr->setldate	) , pr->setldate	);	// 결제일(YYYYMMDD) (swap 인 경우 near)
+wg_log(LV_DEBUG, "[J] setldate2   = [%.*s]", sizeof(pr->setldate2	) , pr->setldate2	);	// SWAP 인 경우 far 결제일(YYYYMMDD)
+wg_log(LV_DEBUG, "[J] side        = [%.*s]", sizeof(pr->side		) , pr->side		);	// '0'=2way, '1'=buy, '2'=sell
+wg_log(LV_DEBUG, "[J] orderqty    = [%.*s]", sizeof(pr->orderqty	) , pr->orderqty	);	// 밴드구분 기준 값 (ex. 주문금액) : RFS, RFQ 인 경우 필수
+wg_log(LV_DEBUG, "[J] currency    = [%.*s]", sizeof(pr->currency	) , pr->currency	);	// Primary Currency
+wg_log(LV_DEBUG, "[J] price       = [%.*s]", sizeof(pr->price		) , pr->price		);	// 주문가격
+wg_log(LV_DEBUG, "[J] ordtype     = [%.*s]", sizeof(pr->ordtype		) , pr->ordtype		);	// 주문유형 : '1'-Market '2'-Limit
+wg_log(LV_DEBUG, "[J] timeinforce = [%.*s]", sizeof(pr->timeinforce	) , pr->timeinforce);	// 체결조건 : '0'-For Day
+wg_log(LV_DEBUG, "[J] lastqty     = [%.*s]", sizeof(pr->lastqty		) , pr->lastqty		);	// TAG-32   체결수량         : 
+wg_log(LV_DEBUG, "[J] execid      = [%.*s]", sizeof(pr->execid		) , pr->execid		);	// TAG-17   채결ID           : KB 체결번호
+wg_log(LV_DEBUG, "[J] lastpx      = [%.*s]", sizeof(pr->lastpx		) , pr->lastpx		);	// TAG-31   체결가격         : 
+wg_log(LV_DEBUG, "[J] ordstatus   = [%.*s]", sizeof(pr->ordstatus	) , pr->ordstatus	);	// TAG-39   주문상태         : '0'-NEW
+wg_log(LV_DEBUG, "[J] exectype    = [%.*s]", sizeof(pr->exectype	) , pr->exectype	);	// TAG-150  거래유형         : '0'-New
+wg_log(LV_DEBUG, "[J] commission  = [%.*s]", sizeof(pr->commission	) , pr->commission	);	// TAG-12   수수료           : 
+wg_log(LV_DEBUG, "[J] rejcd       = [%.*s]", sizeof(pr->rejcd		) , pr->rejcd		);	// 300(QuoteRejectReason) // 거부코드
+wg_log(LV_DEBUG, "[J] rejtext     = [%.*s]", sizeof(pr->rejtext		) , pr->rejtext		);	// 58(Text) // 거부사유
+wg_log(LV_DEBUG, "[J] echoTags    = [%.*s]", sizeof(pr->echoTags	) , pr->echoTags	);	// echo tags to send back
+wg_log(LV_DEBUG, "===========================================================");
+
+		/*===============================================================
+		// 해당 REQ 슬롯 검색 (by KEY 103 byte)
+		===============================================================*/
+		pos = wgreq_get(cr);
+		if (pos < 0) {
+			wg_log(LV_ERR, "(%s:%lu) not found request for market data. ", __func__, tid);
+			continue;
+		}
+
+		WGREQ *pq = (WGREQ *)(wgreq + pos);
+
+		/*===============================================================
+		// 해당 REQ 슬롯 검색 (by KEY 103 byte)
+		// TODO : 수신한 체결 및 거부내역에 따른 REQ 업데이트 필요.
+		//      : 원장에서 못 준 정보는 REQ 메모리에서 채움
+		===============================================================*/
+		memcpy(pr->userid, pq->user.userid, sizeof(pr->userid));
+
+		/*===============================================================
+		 * SEND TO FIX
+		===============================================================*/
+		_set_pad(rbuf, dlen);
+		rc = agdque_wrn (&qout, WG_DAT_DIR, NULL, WGDQ_SNDRS, WGSEM_SNDRS, dsiz, rbuf, dlen);
+		if (rc < 0)
+			wg_log(LV_ERR, "(%s:%lu) agdque_wrn error... [%d]", __func__, tid, rc);
+
+		if (pq->req.reqtp[0] == REQTP_RFS || pq->req.reqtp[0] == REQTP_RFQ)
+		{
+			// RFS,RFQ는 접수없이 체결 또는 거부 전송
+			wgreq_free(pq);		//, 0, "request is closed by excuted order.");		// make_close() & FIX send & wgreq_free()
+		}
+	}
+
+	wg_log(LV_ERR, "(%s:%lu) is terminated..", __func__, tid);
+
+	pthread_exit(NULL);
+}
+
+/*===============================================================
+ * RFQ 호가정보 수신처리 쓰레드
+===============================================================*/
+void *handler_rfq(void *argv)
+{
+	int		ii, rc, dlen, idx;
+	char	rbuf[1024], sbuf[1024];
+	pthread_t	tid;
+
+	tid = pthread_self();
+	pthread_detach(tid);
+
+	struct _rfq {	// W6109A02 서비스에 선언된 broadcast 용 구조체
+		char	RspnsCd[ 1];	//응답코드(1:제시, 2:거부)
+		char	Winkey [20];	//WindowKey
+		char	RFQKey [15];	//RFQ키
+		char	BidPrc [20];	//BID최종가격
+		char	AskPrc [20];	//ASK최종가격
+		char	NearPrc[20];	//NEAR가격 
+		char	FarPrc [20];	//FAR가격
+	};
+
+	idx = *((int *)argv);
+
+	wg_log(LV_MUST, "(%s:%lu) thread handler_rfq start ! ..", __func__, tid);
+
+	memset(rbuf, 0x00, sizeof(rbuf));
+	memset(sbuf, 0x00, sizeof(sbuf));
+
+	/*===============================================================
+	 * RFQ 호가 UDP수신 (W6109A02 서비스에서 호가 broadcast 시 분기처리)
+	  > RFQ 발생 시마다 쓰레드 기동하므로 multicast 로 수신. 할당된 RFQKey로 Filtering
+	===============================================================*/
+	int		r_sock;
+	struct	sockaddr_in svrsock, clisock;
+	struct	ip_mreq ip_mreq;
+	socklen_t socklen = sizeof(svrsock);
+
+	// multicasting
+	if ((r_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0)
+	{
+		wg_log(LV_ERR, "Cannot open a socket for %s.%d", DF_MDS_MCAST, DF_RFQ_PORT);
+		pthread_exit(NULL);
+	}
+
+	svrsock.sin_family = AF_INET;
+	svrsock.sin_addr.s_addr = INADDR_ANY;
+	svrsock.sin_port = htons(DF_RFQ_PORT);
+
+	int options = 1;
+	setsockopt(r_sock, SOL_SOCKET, SO_REUSEADDR, &options, sizeof(options));
+	
+	if (bind(r_sock, (struct sockaddr *)&svrsock, sizeof(svrsock)) != 0)
+	{
+		wg_log(LV_ERR, "Cannot bind a socket for %s.%d", DF_MDS_MCAST, DF_RFQ_PORT);
+		close(r_sock);
+		pthread_exit(NULL);
+	}
+	ip_mreq.imr_multiaddr.s_addr = inet_addr(DF_MDS_MCAST);
+	ip_mreq.imr_interface.s_addr = INADDR_ANY;
+	if (setsockopt(r_sock, IPPROTO_IP, IP_ADD_MEMBERSHIP, (void *)&ip_mreq, sizeof(ip_mreq)) != 0)
+	{
+		wg_log(LV_ERR, "Cannnot add a multicast member for %s.%d", DF_MDS_MCAST, DF_RFQ_PORT);
+		close(r_sock);
+		pthread_exit(NULL);
+	}
+	wg_log(LV_MUST, "start to receive from %s.%d", DF_MDS_MCAST, DF_RFQ_PORT);
+
+	/*===============================================================
+	 * 변수 초기화
+	===============================================================*/
+	WGREQ	*pq;
+	APSISE	ap;
+		
+	WGCOM	*cs = sbuf;
+	WG_QUOT	*ps = cs->data;
+
+	struct _rfq *pr	= (struct _rfq *)&rbuf;
+
+	// 대상 request와 코드비교(RFQKey = reqID)
+	pq = (WGREQ *)(wgreq + idx);
+
+wg_log(LV_DEBUG, "(%s:%lu) (%d) wait start for >> req (%.20s/%.20s) tp:%.1s (%.1s/%.6s) key(%.15s)", __func__, tid, idx,
+		pq->wgkey.sendcompid, pq->reqID, pq->req.reqtp, pq->stype, pq->symb, pq->req.rfskey);
+
+	struct timeval	tv;
+	struct tm *tm;
+	char	ctime [9+1];		// current time (HHMMssSSS)
+
+	while (1)
+	{
+		/*===============================================================
+		 * RFQ 호가 수신
+		===============================================================*/
+		memset(rbuf, 0x00, sizeof(rbuf));
+		memset(sbuf, 0x00, sizeof(sbuf));
+		memset(&ap,  0x00, sizeof(ap));
+
+		dlen = recvfrom(r_sock, rbuf, sizeof(rbuf), 0, (struct sockaddr *)&clisock, &clisock);
+		/*===============================================================
+		 * 전송대상 조건 체크
+		 * RFQ인 경우 주문실행으로 REQ 종료되었을 경우는 쓰레드 종료
+		===============================================================*/
+		if (pq->useyn == DF_OFF) {
+			// request 당 쓰레드 기동인 경우는 바로 종료
+			wg_log(LV_DEBUG, "(%s:%lu) request is unsubscribed (%.20s) useyn=(%d)", __func__, tid, pq->reqID, pq->useyn);
+			break;
+		}
+
+		gettimeofday(&tv, NULL);
+		tm = localtime(&tv.tv_sec);
+
+		// RFQ인경우 시간체크
+		sprintf(ctime, "%02d%02d%02d000", tm->tm_hour, tm->tm_min, tm->tm_sec);
+		if (memcmp(pq->req.etime, ctime, sizeof(pq->req.etime)) < 0)
+		{
+			wg_log(LV_DEBUG, "(%s:%lu) RFS(%.20s) feed time end. (%.9s~%.9s) auto stop..", __func__, tid, pq->reqID, pq->regtime, pq->req.etime);
+			
+			memset(sbuf, 0x00, sizeof(sbuf));
+			make_send_close(pq, cs, 0, "request time is over..");
+			wgreq_free(pq);
+
+			break;
+		}
+
+		if (dlen < 0)		// recvfrom	timeout
+		{
+			if (errno == EINTR || errno == EAGAIN)
+				continue;
+			break;
+		}
+
+		if (memcmp(pq->req.rfskey, pr->RFQKey, sizeof(pr->RFQKey)) != 0)		continue;
+
+wg_log(LV_DEBUG, "------------------------------------------");
+wg_log(LV_DEBUG, "[%s] RspnsCd   =[%.*s]", __func__, sizeof(pr->RspnsCd), pr->RspnsCd);  //응답코드(1:제시, 2:거부)
+wg_log(LV_DEBUG, "[%s] Winkey    =[%.*s]", __func__, sizeof(pr->Winkey ), pr->Winkey );  //WindowKey
+wg_log(LV_DEBUG, "[%s] RFQKey    =[%.*s]", __func__, sizeof(pr->RFQKey ), pr->RFQKey );  //RFQ키
+wg_log(LV_DEBUG, "[%s] BidPrc    =[%.*s]", __func__, sizeof(pr->BidPrc ), pr->BidPrc );  //BID최종가격
+wg_log(LV_DEBUG, "[%s] AskPrc    =[%.*s]", __func__, sizeof(pr->AskPrc ), pr->AskPrc );  //ASK최종가격
+wg_log(LV_DEBUG, "[%s] NearPrc   =[%.*s]", __func__, sizeof(pr->NearPrc), pr->NearPrc);  //NEAR가격 
+wg_log(LV_DEBUG, "[%s] FarPrc    =[%.*s]", __func__, sizeof(pr->FarPrc ), pr->FarPrc );  //FAR가격
+
+/*
+wg_log(LV_DEBUG, "(%s:%lu) receive (%.*s:%.*s) bid/ask(%.*s/%.*s) ", __func__, tid, 
+		sizeof(pr->RspnsCd), pr->RspnsCd, sizeof(pr->RFQKey), pr->RFQKey, sizeof(pr->BidPrc), pr->BidPrc, sizeof(pr->AskPrc), pr->AskPrc);
+*/
+		// 딜러 호가입력의 타임아웃 또는 거부처리 된 경우.
+		if (pr->RspnsCd[0] != '1') {
+			wg_log(LV_ERR,"(%s:%lu) receive reject [%.15s]", __func__, tid, pr->RFQKey);
+			memset(rbuf, 0x00, sizeof(rbuf));
+			WGCOM	*cr = rbuf;
+			WG_QUOT_REQ	*qs = (WG_QUOT_REQ *)cr->data;
+
+			memcpy((char *)&cr->wgkey, (char *)&pq->wgkey, WG_KEYLEN);
+			
+			memcpy(qs->reqID,	 pq->reqID,		sizeof(qs->reqID));
+			memcpy(qs->echoTags, pq->echoTags,	sizeof(qs->echoTags));
+			
+			cr->msgtp[0] = MSG_QTREQ;
+
+			make_send_rej(cr, (WGCOM *)&sbuf, ERR_RFQ_TMOUT, "RFQ rejected.  try later..");			// FIX send
+			wgreq_free(pq);
+
+			break;
+		}
+
+		/*===============================================================
+		 * 수신한 RFS구조체를 APSISE 구조체로 전환
+		===============================================================*/
+		double	bid2, ask2;
+		memset(&ap, 0x00, sizeof(ap));
+
+		memcpy(ap.symb, pq->symb, sizeof(ap.symb));
+		if (pq->stype[0] == DF_FXSWP)
+		{
+			// 주문방향에 맞추어 Near, Far 호가가 세팅되므로 bid, ask를 같이 맞추어도 관계없음.
+			ap.bidprc   = str2d(pr->NearPrc, sizeof(pr->NearPrc));
+			ap.offerprc = str2d(pr->NearPrc, sizeof(pr->NearPrc));
+
+			// RFQ의 스왑인 경우 APSISE 구조체에 FAR 가격이 없으므로 별도로 세팅함.
+			bid2 = str2d(pr->FarPrc, sizeof(pr->FarPrc));
+			ask2 = str2d(pr->FarPrc, sizeof(pr->FarPrc));
+		} else {
+			ap.bidprc   = str2d(pr->BidPrc, sizeof(pr->BidPrc));
+			ap.offerprc = str2d(pr->AskPrc, sizeof(pr->AskPrc));
+		}
+
+		/*===============================================================
+		 * 전환된 APSISE 구조체로 WG_QUOT 구조체 생성 및 FIX 전송
+		===============================================================*/
+		if (make_send_quote(pq, &ap, cs, bid2, ask2) < 0)
+		{
+			wg_log(LV_ERR, "(%s:%lu) make_send_quote error (%.6s) (%f:%f) !!! ", __func__, tid, ap.symb, ap.bidprc, ap.offerprc);
+
+			memset(rbuf, 0x00, sizeof(rbuf));
+			WGCOM       *cr = rbuf;
+			WG_QUOT_REQ *qr = cr->data;
+
+			cr->msgtp[0] = MSG_QTREQ;
+			memcpy(qr->echoTags, pq->echoTags, sizeof(pq->echoTags));
+
+			make_send_rej(cr, cs, ERR_RFQ_TMOUT, "RFQ rejected.  try later..");			// FIX send
+			wgreq_free(pq);
+
+			break;
+		}
+
+		wg_log(LV_DEBUG, "(%s:%lu:%d) send RFQ quot for (%.20s/%.20s) tp:%.1s (%.1s/%.6s)", __func__, tid, rc, pq->wgkey.sendcompid, pq->reqID, pq->req.reqtp, pq->stype, pq->symb);
+
+		//==================================================================
+		// 호가 유효시간 재설정 : 호가 제공 후 n초 후로 시간 재설정
+		//==================================================================
+		tv.tv_sec += (DF_RFQ_SEC);
+		tm = localtime(&tv.tv_sec);
+		sprintf (ctime, "%02d%02d%02d000",tm->tm_hour, tm->tm_min, tm->tm_sec);
+		memcpy(pq->req.etime, ctime, sizeof(pq->req.etime));
+		// 시간이 종료되거나 주문이 접수실행되면 pq->useyn = DF_OFF 가 되므로 자동으로 종료됨.
+		// break;
+	}
+
+	close(r_sock);
+	wg_log(LV_ERR, "(%s:%lu) is terminated..", __func__, tid);
+
+	pthread_exit(NULL);
+}
+
+void printreq(WGREQ *p)
+{
+	int		ii;
+
+	wg_log(LV_MUST, "(%s) use=%d (%.20s/%.20s) %.1s (%.1s/%.6s/%.6s) mkgrp(%.3s)", __func__, 
+		p->useyn, p->wgkey.sendcompid, p->wgkey.sendsubid, p->req.reqtp, p->stype, p->symb, p->symb4r, p->mkupgroup);
+
+	for (ii=0; ii<4; ii++)
+	{
+		if (p->markup[ii].symb[0] == 0x00)	continue;
+
+		wg_log(LV_MUST, " (MK%d) %.6s(%.8s) bid(%f,%f,%f) ask(%f,%f,%f)", ii, 
+			p->markup[ii].symb, p->markup[ii].setldate, 
+			p->markup[ii].bsmkup[0].spotmkup, p->markup[ii].bsmkup[0].swapmkup, p->markup[ii].bsmkup[0].swap,
+			p->markup[ii].bsmkup[1].spotmkup, p->markup[ii].bsmkup[1].swapmkup, p->markup[ii].bsmkup[1].swap);
+	}
+	wg_log(LV_MUST, " (RQ) id=%.32s  mrgn=%f(%f/%.1s)  tm=(%.9s/%.9s)", 
+		p->reqID, p->margin, p->req.orderqty, (p->req.side[0]=='0'?"A":(p->req.side[0]=='1'?"B":"S")), p->regtime, p->req.etime);
+	wg_log(LV_MUST, "-----------------------------------------------------------");
+
+	return ;
+}
+
+/*===============================================================
+ * MAKE CLOSE/REJECT PACKET
+ * OUTPUT SETUP FIELD : msgtp, WG_KEY, tag35, rejcd, rejtext, echoTags
+===============================================================*/
+int make_send_close(WGREQ *pq, WGCOM *cs, int rejcd, char *rejmsg)
+{
+	int		rc, dsiz=1024, slen = sizeof(WGCOM) + sizeof(WG_QUOT_RES);
+	char	c_rejcd[8], rejtext[128];
+	WG_QUOT_RES *s = (cs->data);
+	WGKEY		*k = &cs->wgkey;
+	
+//	memset(sbuf,    0x00, sizeof(WG_QUOT_RES));		// 호출전 세팅된 값이 있을 수 있음
+	memset(c_rejcd, 0x00, sizeof(c_rejcd));
+	memset(rejtext, 0x00, sizeof(rejtext));
+
+	cs->msgtp[0] = MSG_QTRES;
+	memcpy((char *)&cs->wgkey,	(char *)&pq->wgkey,	WG_KEYLEN);
+
+	if (rejcd != 0)	{
+		s->tag35[0] = 'b';
+		sprintf(c_rejcd, "%*d", sizeof(c_rejcd), rejcd);
+		memcpy(s->rejcd, c_rejcd, strlen(c_rejcd));
+	}
+	else
+		s->tag35[0] = 'Z';
+
+	if (rejmsg) {
+		strncpy(rejtext, rejmsg, sizeof(s->rejtext));
+		memcpy(s->rejtext, rejmsg, strlen(rejmsg));
+	}
+	memcpy(s->reqID,		pq->reqID,		sizeof(s->reqID));
+	memcpy(s->echoTags,		pq->echoTags,	sizeof(s->echoTags));
+
+wg_log(LV_DEBUG, "(%s) (%.1s:%.20s:%.20s:%.6s) close request. (%d:%s) ", __func__, 
+	pq->req.reqtp, k->sendcompid, k->sendsubid, pq->symb, rejcd, rejmsg);
+
+wg_log(LV_DEBUG, "(%s) ===========================================================", __func__);
+wg_log(LV_DEBUG, "[S] msgtp         =[%.*s]", sizeof(cs	->msgtp     ), cs->msgtp    );	// 'R' Quote Request(subscribe)
+wg_log(LV_DEBUG, "[S] sendcompid    =[%.*s]", sizeof(k->sendcompid	), k->sendcompid);	// 49(SenderCompID)
+wg_log(LV_DEBUG, "[S] sendsubid     =[%.*s]", sizeof(k->sendsubid 	), k->sendsubid );	// 50(SenderSubID)
+wg_log(LV_DEBUG, "[S] keysymb       =[%.*s]", sizeof(k->keysymb    	), k->keysymb   );	// 55(Symbol)
+wg_log(LV_DEBUG, "[S] tag35         =[%.*s]", sizeof(s->tag35		), s->tag35		);	// 송신 Tag35
+wg_log(LV_DEBUG, "[S] reqID         =[%.*s]", sizeof(s->reqID		), s->reqID		);	// RFS인 경우 주문에 연동된 시세패킷 QuoteID (Tag117=QuoteID)
+wg_log(LV_DEBUG, "[S] rejcd         =[%.*s]", sizeof(s->rejcd		), s->rejcd		);	// 300(QuoteRejectReason) // 거부코드
+wg_log(LV_DEBUG, "[S] rejtext       =[%.*s]", sizeof(s->rejtext		), s->rejtext	);	// 58(Text) // 거부사유
+wg_log(LV_DEBUG, "===========================================================");
+
+	_set_pad((char *)cs, slen);
+
+	rc = agdque_wrn (&qout, WG_DAT_DIR, NULL, WGDQ_SNDRS, WGSEM_SNDRS, dsiz, (char *)cs, slen);
+	if (rc <= 0)
+		wg_log(LV_ERR, "(%s:%d) agdque_wrn error (%d)", __func__, __LINE__, rc);
+
+	return (rc);
+}
+
+/*===============================================================
+ * MAKE QUOTE PACKET
+===============================================================*/
+int make_send_quote(WGREQ *q, APSISE *r, WGCOM *c, double bid2, double ask2)
+{
+	int		ii, rc, dsiz=1024, slen=sizeof(WGCOM) + sizeof(WG_QUOT);
+	double	sbid=0., sask=0., sbid2=0., sask2=0., dtemp=0.;
+	char	stemp[128];
+	struct	_markup	*m;
+
+	WG_QUOT *s = c->data;
+	WGKEY	*k = &c->wgkey;
+
+	memcpy(s->symb, 	r->symb,		sizeof(s->symb));
+	memcpy(s->echoTags,	q->echoTags,	sizeof(s->echoTags));
+
+	// 결산일 정보 세팅 (위치이동)
+	memcpy(s->setldate, q->markup[0].setldate, sizeof(s->setldate));
+	if (q->stype[0] == DF_FXSWP)
+		memcpy(s->setldate2, q->markup[1].setldate, sizeof(s->setldate));		// SWAP 인 경우 far 결산일 세팅
+
+	// RFQ 인 경우 딜러가 입력한 호가를 직접 사용하므로, 계산로직이 필요없음.
+	if (q->req.reqtp[0] == REQTP_RFQ)
+	{
+		sbid = r->bidprc;
+		sask = r->offerprc;
+		
+		sbid2 = bid2;
+		sask2 = ask2;
+
+		goto setQPACKET;
+	}
+
+	/************************************************************************
+	#### 스왑이고 FEE TNR='00'인 경우 부호 반대 처리하여 세팅 : setreq_user()
+	#### 재정스왑의 경우 아래 공식으로 나온 이종, 원달러의 BID,ASK로 가격 계산
+	------------------------------------------------------------------------
+	>>> Near환율
+	결제일자의 FEE TNR이 00가 아닌 경우
+		스왑의 Bid Near =  AskSpot + BidSwap + BidSwapMarkup + AskSpotMarkup
+		스왑의 ASK Near =  BIDSpot + AskSwap + AskSwapMarkup + BidSpotMarkup
+	결제일자의 FEE TNR이 00인 경우 (swap, swapmkup 부호 반대)
+		스왑의 Bid Near =  AskSpot - AskSwap - AskSwapMarkup + AskSpotMarkup
+		스왑의 ASK Near =  BIDSpot - BidSwap - BidSwapMarkup + BidspotMarkup
+
+	>>> Far환율
+	결제일자의 FEE TNR이 00가 아닌 경우
+		스왑의 BID Far = BidSpot + BidSwap + BidSwapMarkup + BidSpotMarkup
+		스왑의 Ask Far = AskSpot + AskSwap + AskSwapMarkup + AskspotMarkup
+	결제일자의 FEE TNR이 00인 경우 (swap, swapmkup 부호 반대)
+		스왑의 BID Far = BidSpot - AskSwap - AskSwapMarkup + BidSpotMarkup
+		스왑의 Ask Far = AskSpot - BidSwap - BidSwapMarkup + AskspotMarkup
+	------------------------------------------------------------------------
+	>>> BUY &SELL Swap = 스왑의 Bid Far - 스왑의 Ask Near
+	>>> SELL&BUY  Swap = 스왑의 Ask Far - 스왑의 bid Near
+
+	#### 재정통화 계산 시
+	>>> usdpos=1 인 나누 대상 재정통화 계산 시 USDKRW가 아닌 이종통화의 BID,ASK는 반대로 함
+		ex) JPYKRW.BID = USDKRW.BID / USDJPY.ASK (bid, ask 교차로 나누기 함)
+		ex) EURKRW.BID = USDKRW.BID * EURUSD.BID 
+	************************************************************************/
+
+	// RFS 인 경우는 req 등록 시점에 조회된 마크업, 수수료 사용, API 인 경우는 wgmst.updtmkup 기준으로 변경 시 재조회
+	// 이종통화인 경우 USDKRW의 환율은 수신할 떄마다 갱신되고 있으므로, APSISE에 있는 usdkrw 값은 사용하지 않고 USDKRW 수신시에만 처리
+	// 각 통화별 세트별 환율계산
+	for (ii=0; ii<4; ii++)
+	{
+		m = (struct _markup *)&q->markup[ii];
+		if (m->symb[0] == 0x00)		break;		// 세팅된 통화에 대해 계산
+
+		if (memcmp(m->symb, r->symb, sizeof(m->symb)) == 0)
+		{
+			m->bsmkup[BIDPOS].orgprc = r->bidprc;			// 수신원가저장
+			m->bsmkup[ASKPOS].orgprc = r->offerprc;
+
+			if (q->stype[0] == DF_FXSWP && (ii == SWP_NEAR || ii == SWP_USD_NEAR)) {
+				m->bsmkup[BIDPOS].prc = (IsRFS(q) ? GETBID(m) : GETBID_NEAR(m));
+				m->bsmkup[ASKPOS].prc = (IsRFS(q) ? GETASK(m) : GETASK_NEAR(m));
+			} else {
+				m->bsmkup[BIDPOS].prc = GETBID(m);
+				m->bsmkup[ASKPOS].prc = GETASK(m);
+			}
+
+			if (q->crosyn == DF_ON && memcmp(m->symb, DF_USDJPY, sizeof(m->symb)) == 0)		// JPYKRW 경우 x100 계산 효과를 위해 미리 보정함.
+			{
+				m->bsmkup[BIDPOS].prc /= 100.;
+				m->bsmkup[ASKPOS].prc /= 100.;
+			}
+		}
+		
+		if (q->crosyn == DF_ON && memcmp(m->symb, DF_USDKRW, sizeof(m->symb)) == 0)
+		{
+			// USDKRW는 USDKRW를 수신한 경우만 update 해도 최종가격 유지할 수 있으므로 orgprc를 update 하지 않는다.
+			if (q->stype[0] == DF_FXSWP && (ii == SWP_NEAR || ii == SWP_USD_NEAR)) {
+				if (m->bsmkup[BIDPOS].prc <= 0.)	m->bsmkup[BIDPOS].prc = (IsRFS(q) ? GETBID(m) : GETBID_NEAR(m));
+				if (m->bsmkup[ASKPOS].prc <= 0.)	m->bsmkup[ASKPOS].prc = (IsRFS(q) ? GETASK(m) : GETASK_NEAR(m));
+			} else {
+				if (m->bsmkup[BIDPOS].prc <= 0.)	m->bsmkup[BIDPOS].prc = GETBID(m);
+				if (m->bsmkup[ASKPOS].prc <= 0.)	m->bsmkup[ASKPOS].prc = GETASK(m);
+			}
+		}
+	}
+
+	// 재정통화이면서 USDKRW 시세를 먼저 수신한 경우는 계산 SKIP (상대통화 가격이 없어서 계산오류 남)
+	if (q->crosyn == DF_ON && q->markup[0].bsmkup[BIDPOS].prc <= 0.)
+		return (-1);
+
+	// 재정/스왑 환율계산
+	double	nbid, nask, fbid, fask;
+
+	switch (q->stype[0])
+	{
+	case DF_FXSPT :
+	case DF_FXFWD :
+		if (q->crosyn == DF_OFF)
+		{
+			sbid = BID0 - q->margin;
+			sask = ASK0 + q->margin;
+		}
+		else	// 재정통화인 경우
+		{
+			if (BID0 <= 0. || ASK0 <= 0.)	return (-1);
+
+			// 재정통화 중 USDKRW외의 통화에서 USD가 뒤에 위치한 통화는 곱하여 계산, 그 외는 나누어 계산
+			// 나누기 할 경우에는 JPYKRW.BID = USDKRW.BID / USDJPY.ASK (bid, ask 교차로 나누기 함)
+			sbid = (q->usdpos == 1 ? BID1 * BID0 : BID1 / ASK0) - q->margin;
+			sask = (q->usdpos == 1 ? ASK1 * ASK0 : ASK1 / BID0) + q->margin;
+		}
+		// bad tick skip
+		if (sbid <= 0. || sask <= 0.)
+			return (-1);
+
+		break;
+
+	case DF_FXSWP :	// SWAP 인 경우 수수료는 FAR에 적용
+		if (q->crosyn == DF_OFF)
+		{
+			sbid = BID0;		// near
+			sask = ASK0;		// near
+
+			sbid2 = BID1 - q->margin;		// far
+			sask2 = ASK1 + q->margin;		// far
+		}
+		else	// 재정통화인 경우
+		{
+			if (BID2 <= 0. || ASK2 <= 0. || BID3 <= 0. || ASK3 <= 0.)	return (-1);
+
+			// 나누기 할 경우에는 JPYKRW.BID = USDKRW.BID / USDJPY.ASK (bid, ask 교차로 나누기 함)
+			sbid  = (q->usdpos == 1 ? BID2 * BID0 : BID2 / ASK0);		// near
+			sask  = (q->usdpos == 1 ? ASK2 * ASK0 : ASK2 / BID0);		// near
+
+			sbid2 = (q->usdpos == 1 ? BID3 * BID1 : BID3 / ASK1) - q->margin;		// far
+			sask2 = (q->usdpos == 1 ? ASK3 * ASK1 : ASK3 / BID1) + q->margin;		// far
+		}
+
+		//============================================================================
+		// KB : Farbid = NearBid + BidSwap, FarAsk = NearAsk + AskSwap 임.
+		// Swap Sel&Buy 일 때, NearBid, BidSwap, FarBid 를 사용하여 체결 시키는데, 
+		// ★ FXGO의 Sel&Buy 주문은 NearBid, FarAsk 로 주문이 올라옴...
+		// ★★★ 따라서, 스왑인 경우 호가 보낼 떄, Near의 Bid, Ask 를 바꿔서 보내야 체결 처리 시 값이 맞아진다. 
+		//============================================================================
+		dtemp = sbid;
+		sbid  = sask;
+		sask  = dtemp;
+		//============================================================================
+		break;
+	}
+
+//////////////////	SET QUOT PACKET
+setQPACKET :
+
+	c->msgtp[0]	= MSG_QUOTE;
+	memcpy((char *)&c->wgkey, (char *)&q->wgkey,	WG_KEYLEN);	// KEY COPY : sendcompid+sendsubid+symb
+
+	// API : 'V'->'W'
+	// RFS : 'R'->'S'
+	if (q->req.reqtp[0] == REQTP_RFS || q->req.reqtp[0] == REQTP_RFQ)	s->tag35[0] = 'S';
+	else																s->tag35[0] = 'W';
+
+	// quotID : 수신한 reqID+".kb"+quotseq 로 세팅.
+	//          주문시 수신한 quotID과 WGREQ.reqID를 비교하여 찾을 수 있도록 구성
+	// TODO : 고객의 reqID의 길이 제한 필요 (대략 20자리 이내로 수신. char quotID[32] )
+//	sprintf(stemp, "%s.kb%d", q->reqID, ++q->quotseq);
+	memset(stemp, 0x00, sizeof(stemp));
+	sprintf(stemp, "%.*s", sizeof(q->reqID), q->reqID);
+	_rtrim(stemp, sizeof(stemp));
+	if (strlen(stemp) > sizeof(s->quotID)-6)	stemp[sizeof(s->quotID)-6] = 0x00;		// quotseq는 5자리까지 확보
+	sprintf(&stemp[strlen(stemp)], ".%d", ++q->quotseq);
+	memcpy(s->quotID,		stemp,			strlen(stemp));
+
+	memcpy(s->account,	q->user.acno,	sizeof(q->user.acno));
+	memcpy(s->reqID,	q->reqID,		sizeof(s->reqID));
+	memcpy(s->stype,	q->stype,		sizeof(s->stype));
+
+	sprintf(stemp, "%.*f", q->zCustdiv, sbid);
+	memcpy(s->bid, stemp, strlen(stemp));
+	sprintf(stemp, "%.*f", q->zCustdiv, sask);
+	memcpy(s->ask, stemp, strlen(stemp));
+
+	sprintf(stemp, "%.*f", q->zCustdiv, sbid2);
+	memcpy(s->bid2, stemp, strlen(stemp));
+	sprintf(stemp, "%.*f", q->zCustdiv, sask2);
+	memcpy(s->ask2, stemp, strlen(stemp));
+
+	// 계산의 정합성을 위해 전송된 값을 기준으로 재설정
+	sbid  = str2d(s->bid,  sizeof(s->bid));
+	sask  = str2d(s->ask,  sizeof(s->ask));
+	sbid2 = str2d(s->bid2, sizeof(s->bid2));
+	sask2 = str2d(s->ask2, sizeof(s->ask2));
+
+	memmove(&q->quot[1], &q->quot, sizeof(struct _quot) * (DF_MAXFEED*(DF_GRACEPERIOD+1) -1));	
+
+	struct timeval	tv;
+
+	gettimeofday(&tv, NULL);
+	memcpy(q->quot[0].quotID, s->quotID, sizeof(s->quotID));
+
+	q->quot[0].bid  = (long)(pow(10, q->zCustdiv)*sbid  + 0.5);		// 소수점 없애고 저장.(double 형 비교 이슈)
+	q->quot[0].ask  = (long)(pow(10, q->zCustdiv)*sask  + 0.5);		// 최종 고객전송환율
+	q->quot[0].bid2 = (long)(pow(10, q->zCustdiv)*sbid2 + 0.5);
+	q->quot[0].ask2 = (long)(pow(10, q->zCustdiv)*sask2 + 0.5);
+
+	memcpy(&q->quot[0].qtm, &tv, sizeof(struct timeval));
+	
+	if (q->stype[0] == DF_FXSWP)
+	{
+		sprintf(stemp, "%.*f", q->zCustdiv, (q->quot[0].bid2 - q->quot[0].ask)/pow(10, q->zCustdiv));
+		memcpy(s->bidswap, stemp, strlen(stemp));
+
+		sprintf(stemp, "%.*f", q->zCustdiv, (q->quot[0].ask2 - q->quot[0].bid)/pow(10, q->zCustdiv));
+		memcpy(s->askswap, stemp, strlen(stemp));
+	}
+//*
+wg_log(LV_DEBUG, "%s (%.1s/%.20s/%.20s/%.1s) R %.6s (%g:%g) S %.6s (%g:%g/%g:%g) (%.16s:%.16s/%.16s:%.16s) (%.32s) (%ld:%ld/%ld:%ld) (%.16s:%.16s)", __func__, q->req.reqtp,
+		k->sendcompid, k->sendsubid, s->stype, r->symb, r->bidprc, r->offerprc, s->symb, sbid, sask, sbid2, sask2, s->bid, s->ask, s->bid2, s->ask2, s->quotID, 
+		q->quot[0].bid, q->quot[0].ask, q->quot[0].bid2, q->quot[0].ask2, s->bidswap, s->askswap);
+
+	_set_pad((char *)c, slen);
+	rc = agdque_wrn (&qout, WG_DAT_DIR, NULL, WGDQ_SNDRS, WGSEM_SNDRS, dsiz, (char *)c, slen);
+	if (rc <= 0)
+		wg_log(LV_ERR, "(%s:%d) agdque_wrn error (%d)", __func__, __LINE__, rc);
+
+	return (0);
+}
+
+#if 0
+/*===============================================================
+ * SET REQUEST INFO FREE (UNSUBSCRIBE)
+===============================================================*/
+int setreq_free(WGREQ *pq, char pbuf, int plen)
+{
+	int		rc, dsiz=1024;
+
+	if (pq->useyn == DF_ON)
+	{
+		if (plen) {
+			rc = agdque_wrn(&qout, WG_DAT_DIR, NULL, WGDQ_SNDRS, WGSEM_SNDRS, dsiz, pbuf, plen);
+			if (rc <= 0)
+				wg_log(LV_ERR, "(%s) agdque_wrn error (%d)\n", __func__, rc);
+		}
+		wg_log(LV_DEBUG, "(%s) reqid(%.30s) is found.  unsubscribe done ", __func__, pq->reqID);
+
+		wgreq_free(pq);
+	}
+	else
+		wg_log(LV_DEBUG, "(%s) reqid(%.30s) is already unsubscribed. ", __func__, pq->reqID);
+
+	return 0;
+}
+#endif
+
+/*===============================================================
+ * SET REQUEST INFO
+ * SETUP REQ FIELD : reqtp, sendcompid, sendsubid, symb, reqID, tag35, echoTags, crosyn
+ *                   usdpos, stype, symb, symb4r, markup[], regtime, req.etime, req.side, req.orderqty
+===============================================================*/
+int setreq_info(WGREQ *pq, WGCOM *cr, char *rejmsg)
+{
+	int		ii, pos = -1;
+
+	WG_QUOT_REQ *pr = (WG_QUOT_REQ *)(cr->data);
+
+	// DATA KEY SESSION 세팅
+//	memcpy(pq->wgkey,		cr->wgkey,		WG_KEYLEN);		// wreq_new() 에서 수행
+
+	memcpy(pq->reqID,		pr->reqID,		sizeof(pr->reqID));
+	memcpy(pq->tag35,		pr->tag35,		sizeof(pr->tag35));
+	memcpy(pq->echoTags,	pr->echoTags,	sizeof(pr->echoTags));
+	memcpy(pq->symb,		pr->symb,		sizeof(pq->symb));
+
+	// SYMBOL 정보 조회
+	if (get_symbinfo(pq) < 0)
+	{
+		wg_log(LV_ERR, "(%s) symbol is not found (%.6s)", __func__, pr->symb);
+		sprintf(rejmsg, "(%.6s) symbol is not found", pr->symb);
+		return (ERR_FXGO_SYMB);
+	}
+	
+	memcpy(pq->stype,	pr->stype,	sizeof(pq->stype));
+
+	if ((pr->stype[0] == DF_FXSPT && memcmp(pq->sptymd, pr->setldate, sizeof(pq->sptymd)) != 0) ||
+		(pr->stype[0] == DF_FXFWD && memcmp(pq->sptymd, pr->setldate, sizeof(pq->sptymd)) == 0))		// TOD,TOM 은 SPOT 보다 작음.
+	{
+		wg_log(LV_ERR, "(%s) settle date error (%.6s) (%.8s:%.8s)", __func__, pr->symb, pq->sptymd, pr->setldate);
+		sprintf(rejmsg, "(%.6s) settle date error (%.8s:%.8s)", pr->symb, pq->sptymd, pr->setldate);
+		return (ERR_FXGO_SYMB);
+	}	// don't break;
+
+	// 각 통화별 수수료조회 조건 기준값 세팅
+	switch (pr->stype[0])
+	{
+	case DF_FXSPT :
+	case DF_FXFWD :
+
+		memcpy(pq->markup[0].symb,     pq->symb,     sizeof(pq->markup[0].symb));
+		memcpy(pq->markup[0].setldate, pr->setldate, sizeof(pq->markup[0].setldate));
+
+		if (pq->crosyn == DF_ON)
+		{
+			memcpy(pq->markup[0].symb,     pq->symb4r,   sizeof(pq->markup[0].symb));		// 덮어씀
+
+			memcpy(pq->markup[1].symb,     DF_USRKRW,    sizeof(pq->markup[0].symb));
+			memcpy(pq->markup[1].setldate, pr->setldate, sizeof(pq->markup[0].setldate));
+		}
+
+		break;
+
+	case DF_FXSWP :
+
+		memcpy(pq->markup[0].symb,     pq->symb,      sizeof(pq->markup[0].symb));
+		memcpy(pq->markup[0].setldate, pr->setldate,  sizeof(pq->markup[0].setldate));		// near
+		memcpy(pq->markup[1].symb,     pq->symb,      sizeof(pq->markup[0].symb));
+		memcpy(pq->markup[1].setldate, pr->setldate2, sizeof(pq->markup[0].setldate));		// far
+
+		if (pq->crosyn == DF_ON)
+		{
+			memcpy(pq->markup[0].symb,     pq->symb4r,    sizeof(pq->markup[0].symb));		// 덮어씀
+			memcpy(pq->markup[1].symb,     pq->symb4r,    sizeof(pq->markup[0].symb));		// 덮어씀
+
+			memcpy(pq->markup[2].symb,     DF_USRKRW,     sizeof(pq->markup[0].symb));
+			memcpy(pq->markup[2].setldate, pr->setldate,  sizeof(pq->markup[0].setldate));	// USDKRW near
+			memcpy(pq->markup[3].symb,     DF_USRKRW,     sizeof(pq->markup[0].symb));
+			memcpy(pq->markup[3].setldate, pr->setldate2, sizeof(pq->markup[0].setldate));	// USDKRW far
+		}
+
+		break;
+
+	default :
+		wg_log(LV_ERR, "(%s) input error : stype=(%.1s)", __func__, pr->stype);
+		sprintf(rejmsg, "SecurityType(167) error (%.1s)", pr->stype);
+		return (ERR_FXGO_OTHR);
+
+	}	// switch (pr->stype[0])
+
+	// APSISE 패킷의 time 필드와 직접 비교 가능하도록 형식 맞춤 (char time[ 9]; // 수신시간 HHMMSSSSS)
+	char	stime[10];
+	struct timeval	tv;
+	struct tm *lt;
+
+	gettimeofday(&tv, NULL);
+	lt = localtime(&tv.tv_sec);
+	sprintf (stime, "%02d%02d%02d%03d",lt->tm_hour,lt->tm_min,lt->tm_sec,tv.tv_usec/1000);
+	memcpy(pq->regtime, stime, sizeof(pq->regtime));
+	memcpy(pq->req.etime, "999999999", sizeof(pq->req.etime));
+
+wg_log(LV_DEBUG, "(%s) setreq_info (%.6s) zcustdiv(%d) (%.8s:%.8s:%.8s)", __FUNCTION__, pq->symb, pq->zCustdiv, pq->todymd, pq->tomymd, pq->sptymd);
+
+	return 0;
+}
+
+/*===============================================================
+ * SET USER INFO
+ * SETUP REQ FIELD : user.lgen_no, user.trdstat, user.orgquot, user.excutenow, user.autohedge, 
+ *                   mkupgroup, markup[].bsmkup[], margin
+===============================================================*/
+int setreq_user(WGREQ *q, WGCOM *cr, char *rejmsg)
+{
+	int		rtn, ii;
+
+EXEC SQL BEGIN DECLARE SECTION;
+	char	v_compid	[50+1];
+
+	char	v_trsmt_taget_id	[50+1];
+	char	v_trsmt_taget_sub_id[50+1];
+	char	c_lgen_no			[10+1];
+	char	c_acno				[20+1];
+                            	
+	char	c_trdstat			[ 1+1];
+	char	c_excutenow			[ 1+1];
+	char	c_autohedge			[ 1+1];
+	char	c_mrkup_group_id	[ 3+1];
+EXEC SQL END DECLARE SECTION;
+
+	Mast365		m365;
+
+	memset(v_trsmt_taget_id,		0x00, sizeof(v_trsmt_taget_id));
+	memset(v_trsmt_taget_sub_id,	0x00, sizeof(v_trsmt_taget_sub_id));
+	memset(c_lgen_no,        		0x00, sizeof(c_lgen_no));
+	memset(c_acno,           		0x00, sizeof(c_acno));
+	memset(c_trdstat,        		0x00, sizeof(c_trdstat));
+	memset(c_excutenow,      		0x00, sizeof(c_excutenow));
+	memset(c_autohedge,      		0x00, sizeof(c_autohedge));
+	memset(c_mrkup_group_id, 		0x00, sizeof(c_mrkup_group_id));
+
+	strncpy(v_trsmt_taget_id,     q->wgkey.sendcompid, sizeof(q->wgkey.sendcompid));
+	strncpy(v_trsmt_taget_sub_id, q->wgkey.sendsubid,  sizeof(q->wgkey.sendsubid));
+
+	l_rtrim(v_trsmt_taget_id);
+	l_rtrim(v_trsmt_taget_sub_id);
+
+	// ★TODO : trdstat, excutenow, autohedge, mxordcnt 세팅정보 조회 필요 (TSKEIAM87에 컬럼추가?)
+EXEC SQL
+	SELECT	 A.LGEN_NO
+			,A.FCM_ACNO
+			,'1'			-- A.TRDSTAT
+			,'0'			-- A.EXCTNOW
+			,'0'			-- A.AUTOHDG
+			,B.MRKUP_GROUP_ID
+	  INTO	 :c_lgen_no
+	  		,:c_acno
+	  		,:c_trdstat
+	  		,:c_excutenow
+	  		,:c_autohedge
+	  		,:c_mrkup_group_id
+	  FROM	INST1.TSKEIAM87 A, INST1.TSKEIMU15 B
+	 WHERE	A.LGEN_NO = B.LGEN_NO
+	   AND	A.TRSMT_TAGET_ID     = :v_trsmt_taget_id
+	   AND	A.TRSMT_TAGET_SUB_ID = :v_trsmt_taget_sub_id
+	   AND	A.USE_YN = '1'
+	WITH UR
+	;
+	if (SQLCODE != 0)
+	{
+		wg_log(LV_ERR, "(%s) (%s) select lgen_no error (%d:%s)", __FUNCTION__,v_compid, SQLCODE, SQLERRM);
+		sprintf(rejmsg, "(%s) user not found.", v_compid);
+		l_db2rollback();
+		return(ERR_USR_INFO*(-1));
+	}
+
+	l_rtrim(c_acno);
+	l_rtrim(c_lgen_no);
+	l_rtrim(c_trdstat);
+	l_rtrim(c_excutenow);
+	l_rtrim(c_autohedge);
+	l_rtrim(c_mrkup_group_id);
+
+	memcpy(q->user.acno,		c_acno,				sizeof(q->user.acno));
+	memcpy(q->user.lgen_no,		c_lgen_no,			sizeof(q->user.lgen_no));
+	memcpy(q->user.trdstat,		c_trdstat,			sizeof(q->user.trdstat));
+	memcpy(q->user.excutenow,	c_excutenow,		sizeof(q->user.excutenow));
+	memcpy(q->user.autohedge,	c_autohedge,		sizeof(q->user.autohedge));
+	memcpy(q->mkupgroup,		c_mrkup_group_id,	sizeof(q->mkupgroup));
+
+	// ★★★★ TODO : 채널별 REQTP 설정은 별도 테이블에서 관리해야 함
+//	if (strcmp(cr->wgkey.sendcompid, "BLP_RFS_BETA") == 0)		// API의 마크업 갱신인 경우 cr=NULL 임
+		q->req.reqtp[0] = REQTP_RFS;
+//	else
+//		q->req.reqtp[0] = REQTP_API;
+
+	char 	rbuf[1024];
+	W6109A04_O	*tro=rbuf;		// 결과 수신구조체
+
+	// RFS/RFQ 정보 세팅  >> 서비스(W6109A04) 호출하여 리턴된 값으로 설정함.
+	if (q->req.reqtp[0] == REQTP_RFS || q->req.reqtp[0] == REQTP_RFQ)
+	{
+		WG_QUOT_REQ *qr = (WG_QUOT_REQ *)(cr->data);
+		memset(rbuf, 0x00, sizeof(rbuf));
+
+		memcpy(q->req.currency, qr->currency, sizeof(q->req.currency));
+
+/* ★★★★ CHECK : FXGO 입력값은 side[0] = '0' 인데, RFQ인 경우 side[0]가 '0'이면 오류나기 때문에 FXGO 에 확인 필요
+		if (qr->side[0] != API_BUY && qr->side[0] != API_SEL)
+		{
+			wg_log(LV_ERR, "(%s) input error : side=(%.1s)", __func__, qr->side);
+			sprintf(rejmsg, "Side(54) error (%.1s)", qr->side);
+			return (ERR_FXGO_OTHR);
+		}
+*/
+		q->req.side[0]  = qr->side[0];
+
+		q->req.orderqty = str2d(qr->orderqty, sizeof(qr->orderqty));
+		if (q->req.orderqty <= 0) {
+			strcpy(rejmsg, "order qty error..");
+			return (-1);
+		}
+
+		// RFS,RFQ 인 경우 기존 서비스 호출을 통해 밴드적용된 마크업조회 및 딜러 호가 수신
+		if ((rtn = mymqcall_W6109A04(q, tro, rejmsg)) < 0)
+		{
+			wg_log(LV_ERR, "(%s) service(W6109A04) call error (%d)", __FUNCTION__, rtn);
+			return (ERR_SYSTEM*(-1));
+		}
+	}
+
+	wg_log(LV_DEBUG, "(%s) get userinfo : %s/%.10s/%.3s", __FUNCTION__, v_trsmt_taget_id, q->user.lgen_no, q->mkupgroup);
+
+	// 분리되어 세팅된 통화별로 고객 마크업/마진 조회
+	struct _markup	*m;
+	char	msg[128];
+	MDFOLD	*pfold;
+
+	for (ii=0; ii<4; ii++)
+	{
+		m = (struct _markup *)&q->markup[ii];
+		if (m->symb[0] == 0x00)		break;
+
+		pfold = mds_getfold(DF_MDS_EXNM, m->symb, msg);
+		if (pfold == NULL)
+		{
+			wg_log(LV_ERR, "(%s) mds_getfold error (%.6s:%d)", __FUNCTION__, m->symb, rtn);
+			sprintf(rejmsg, "(%.6s) symbol is not found", m->symb);
+			return (ERR_FXGO_SYMB*(-1));
+		}
+
+		// 마스터메모리의 주문가능여부 체크
+		if (pfold->trdf != DF_ON)
+		{
+			wg_log(LV_DEBUG, "(%s) market is closed. (%.6s)", __func__, pfold->symb);
+			sprintf(rejmsg, "market is closed (%.6s)", pfold->symb);
+			return (ERR_NOT_OPEN*(-1));
+		}
+
+		if (q->useyn == DF_ALLOC) {	// request 최초 세팅 시,  최초 시세전송을 위해 현재가 세팅
+			m->bsmkup[BIDPOS].orgprc = pfold->bidlast;
+			m->bsmkup[ASKPOS].orgprc = pfold->offerlast;
+		}
+
+		// RFQ는 수신한 호가를 그대로 사용하기 때문에 세팅없음.
+		if (q->req.reqtp[0] == REQTP_RFQ)	continue;
+
+		/************************************************************************
+		 ■ RFS는 m365대신 W6109A04 리턴값 사용 (밴드,추세 적용된 마크업)
+			- SPOT 마크업은 Near, Far에서 공통으로 사용됨. (재정은 KRW SPOT 마크업 사용)
+			- FWD/FWD 스왑인 경우에도. Near는 SPOT 기준으로 마크업을 리턴하므로, Near에는 spotmarkup 값만 있다.(화면기준)
+			- 수수료 테너'00' 시 부호역전, 매매방향별 수수료부호 등이 모두 적용된 상태임.
+			- 재정인 경우 SPOT 에도 스왑마크업,스왑포인트를 붙여야 함 (스팟일자가 서로 다르면 값이 생긴다)
+			- 재정스왑인 경우는 Near에는 스팟마크업만, Far에는 모두 붙여 계산한다. (스왑가격인 환율차이인 스왑포인트+스왑마진을 Far에 모두 붙였음)
+
+		 ■ WGMAST.markup 배열구성
+						UDJPY(SPT/FWD)		JPYKRW(SPT/FWD)		USDJPY(SWP)		JPYKRW(SWP)
+			--------------------------------------------------------------------------------
+			markup[0] = USDJPY				USDJPY				USDJPY(Ner)		USDJPY(Ner)
+			markup[1] = 					USDKRW				USDJPY(Far)		USDJPY(Far)
+			markup[2] = 														USDKRW(Ner)
+			markup[3] = 														USDKRW(Far)
+
+		 ■ W6109A04_O 리턴구조체
+			① bid/ask_mrkup		// SPOT 마크업
+			② bid/ask_swapmrkup	// SWAP 마크업
+			③ bid/ask_swapprc		// SWAP 포인트
+			④ KRWbid/ask_mrkup	// SPOT 마크업
+			⑤ KRWbid/ask_swapmrkup // SWAP 마크업
+			⑥ KRWbid/ask_swapprc   // SWAP 포인트
+			------------------------------------------
+			markup[0]: SPOT=①, SPOT(재)=①②③, FWD=①②③, FWD(재)=①②③, SWAP(Ner)=①      SWAP(재)(Ner)=①
+			markup[1]:          SPOT(재)=④⑤⑥,             FWD(재)=④⑤⑥, SWAP(Far)=①②③, SWAP(재)(Far)=①②③
+			markup[2]: SWAP(재)(Ner)=④
+			markup[3]: SWAP(재)(Far)=④⑤⑥
+		************************************************************************/
+		if (q->req.reqtp[0] == REQTP_RFS)
+		{
+			if (ii==0 || (ii==1 && q->stype[0]==DF_FXSWP)) {
+				m->bsmkup[BIDPOS].spotmkup = str2d(tro->bid_mrkup, sizeof(tro->bid_mrkup));	// ① 
+				m->bsmkup[ASKPOS].spotmkup = str2d(tro->ask_mrkup, sizeof(tro->ask_mrkup));	// ① 
+//wg_log(0, "[TEST] 1 [%d:%.6s] bid[%g:%g:%g] ask[%g:%g:%g]", ii, m->symb, m->bsmkup[0].spotmkup, m->bsmkup[0].swapmkup, m->bsmkup[0].swap, m->bsmkup[1].spotmkup, m->bsmkup[1].swapmkup, m->bsmkup[1].swap);
+			}
+
+			if ((ii==0 && q->stype[0]!=DF_FXSWP) || (ii==1 && q->stype[0]==DF_FXSWP)) {		// SPOT인 경우 2,3은 '0'으로 들어옴.
+				m->bsmkup[BIDPOS].swapmkup = str2d(tro->bid_swapmrkup, sizeof(tro->bid_swapmrkup));	// ② 
+				m->bsmkup[BIDPOS].swap     = str2d(tro->bid_swapprc,   sizeof(tro->bid_swapprc));	// ③ 
+				m->bsmkup[ASKPOS].swapmkup = str2d(tro->ask_swapmrkup, sizeof(tro->ask_swapmrkup));	// ② 
+				m->bsmkup[ASKPOS].swap     = str2d(tro->ask_swapprc,   sizeof(tro->ask_swapprc));	// ③ 
+//wg_log(0, "[TEST] 23 [%d:%.6s] bid[%g:%g:%g] ask[%g:%g:%g]", ii, m->symb, m->bsmkup[0].spotmkup, m->bsmkup[0].swapmkup, m->bsmkup[0].swap, m->bsmkup[1].spotmkup, m->bsmkup[1].swapmkup, m->bsmkup[1].swap);
+			}
+
+			if ((ii==1 && q->stype[0]!=DF_FXSWP) || (ii>1 && q->stype[0]==DF_FXSWP)) {
+				m->bsmkup[BIDPOS].spotmkup = str2d(tro->KRWbid_mrkup, sizeof(tro->KRWbid_mrkup));	// ④ 
+				m->bsmkup[ASKPOS].spotmkup = str2d(tro->KRWask_mrkup, sizeof(tro->KRWask_mrkup));	// ④ 
+//wg_log(0, "[TEST] 4 [%d:%.6s] bid[%g:%g:%g] ask[%g:%g:%g]", ii, m->symb, m->bsmkup[0].spotmkup, m->bsmkup[0].swapmkup, m->bsmkup[0].swap, m->bsmkup[1].spotmkup, m->bsmkup[1].swapmkup, m->bsmkup[1].swap);
+			}
+
+			if ((ii==1 && q->stype[0]!=DF_FXSWP) || ii==3) {
+				m->bsmkup[BIDPOS].swapmkup = str2d(tro->KRWbid_swapmrkup, sizeof(tro->KRWbid_swapmrkup));	// ⑤ 
+				m->bsmkup[BIDPOS].swap     = str2d(tro->KRWbid_swapprc,   sizeof(tro->KRWbid_swapprc));		// ⑥ 
+				m->bsmkup[ASKPOS].swapmkup = str2d(tro->KRWask_swapmrkup, sizeof(tro->KRWask_swapmrkup));	// ⑤ 
+				m->bsmkup[ASKPOS].swap     = str2d(tro->KRWask_swapprc,   sizeof(tro->KRWask_swapprc));		// ⑥ 
+//wg_log(0, "[TEST] 56 [%d:%.6s] bid[%g:%g:%g] ask[%g:%g:%g]", ii, m->symb, m->bsmkup[0].spotmkup, m->bsmkup[0].swapmkup, m->bsmkup[0].swap, m->bsmkup[1].spotmkup, m->bsmkup[1].swapmkup, m->bsmkup[1].swap);
+			}
+		}	// if (q->req.reqtp[0] == REQTP_RFS)
+		else 
+		{
+			// SWAP 마크업/포인트 조회
+			memset(&m365, 0x00, sizeof(m365));
+        	
+			memcpy(m365.base_ymd,		m->setldate,	sizeof(m->setldate));
+			memcpy(m365.fx_prdct_cd,	m->symb,		sizeof(m->symb));
+			memcpy(m365.mrkup_group_id,	q->mkupgroup,	sizeof(q->mkupgroup));
+        	
+			rtn = f_get_m365(&m365);
+			if (rtn < 0) {
+				wg_log(LV_ERR, "(%s) f_get_m365 error (%d)(%.17s)", __FUNCTION__, rtn, (char *)&m365);
+				sprintf(rejmsg, "can't find markup for (%.6s/%.8s)", m->symb, m->setldate);
+				return (ERR_SYSTEM);
+			}
+        	
+			/************************************************************************
+			>>> Near환율
+			결제일자의 FEE TNR이 00인 경우 (swap, swapmkup 부호 반대)
+				스왑의 Bid Near =  AskSpot - AskSwap - AskSwapMarkup + AskSpotMarkup
+				스왑의 ASK Near =  BIDSpot - BidSwap - BidSwapMarkup + BidspotMarkup
+			>>> Far환율
+			결제일자의 FEE TNR이 00인 경우 (swap, swapmkup 부호 반대)
+				스왑의 BID Far = BidSpot - AskSwap - AskSwapMarkup + BidSpotMarkup
+				스왑의 Ask Far = AskSpot - BidSwap - BidSwapMarkup + AskspotMarkup
+			------------------------------------------------------------------------
+			#### 스왑이고 FEE TNR='00'인 경우 부호 반대로 사전세팅.
+			************************************************************************/
+			int adj = 1;
+			if (q->stype[0] == DF_FXSWP && memcmp(m365.fee_tnr_dstcd, "00", 2) == 0)	adj = (-1);
+        	
+			m->bsmkup[BIDPOS].swapmkup = adj * m365.bid_swap_mrkup;		//m365.cust_bid_swap_mrkup;
+			m->bsmkup[BIDPOS].swap     = adj * m365.bid_swap_point_rt;	//m365.cust_bid_swap_point_rt;
+			m->bsmkup[ASKPOS].swapmkup = adj * m365.ask_swap_mrkup;		//m365.cust_ask_swap_mrkup;
+			m->bsmkup[ASKPOS].swap     = adj * m365.ask_swap_point_rt;	//m365.cust_ask_swap_point_rt;
+        	
+			memcpy(m->tnr_dstcd, m365.tnr_dstcd, sizeof(m->tnr_dstcd));	// 테너코드
+
+			// SPOT 마크업 조회 (사용자별 아님. 원천별 관리)
+			// CMBS, REUTER, HAND 인 경우의 수수료 그룹 : 002 
+			// 그 외 수수료는 001 그룹으로 조회
+			if (pfold->bidex[0] == 'C' || pfold->bidex[0] == 'R' || pfold->bidex[0] == 'H')
+				memcpy(m365.base_ymd, "00000002", sizeof(m365.base_ymd));
+			else
+				memcpy(m365.base_ymd, "00000001", sizeof(m365.base_ymd));
+        	
+			rtn = f_get_m365(&m365);
+			if (rtn < 0) {
+				wg_log(LV_ERR, "(%s) f_get_m365 (spot) error (%d)", __FUNCTION__, rtn);
+				sprintf(rejmsg, "can't find markup for (%.6s/%.8s)", m->symb, m->setldate);
+				return (ERR_SYSTEM);
+			}
+			m->bsmkup[BIDPOS].spotmkup = m365.bid_swap_mrkup;
+			m->bsmkup[ASKPOS].spotmkup = m365.ask_swap_mrkup;
+
+wg_log(LV_DEBUG, ">>> TEST >>> (%s) (%.8s:%.6s:%.3s) spmk/swmk/swpt  bid(%g:%g:%g) ask(%g:%g:%g)", __FUNCTION__, m365.base_ymd, m365.fx_prdct_cd, m365.mrkup_group_id, 
+			m->bsmkup[BIDPOS].spotmkup, m->bsmkup[BIDPOS].swapmkup, m->bsmkup[BIDPOS].swap,
+			m->bsmkup[ASKPOS].spotmkup, m->bsmkup[ASKPOS].swapmkup, m->bsmkup[ASKPOS].swap);
+
+		}
+	} // for (ii=0; ii<4; ii++)
+
+	// markup 적용시점 (HHMMSS)
+	memcpy(q->updtmkup, wgmst->updtmkup, sizeof(q->updtmkup));
+
+/*  2024.06 Ver2 Block
+
+	//★★★★★ TODO : 한도체크/수수료 BLOCK (주문서비스 호출하므로 원장에서 체크)
+	if (check_ord_limit(q, rejmsg) < 0)
+	{
+		wg_log(LV_WARN, "(%s) check_ord_limit error (%s)", __FUNCTION__, rejmsg);
+		sprintf(rejmsg, "check_ord_limit error ");
+		return (ERR_ORD_LIMIT*(-1));
+	}
+*/
+	// CHECK : 수수료조회 ======================================
+	if (q->req.reqtp[0] == REQTP_RFS || q->req.reqtp[0] == REQTP_RFQ)
+	{
+		q->margin = str2d(tro->mrgn_prc, sizeof(tro->mrgn_prc));		// * (q->req.side == DF_BID?(-1.):(1.));
+	}
+/* TODO TODO
+	else
+	{
+		MRKFEE_ST	stfee;
+		E_MSG		e_msg;
+		
+		memset(&stfee, 0x00, sizeof(stfee));
+		memset(&e_msg, 0x00, sizeof(e_msg));
+    	
+		stfee.s_proc_gb[0]			= '1';	// 고객구분('1'-고객)
+		stfee.s_pyacc_ymd_gb[0]		= '1';	// 만기년월일구분('1'-고객)
+		stfee.s_mrkoper_dstcd[0]	= '1';	// 장운영구분코드('1'-SMBS마감전)
+		stfee.s_fx_deal_dstcd[0]	= '1';	// FX매매구분코드('1'-매수)	★★★★TODO 매수기준으로 조회 후 '매도'인 경우는 뺴줘야 함.
+		// FX상품구분드('3':SP, '4':FWD, '5':SWAP)
+		if (q->stype[0] == DF_FXSPT)		stfee.s_fx_prdct_dstcd[0] = '3';
+		else if (q->stype[0] == DF_FXFWD)	stfee.s_fx_prdct_dstcd[0] = '4';
+		else if (q->stype[0] == DF_FXSWP)	stfee.s_fx_prdct_dstcd[0] = '5';
+    	
+		memcpy(stfee.s_base_ymd,		wgmst->bizdate,		sizeof(wgmst->bizdate));	// 기준일자 (YYYYMMDD)
+		memcpy(stfee.s_lgen_no,			q->user.lgen_no,	sizeof(q->user.lgen_no));	// 고객구분에 따라 시장참여자번호(10) OR 트레이더번호(4)
+		memcpy(stfee.s_fx_prdct_cd   ,	q->symb,			sizeof(q->symb));			// FX상품코드
+		memcpy(stfee.s_fx_pyacc_ymd  ,	q->spotdate,		sizeof(q->spotdate));		// FX만기년월일 (YYYYMMDD)
+    	
+		if (f_get_mrkup_fee(&stfee, &e_msg) != 0)
+		{
+			wg_log(LV_ERR, "(%s:%d) f_get_mrkup_fee error (%s:%s)", __func__, __LINE__, e_msg.code, e_msg.mesg);
+			sprintf(rejmsg, "set customer info error");
+			return (ERR_SYSTEM*(-1));
+		}
+		q->margin = stfee.d_spot_mrgn + stfee.d_swap_mrgn;
+	}
+*/
+
+if (q->useyn == DF_ALLOC) {	// request 최초 세팅 시
+	//=========================================================
+	// LOGIN 처리 (접속이력 생성)
+	// FXGO의 경우 고객별 별도의 로그인이 없으므로, request 처리 시 같이 처리함
+EXEC SQL
+	INSERT INTO INST1.TSKEIAM81 (
+		 GROUP_CO_CD
+		,USER_ID
+		,MSTR_SUB_ID
+		,CONN_YMS
+		,CONN_IP
+		,SYS_LAST_PRCSS_YMS
+		,SYS_LAST_UNO
+		,CHNL_DSTCD
+	) VALUES (
+		 'KB0'
+		,:c_lgen_no
+		,'00000'
+		,TO_CHAR(CURRENT TIMESTAMP, 'YYYYMMDDHH24MISSFF6')
+		,:v_compid
+		,TO_CHAR(CURRENT TIMESTAMP, 'YYYYMMDDHH24MISSFF6')
+		,'API'
+		,'D'
+	);
+	if (SQLCODE != 0)
+	{
+		wg_log(LV_ERR, "(%s) (%s) insert login error (%d:%s)", __FUNCTION__,v_compid, SQLCODE, SQLERRM);
+		//sprintf(rejmsg, "(%s) insert login error.", v_compid);
+		l_db2rollback();
+		//return(ERR_USR_INFO*(-1));
+	}
+	l_db2commit();
+
+} // if (DF_ALLOC)
+
+	wg_log(LV_DEBUG, "(%s) setreq_user ok.", __func__);
+
+	return 0;
+}
+
+int get_symbinfo(WGREQ *pq)
+{
+EXEC SQL BEGIN DECLARE SECTION;
+	int		i_usdpos			=0;
+	int		i_fincl_yn			=0;
+	int		i_ofpr_cust_rlnu_nocip=0;
+	char	c_tod_ymd			[ 8+1];
+	char	c_tom_ymd			[ 8+1];
+	char	c_spt_ymd			[ 8+1];
+	char	c_fx_prdct_cd		[ 6+1];
+	char	c_dfkn_fx_prdct_cd	[ 6+1];
+EXEC SQL END DECLARE SECTION;
+
+	memset(c_fx_prdct_cd,		0x00, sizeof(c_fx_prdct_cd));
+	memset(c_dfkn_fx_prdct_cd,	0x00, sizeof(c_dfkn_fx_prdct_cd));
+	memset(c_tod_ymd,			0x00, sizeof(c_tod_ymd));
+	memset(c_tom_ymd,			0x00, sizeof(c_tom_ymd));
+	memset(c_spt_ymd,			0x00, sizeof(c_spt_ymd));
+
+	memcpy(c_fx_prdct_cd, pq->symb, sizeof(pq->symb));
+
+EXEC SQL
+	SELECT	 FINCL_YN
+			,DECODE(SUBSTR(DFKN_FX_PRDCT_CD,4,3), 'USD', 1, 0) AS USDPOS
+			,DFKN_FX_PRDCT_CD
+			,OFPR_CUST_RLNU_NOCIP
+			,TRIM(TOD_YMD)
+			,TRIM(TOM_YMD)
+			,TRIM(SPT_YMD)
+	  INTO	 :i_fincl_yn
+			,:i_usdpos
+			,:c_dfkn_fx_prdct_cd
+			,:i_ofpr_cust_rlnu_nocip
+			,:c_tod_ymd
+			,:c_tom_ymd
+			,:c_spt_ymd
+	  FROM	INST1.TSKEIAM85
+	 WHERE	GROUP_CO_CD	= 'KB0'
+	   AND	DFKN_FX_PRDCT_CD IN (SELECT FX_PRDCT_CD FROM INST1.TSKEIAM85 WHERE MSTR_USE_YN = '1')
+	   AND	FX_PRDCT_CD = :c_fx_prdct_cd
+	WITH UR
+	;
+	if (SQLCODE != 0)
+	{
+		wg_log(LV_ERR, "(%s:%d) get symbol info error (%s:%s)", __FUNCTION__, __LINE__, c_fx_prdct_cd, SQLERRM);
+		return(-1);
+	}
+
+	l_rtrim(c_fx_prdct_cd);
+	l_rtrim(c_dfkn_fx_prdct_cd);
+
+	pq->crosyn   = i_fincl_yn;
+	pq->usdpos   = i_usdpos;
+	pq->zCustdiv = i_ofpr_cust_rlnu_nocip;
+
+	memcpy(pq->todymd,	c_tod_ymd, sizeof(pq->todymd));
+	memcpy(pq->tomymd,	c_tom_ymd, sizeof(pq->tomymd));
+	memcpy(pq->sptymd,	c_spt_ymd, sizeof(pq->sptymd));
+	memcpy(pq->symb4r,	c_dfkn_fx_prdct_cd,	sizeof(pq->symb4r));
+	
+	wg_log(LV_DEBUG, "(%s) symbol info loaded ok (%.6s)", __FUNCTION__, pq->symb);
+
+	return (0);
+}
+
+/*===============================================================
+ * 체결패킷생성
+ * WG_ORD_EXC ps 패킷은 KEY값이 COPY되어 있는 상태로 전달 됨.
+ * check_ord_valid() : memcpy(ps, pr, WG_KEYLEN);		// sendcompid+sendsubid
+===============================================================*/
+int make_send_fill(WGREQ *pq, WGCOM *cr, WGCOM *cs)
+{
+	int		rc, dsiz=1024, slen=sizeof(WGCOM)+sizeof(WG_ORD_EXC);
+	sqlint32	ordno, excno;
+	double	fee, ordprc, excprc=(-1.);
+	char	strtmp[128], errmsg[128];
+	char	symb[6+1], bs[1];
+
+	WG_ORD     *or = cr->data;
+	WG_ORD_EXC *os = cs->data;
+
+	cs->msgtp[0] = MSG_ORDEXC;
+	os->tag35[0] = '8';
+	memcpy(os->echoTags, pq->echoTags, sizeof(os->echoTags));
+
+	/*===============================================================
+	 * 체결번호 채번
+	 ===============================================================*/
+	excno = get_seqno(GB_EXCNO);
+	if (excno < 0)
+	{
+		//sprintf(rejmsg, "system error.. contact KBFX desk or try later..");
+		return (ERR_SYSTEM*(-1));
+	}
+
+	sprintf(strtmp, "%ld", excno);
+	memcpy(os->execid, strtmp, strlen(strtmp));
+
+//============================================================
+// 체결가격은 check_ord_valid() 에서 호가검증 시 결정됨.
+// ★CHECK : 원가로 시세를 제공한 경우는 체결가격에 수수료를 더해야 함.
+//============================================================
+	// 수수료세팅
+	sprintf(strtmp, "%.6f", pq->margin);
+	memcpy(os->commission, strtmp, strlen(strtmp));
+
+	// 체결수량
+	memcpy(os->lastqty, or->orderqty, sizeof(os->lastqty));
+
+	// 주문상태 : '0'-NEW, '1'-Partially filled, '2'-Filled, '4'-Canceled, '8'-Rejected
+	os->ordstatus[0] = API_ORDST_FILL;
+	// 체결상태 : '0'-New, '4'-Canceled, '8'-Rejected, 'I'-Order Status, 'F'-Filled
+	os->exectype[0]  = API_EXST_FILL;
+
+wg_log(LV_ERR, "(%s:%d) sendto FIX. (%.20s) ord(%.16s/%.16s) exc(%.16s:%.16s) stat(%.1s:%.1s)", __func__, __LINE__, 
+		cs->wgkey.sendcompid, os->clordid, os->ordid, os->lastqty, os->lastpx, os->ordstatus, os->exectype);
+
+wg_log(LV_DEBUG, "(%s) ===========================================================", __func__);
+wg_log(LV_DEBUG, "[S] msgtp         =[%.*s]", sizeof(cr->msgtp           ), cs->msgtp           );   // 'R' Quote Request(subscribe)
+wg_log(LV_DEBUG, "[S] sendcompid    =[%.*s]", sizeof(cs->wgkey.sendcompid), cs->wgkey.sendcompid);   // 49(SenderCompID)
+wg_log(LV_DEBUG, "[S] sendsubid     =[%.*s]", sizeof(cs->wgkey.sendsubid ), cs->wgkey.sendsubid );   // 50(SenderSubID)
+wg_log(LV_DEBUG, "[S] keysymb       =[%.*s]", sizeof(cs->wgkey.keysymb   ), cs->wgkey.keysymb   );   // 55(Symbol)
+wg_log(LV_DEBUG, "[S] tag35         =[%.*s]", sizeof(os->tag35      ), os->tag35        );  // 송신 Tag35
+wg_log(LV_DEBUG, "[S] quotID        =[%.*s]", sizeof(os->quotID     ), os->quotID       );  // RFS인 경우 주문에 연동된 시세패킷 QuoteID (Tag117=QuoteID)
+wg_log(LV_DEBUG, "[S] account       =[%.*s]", sizeof(os->account    ), os->account      );  // Dealer ID
+wg_log(LV_DEBUG, "[S] userid        =[%.*s]", sizeof(os->userid     ), os->userid       );  //
+wg_log(LV_DEBUG, "[S] clordid       =[%.*s]", sizeof(os->clordid    ), os->clordid      );  // TAG-11 기관주문번호     : 기관 주문번호
+wg_log(LV_DEBUG, "[S] ordid         =[%.*s]", sizeof(os->ordid      ), os->ordid        );  // TAG-37 주문번호         : 데몬에서 채번한 KB주문번호
+wg_log(LV_DEBUG, "[S] origordid     =[%.*s]", sizeof(os->origordid  ), os->origordid    );  // TAG-37 내부원주문번호   : 취소주문(35=F)인 경우 고객이 보낸 KB원주문번호
+wg_log(LV_DEBUG, "[S] stype         =[%.*s]", sizeof(os->stype      ), os->stype        );  // Tag167=SecurityType or Tag9063=Tenor Code (S:FXSPOT,F:FXFWD,W:FXSWAP)
+wg_log(LV_DEBUG, "[S] symb          =[%.*s]", sizeof(os->symb       ), os->symb         );  // PK // WGKEY + SYMBOL
+wg_log(LV_DEBUG, "[S] setldate      =[%.*s]", sizeof(os->setldate   ), os->setldate     );  // 결제일(YYYYMMDD) (swap 인 경우 near)
+wg_log(LV_DEBUG, "[S] side          =[%.*s]", sizeof(os->side       ), os->side         );  // '0'=2way, '1'=buy, '2'=sell
+wg_log(LV_DEBUG, "[S] orderqty      =[%.*s]", sizeof(os->orderqty   ), os->orderqty     );  // 밴드구분 기준 값 (ex. 주문금액) : RFS, RFQ 인 경우 필수
+wg_log(LV_DEBUG, "[S] currency      =[%.*s]", sizeof(os->currency   ), os->currency     );  // Primary Currency
+wg_log(LV_DEBUG, "[S] price         =[%.*s]", sizeof(os->price      ), os->price        );  // 주문가격
+wg_log(LV_DEBUG, "[S] ordtype       =[%.*s]", sizeof(os->ordtype    ), os->ordtype      );  // 주문유형 : '1'-Market '2'-Limit
+wg_log(LV_DEBUG, "[S] timeinforce   =[%.*s]", sizeof(os->timeinforce), os->timeinforce  );  // 체결조건 : '0'-For Day
+wg_log(LV_DEBUG, "[S] lastqty       =[%.*s]", sizeof(os->lastqty    ), os->lastqty      );  // TAG-32   체결수량         : 
+wg_log(LV_DEBUG, "[S] execid        =[%.*s]", sizeof(os->execid     ), os->execid       );  // TAG-17   채결ID           : KB 체결번호
+wg_log(LV_DEBUG, "[S] lastpx        =[%.*s]", sizeof(os->lastpx     ), os->lastpx       );  // TAG-31   체결가격         : 
+wg_log(LV_DEBUG, "[S] ordstatus     =[%.*s]", sizeof(os->ordstatus  ), os->ordstatus    );  // TAG-39   주문상태         : '0'-NEW
+wg_log(LV_DEBUG, "[S] exectype      =[%.*s]", sizeof(os->exectype   ), os->exectype     );  // TAG-150  거래유형         : '0'-New
+wg_log(LV_DEBUG, "[S] commission    =[%.*s]", sizeof(os->commission ), os->commission   );  // TAG-12   수수료           : 
+wg_log(LV_DEBUG, "[S] setldate2     =[%.*s]", sizeof(os->setldate2  ), os->setldate2    );  // SWAP 인 경우 far 결제일(YYYYMMDD)
+wg_log(LV_DEBUG, "[S] lastpx2       =[%.*s]", sizeof(os->lastpx2    ), os->lastpx2      );  // SWAP 인 경우 far 체결가격 (Tag 6160)
+wg_log(LV_DEBUG, "[S] rejcd         =[%.*s]", sizeof(os->rejcd      ), os->rejcd        );  // 300(QuoteRejectReason) // 거부코드
+wg_log(LV_DEBUG, "[S] rejtext       =[%.*s]", sizeof(os->rejtext    ), os->rejtext      );  // 58(Text) // 거부사유
+wg_log(LV_DEBUG, "===========================================================");
+
+	_set_pad((char *)cs, slen);
+	rc = agdque_wrn (&qout, WG_DAT_DIR, NULL, WGDQ_SNDRS, WGSEM_SNDRS, dsiz, (char *)cs, slen);
+	if (rc <= 0)
+		wg_log(LV_ERR, "(%s:%d) agdque_wrn error (%d)", __func__, __LINE__, rc);
+
+	return (0);
+}
+
+/*===============================================================
+// ★★ TODO 2): IOC, FOK 등의 주문인 경우 체결과 잔량 취소처리 등은 추후 작업
+ * return 1   : 즉시체결대상있음 (체결가 ps->lastpx 세팅)
+ * return 0   : 체결 미대상 (원장으로 주문내역 전달)
+ * return < 0 : 거부 및 오류 처리
+ 
+ * SETUP WG_ORD_EXC FIELD : msgtp, tag35, quotID ,account ,clordid ,stype ,setldate ,setldate2 ,side ,orderamt
+ *                       : currency, price ,ordtype ,timeinforce ,echoTags
+ * ★                    : lastpx (!!!), commission (???)
+===============================================================*/
+int check_ord_valid(WGREQ *pq, WGCOM *cr, WGCOM *cs, char *rejmsg)
+{
+	int			ii;
+	double		ordvol, excprc;
+	char		strtmp[128], symb[6], c_ordprc[16];
+	sqlint32	ordno, orgordno;
+
+	double		dtm1, dtm2;
+	struct timeval	tv;
+
+	WG_ORD 		*pr = cr->data;
+	WG_ORD_EXC	*ps = cs->data;
+
+	memcpy(cs, cr, sizeof(WGCOM));
+
+	cs->msgtp[0] = MSG_ORDEXC;
+
+	// 수신 TAG 정보 세팅
+	ps->tag35[0] = '8';
+	memcpy(ps->quotID		, pr->quotID		, sizeof(ps->quotID		));
+	memcpy(ps->account		, pr->account		, sizeof(ps->account	));
+	memcpy(ps->clordid		, pr->clordid		, sizeof(ps->clordid	));
+	memcpy(ps->stype		, pr->stype			, sizeof(ps->stype		));
+	memcpy(ps->symb			, pr->symb			, sizeof(ps->symb		));
+	memcpy(ps->setldate		, pr->setldate		, sizeof(ps->setldate	));
+	memcpy(ps->setldate2	, pr->setldate2		, sizeof(ps->setldate2	));
+	memcpy(ps->side			, pr->side			, sizeof(ps->side		));
+	memcpy(ps->orderqty		, pr->orderqty		, sizeof(ps->orderqty	));
+	memcpy(ps->currency		, pr->currency		, sizeof(ps->currency	));
+	memcpy(ps->price		, pr->price			, sizeof(ps->price		));
+	memcpy(ps->lastpx2		, pr->price2		, sizeof(ps->lastpx2	));
+	memcpy(ps->ordtype		, pr->ordtype		, sizeof(ps->ordtype	));
+	memcpy(ps->timeinforce	, pr->timeinforce	, sizeof(ps->timeinforce));
+	memcpy(ps->echoTags		, pr->echoTags		, sizeof(ps->echoTags	));
+
+switch (pr->tag35[0])
+{
+case 'D' :	// 신규주문
+
+	// 주문번호 채번 되었으면 이후 주문 거부
+	if (pq->req.orderno[sizeof(pq->req.orderno)-1] != 0x00)
+	{
+		sprintf(rejmsg, "reject multiple orders on the same quote.");
+		wg_log(LV_INFO, "(%s) reject multiple orders on the same quote.", __func__);
+		return (ERR_KEY_DUP*(-1));
+	}
+
+	// 주문타입 체크 (시장가, 지정가만 가능)
+	if (pr->ordtype[0] != API_ORDTP_MARKET && pr->ordtype[0] != API_ORDTP_LIMIT)
+	{
+		sprintf(rejmsg, "only market/limit order is available.");
+		wg_log(LV_INFO, "(%s) only market/limit order is available.", __func__);
+		return (ERR_ORD_TYPE*(-1));
+	}
+
+	// IOC/FOK만 가능
+	// 2024.02.02 DAY주문가능 (모두 가능)
+	if (pr->timeinforce[0] != API_ORDTF_DAY && pr->timeinforce[0] != API_ORDTF_IOC &&
+		pr->timeinforce[0] != API_ORDTF_FOK)
+	{
+		sprintf(rejmsg, "order configure error !");
+		wg_log(LV_INFO, "(%s) order configure error !", __func__);
+		return (ERR_ORD_TYPE*(-1));
+	}
+
+// quot 환율로 체결시키기 때문에 단위체크 필요없음.
+/*
+	// >> 2024.01.11 체크) 주문가격 1전(0.1) 단위로 주문 시 거부. (USDKRW인 경우)
+	if (memcmp(pr->symb, "USDKRW", 6) == 0 && fmod(ordprc*10., 1.0) > 0)
+	{
+		sprintf(rejmsg, "order rate unit is '0.1'");
+		wg_log(LV_INFO, "(%s) order rate unit is '0.1'", __func__);
+		return (ERR_ORD_UNIT*(-1));
+	}
+*/
+	// 주문시간 1초에 DF_MX_ORDSEC 이상 인 경우 거부
+	gettimeofday(&tv, NULL);
+	dtm1 = tv.tv_sec%1000000L + tv.tv_usec/1000000.;
+	dtm2 = pq->user.ordtm[DF_MX_ORDSEC-1].tv_sec%1000000L + pq->user.ordtm[DF_MX_ORDSEC-1].tv_usec/1000000.;
+
+	if ((dtm1 - dtm2) < 1.0 && (dtm1 - dtm2) > .0)
+	{
+		sprintf(rejmsg, "exceed order count limits per second (%.2f)", dtm1 - dtm2);	
+		wg_log(LV_INFO, "(%s) exceed order count limits per second (%.2f)", __func__, dtm1 - dtm2);
+		return (ERR_ORD_CNT*(-1));
+	}
+
+	// 주문접수는 시간이 15:29 이후에는 거부처리
+	struct tm *tm;
+	tm = localtime(&tv.tv_sec);
+	if (tm->tm_hour*10000 + tm->tm_min*100 + tm->tm_sec > DF_MX_ORDTIM)
+	{
+		sprintf(rejmsg, "market is closed. order is not available", dtm1 - dtm2);	
+		wg_log(LV_INFO, "(%s) market is closed. order is not available", __func__);
+		return (ERR_ORD_TIM*(-1));
+	}
+
+	// 주문가격
+	double		ordprc, ordprc2; 
+	long		ordprcl, ordprcl2;
+
+	ordprc   = str2d(pr->price, sizeof(pr->price));
+	ordprcl  = (long)(pow(10, pq->zCustdiv)*ordprc + 0.5);
+
+	ordprc2  = str2d(pr->price2, sizeof(pr->price2));
+	ordprcl2 = (long)(pow(10, pq->zCustdiv)*ordprc2 + 0.5);
+
+	// 주문시간 N건 기록
+	memmove(&pq->user.ordtm[1], &pq->user.ordtm, sizeof(struct	timeval) * (DF_MX_ORDSEC-1));
+	memcpy(&pq->user.ordtm[0], &tv, sizeof(struct timeval));
+
+	// ===========================================================
+	// ★ TODO 3) : 각 주문,채널 유형별로 체결조건에 맞게 분기처리 
+	// ★  1) 수수료 등 마크업이 모두 적용된 환율이기 때문에 pfold 가 아닌 pq->quot.bid/ask 를 기준으로 체결시킴
+	// ★  2) RFS,RFQ 인 경우는 제공된 호가인 pq->quot[] 배열내에서 quotID, bid, ask 값 검증 후 제공된 호가로 체결시킴
+	// ★  3) 차익API와 같이 원가시세 제공하고 체결 시점에 수수료 적용하는 경우는 예외처리 필요 (pq->user.orgquot[0] == DF_C_ON)
+	//        >> 3) 경우는 고려하지 않음
+	// ===========================================================
+//pthread_mutex_lock(&pq->mutexq);
+
+	char	quotID[128];
+	memset(quotID, 0x00, sizeof(strtmp));
+
+	memcpy(quotID, pr->quotID, sizeof(pr->quotID));
+	_rtrim(quotID, sizeof(quotID));
+
+	// 주문금액 체크 (1만 ~ 1백만), 금액단위 체크 (최소금액기준?)
+	ordvol = str2d(pr->orderqty, sizeof(pr->orderqty));
+
+	switch (pq->req.reqtp[0])
+	{
+	case REQTP_ABT :
+	case REQTP_API :
+
+		// 주문이 이미 실행되었으면 복수주문은 거부처리 (RFQ,RFS는 단일 주문만 가능)
+		if (pq->req.orderno[0] != 0x00)
+		{
+			sprintf(rejmsg, "reject multiple orders on the same request. reqID(%s)", pq->reqID);
+			wg_log(LV_INFO, "(%s) reject multiple orders on the same request. reqID(%s)", __func__, pq->reqID);
+			return (ERR_KEY_DUP*(-1));
+//pthread_mutex_unlock(&pq->mutexq);
+		}
+
+		if (ordvol > DF_MX_ORDVOL || ordvol < DF_MI_ORDVOL)		// || fmod(ordvol, DF_MI_ORDVOL) > 0.)
+		{
+			sprintf(rejmsg, "order amount error (%ld ~ %ld available, unit %ld)", DF_MI_ORDVOL, DF_MX_ORDVOL, DF_MI_ORDVOL);
+			wg_log(LV_INFO, "(%s) order qty error (%ld ~ %ld available, unit %ld)", __func__, DF_MI_ORDVOL, DF_MX_ORDVOL, DF_MI_ORDVOL);
+//pthread_mutex_unlock(&pq->mutexq);
+			return (ERR_ORD_VOL*(-1));
+		}
+
+		// 지정가인 경우, 고객불리호가는 거부 (고객제공시세 최종 환율을 기준)
+		if ((pr->ordtype[0] == API_ORDTP_LIMIT && pr->side[0] == API_BUY && ordprcl > pq->quot[0].ask) ||
+			(pr->ordtype[0] == API_ORDTP_LIMIT && pr->side[0] == API_SEL && ordprcl < pq->quot[0].bid))
+		{
+			sprintf(rejmsg, "trade request rate must be equal to tradable offer/bid rate.", symb);
+			wg_log(LV_INFO, "(%s) trade request rate must be equal to tradable offer/bid rate.", __func__);
+//pthread_mutex_unlock(&pq->mutexq);
+			return (ERR_ORD_PRC*(-1));
+		}
+// #####################################################################################################
+#ifndef __USE_ORD_TP__	// 고객주문서비스 호출
+		//=================================================
+		// ★ 즉시 체결대상 (현재가는 최종 제공 환율 기준)
+		//=================================================
+		if (pq->user.excutenow[0] == DF_C_ON) {
+
+			if ((pr->side[0] == API_BUY && (ordprcl == pq->quot[0].ask || pr->ordtype[0] == API_ORDTP_MARKET)) ||
+				(pr->side[0] == API_SEL && (ordprcl == pq->quot[0].bid || pr->ordtype[0] == API_ORDTP_MARKET)))
+			{
+				if (pr->side[0] == API_BUY)		sprintf(strtmp, "%.*f", pq->zCustdiv, pq->quot[0].ask/pow(10, pq->zCustdiv));
+				else							sprintf(strtmp, "%.*f", pq->zCustdiv, pq->quot[0].bid/pow(10, pq->zCustdiv));
+        	
+				wg_log(LV_INFO, "(%s) (%.1s) order excute!! (%.1s:%f:%ld) quot(%.20s:%ld/%ld)", __func__, 
+							pq->req.reqtp, pr->side, ordprc, ordprcl, quotID, pq->quot[0].bid, pq->quot[0].ask);
+        	
+				memcpy(ps->lastpx, strtmp, strlen(strtmp));
+//pthread_mutex_unlock(&pq->mutexq);
+				return (1);
+			}
+		}
+#endif
+// #####################################################################################################
+		break;
+
+	case REQTP_RFS :
+	case REQTP_RFQ :
+
+		// 고객에게 제공된 호가가 아니면 거부 (quotID와 환율 모두 비교)
+		// 송신한 호가는 DF_GRACEPERIOD 시간동안 모두 메모리에 보관함.
+		for (ii=0; ii < DF_MAXFEED*DF_GRACEPERIOD; ii++)
+		{
+			// 해당 QuotID
+			if (memcmp(pq->quot[ii].quotID, quotID, sizeof(pq->quot[ii].quotID)) == 0)
+			{
+				if ((pq->stype[0] != DF_FXSWP && (
+						(pr->side[0] == API_BUY && ordprcl != pq->quot[ii].ask) || (pr->side[0] == API_SEL && ordprcl != pq->quot[ii].bid))) ||
+					(pq->stype[0] == DF_FXSWP && (
+						(pr->side[0] == API_BUY && (ordprcl != pq->quot[ii].bid || ordprcl2 != pq->quot[ii].ask2)) ||
+						(pr->side[0] == API_SEL && (ordprcl != pq->quot[ii].ask || ordprcl2 != pq->quot[ii].bid2)))) ||
+					(ordvol != pq->req.orderqty))
+				{
+					sprintf(rejmsg, "order price/qty is is not match with request (%s)", quotID);
+					wg_log(LV_INFO, "(%s) order price/qty is not match with request (%s) (%.1s:%.f) (%ld:%ld) (%ld/%ld)(%ld/%ld)", __func__, quotID, pr->side, ordprc, ordprcl, ordprcl2, pq->quot[ii].bid, pq->quot[ii].ask, pq->quot[ii].bid2, pq->quot[ii].ask2);
+//pthread_mutex_unlock(&pq->mutexq);
+					return (ERR_ORD_PRC*(-1));
+				}
+// ★★★★★ CHECK : 가장 최근 시세인 경우는 grace period 체크 제외(?)
+if (ii > 0) {
+				// CHECK : GracePeriod 체크 기준은 주문 접수시간과 시세 송신시간
+				// dtm1 = tv.tv_sec%1000000L + tv.tv_usec/1000000.;
+				dtm2 = pq->quot[ii].qtm.tv_sec%1000000L + pq->quot[ii].qtm.tv_usec/1000000.;
+
+				if (dtm1 - dtm2 > DF_GRACEPERIOD && ii > 0)
+				{
+					sprintf(rejmsg, "quotID(%s) is over the grace-period (%.2f sec)", quotID, dtm1-dtm2);
+					wg_log(LV_INFO, "(%s) quotID(%s) is over the grace-period (%.2f)", __func__, quotID, dtm1-dtm2);
+//pthread_mutex_unlock(&pq->mutexq);
+					return (ERR_ORD_QUOTID*(-1));
+				}
+}	// if (ii > 0)
+				wg_log(LV_DEBUG, "(%s) (%.1s) order checked OK!! (%.1s:%f:%ld) quot(%s:%ld/%ld)", __func__, pq->req.reqtp, pr->side, ordprc, ordprcl, quotID, pq->quot[ii].bid	, pq->quot[ii].ask);
+
+				//=================================================
+				// ★ 즉시 체결대상 
+				// ★ CHECK : RFS,RFQ는 제공시세와 맞으면 조건없이 즉시 체결처리(?)
+				//=================================================
+				if (1) {	//pq->excutenow[0] == DF_C_ON) {
+					memcpy(ps->lastpx,  pr->price,  sizeof(ps->lastpx));
+					memcpy(ps->lastpx2, pr->price2, sizeof(ps->lastpx2));		// for SWAP far
+//pthread_mutex_unlock(&pq->mutexq);
+					return (1);
+				}
+			}
+		}
+
+		sprintf(rejmsg, "not a valid quotID [%s]", quotID);
+		wg_log(LV_INFO, "(%s) not a valid quotID (%s)", __func__, quotID);
+//pthread_mutex_unlock(&pq->mutexq);
+
+		return (ERR_ORD_QUOTID*(-1));
+
+		break;
+
+	default :
+		break;
+	}
+//pthread_mutex_unlock(&pq->mutexq);
+
+	break;
+
+case 'F' : 	// 취소주문
+
+	orgordno = str2i(pr->origordid, sizeof(pr->origordid));
+	if (orgordno <= 0) {
+		sprintf(rejmsg, "org_order is needed for cancelrequest");
+		wg_log(LV_INFO, "(%s) org_order is needed for cancelrequest", __func__);
+		return (ERR_ORD_ORGNO*(-1));
+	}
+
+	break;
+} // switch (pr->tag35[0])
+
+wg_log(LV_DEBUG, "(%s) done..", __func__);
+
+// ★★★ 체결대상인 경우는 해당 조건절에서 바로 return(1) 함. (체결가 ps->lastpx 세팅)
+	return (0);
+}
+
+/*===============================================================
+ * MAKE PACKET FUNCTION
+ * >> WG_ORD_EXC *ps 에는 체결기준으로 패킷이 세팅 되어 있기 때문에
+ * >> 응답용으로 사용하지 않고, COPY 후 필요한 필드를 업데이트하여 사용
+ * >> 단, 주문번호는 채번하여 세팅함.
+===============================================================*/
+int make_send_ack(WGCOM *cr, WGCOM *cs)
+{
+	int		rc, dsiz=1024, slen=sizeof(WGCOM) + sizeof(WG_ORD_EXC);
+	int		ordno;
+	char	strtmp[128], sbuf[1024];
+
+	WG_ORD_EXC *os=cs->data;
+
+	memset(sbuf, 0x00, sizeof(sbuf));
+	memcpy(sbuf, cs,   slen);		// 미리 세팅된 체결패킷을 응답전송용 버퍼로 COPY
+
+	WGCOM      *c = sbuf;
+	WG_ORD_EXC *p = c->data;
+
+	memcpy((char *)&c->wgkey, (char *)&cr->wgkey, WG_KEYLEN);
+
+	c->msgtp[0] = MSG_ORDEXC;
+	p->tag35[0] = '8';
+
+	memset(p->lastpx, 0x00, sizeof(p->lastpx));		// check_ord_valid() 에서 세팅한 체결가격 RESET
+
+	/*===============================================================
+	 * 주문번호 채번
+	 ===============================================================*/
+	ordno = get_seqno(GB_ORDNO);
+	if (ordno < 0)
+	{
+		//sprintf(rejmsg, "system error.. contact KBFX desk or try later..");
+		return (ERR_SYSTEM*(-1));
+	}
+
+	sprintf(strtmp, "%010ld", ordno);
+	memcpy(os->ordid, strtmp, strlen(strtmp));		// 리턴 구조체에도 주문번호 세팅
+	memcpy(p->ordid,  strtmp, strlen(strtmp));
+
+	// 주문상태 : '0'-NEW, '1'-Partially filled, '2'-Filled, '4'-Canceled, '8'-Rejected
+	p->ordstatus[0] = API_ORDST_NEW;
+	// 체결상태 : '0'-New, '4'-Canceled, '8'-Rejected, 'I'-Order Status, 'F'-Filled
+	p->exectype[0]  = API_EXST_NEW;
+
+wg_log(LV_ERR, "(%s:%d) sendto FIX. (%.20s) ord(%.24s/%.24s) stat(%.1s:%.1s)", __func__, __LINE__, c->wgkey.sendcompid, p->clordid, p->ordid, p->ordstatus, p->exectype);
+
+wg_log(LV_DEBUG, "(%s) ===========================================================", __func__);
+wg_log(LV_DEBUG, "[S] msgtp         =[%.*s]",sizeof(cr->msgtp     	    ), cs->msgtp     		);	// 'R' Quote Request(subscribe)
+wg_log(LV_DEBUG, "[S] sendcompid    =[%.*s]",sizeof(cs->wgkey.sendcompid), cs->wgkey.sendcompid	);	// 49(SenderCompID)
+wg_log(LV_DEBUG, "[S] sendsubid     =[%.*s]",sizeof(cs->wgkey.sendsubid ), cs->wgkey.sendsubid 	);	// 50(SenderSubID)
+wg_log(LV_DEBUG, "[S] keysymb       =[%.*s]",sizeof(cs->wgkey.keysymb   ), cs->wgkey.keysymb    );	// 55(Symbol)
+wg_log(LV_DEBUG, "[S] tag35         =[%.*s]", sizeof(p->tag35		), p->tag35			);	// 송신 Tag35
+wg_log(LV_DEBUG, "[S] quotID        =[%.*s]", sizeof(p->quotID		), p->quotID		);	// RFS인 경우 주문에 연동된 시세패킷 QuoteID (Tag117=QuoteID)
+wg_log(LV_DEBUG, "[S] account       =[%.*s]", sizeof(p->account		), p->account	    );	// Dealer ID
+wg_log(LV_DEBUG, "[S] clordid       =[%.*s]", sizeof(p->clordid		), p->clordid	    );	// TAG-11 기관주문번호     : 기관 주문번호
+wg_log(LV_DEBUG, "[S] ordid         =[%.*s]", sizeof(p->ordid		), p->ordid			);	// TAG-37 주문번호         : 데몬에서 채번한 KB주문번호
+wg_log(LV_DEBUG, "[S] origordid     =[%.*s]", sizeof(p->origordid	), p->origordid		);	// TAG-37 내부원주문번호   : 취소주문(35=F)인 경우 고객이 보낸 KB원주문번호
+wg_log(LV_DEBUG, "[S] stype         =[%.*s]", sizeof(p->stype		), p->stype			);	// Tag167=SecurityType or Tag9063=Tenor Code (S:FXSPOT,F:FXFWD,W:FXSWAP)
+wg_log(LV_DEBUG, "[S] symb          =[%.*s]", sizeof(p->symb		), p->symb		    );	// PK // WGKEY + SYMBOL
+wg_log(LV_DEBUG, "[S] setldate      =[%.*s]", sizeof(p->setldate	), p->setldate	    );	// 결제일(YYYYMMDD) (swap 인 경우 near)
+wg_log(LV_DEBUG, "[S] setldate2     =[%.*s]", sizeof(p->setldate2	), p->setldate2		);	// SWAP 인 경우 far 결제일(YYYYMMDD)
+wg_log(LV_DEBUG, "[S] side          =[%.*s]", sizeof(p->side		), p->side		    );	// '0'=2way, '1'=buy, '2'=sell
+wg_log(LV_DEBUG, "[S] orderqty      =[%.*s]", sizeof(p->orderqty	), p->orderqty	    );	// 밴드구분 기준 값 (ex. 주문금액) : RFS, RFQ 인 경우 필수
+wg_log(LV_DEBUG, "[S] currency      =[%.*s]", sizeof(p->currency	), p->currency	    );	// Primary Currency
+wg_log(LV_DEBUG, "[S] price         =[%.*s]", sizeof(p->price		), p->price			);	// 주문가격
+wg_log(LV_DEBUG, "[S] ordtype       =[%.*s]", sizeof(p->ordtype		), p->ordtype	    );	// 주문유형 : '1'-Market '2'-Limit
+wg_log(LV_DEBUG, "[S] timeinforce   =[%.*s]", sizeof(p->timeinforce	), p->timeinforce  	);	// 체결조건 : '0'-For Day
+wg_log(LV_DEBUG, "[S] lastqty       =[%.*s]", sizeof(p->lastqty		), p->lastqty	    );	// TAG-32   체결수량         : 
+wg_log(LV_DEBUG, "[S] execid        =[%.*s]", sizeof(p->execid		), p->execid		);	// TAG-17   채결ID           : KB 체결번호
+wg_log(LV_DEBUG, "[S] lastpx        =[%.*s]", sizeof(p->lastpx		), p->lastpx		);	// TAG-31   체결가격         : 
+wg_log(LV_DEBUG, "[S] ordstatus     =[%.*s]", sizeof(p->ordstatus	), p->ordstatus		);	// TAG-39   주문상태         : '0'-NEW
+wg_log(LV_DEBUG, "[S] exectype      =[%.*s]", sizeof(p->exectype	), p->exectype	    );	// TAG-150  거래유형         : '0'-New
+wg_log(LV_DEBUG, "[S] commission    =[%.*s]", sizeof(p->commission	), p->commission	);	// TAG-12   수수료           : 
+wg_log(LV_DEBUG, "[S] rejcd         =[%.*s]", sizeof(p->rejcd		), p->rejcd			);	// 300(QuoteRejectReason) // 거부코드
+wg_log(LV_DEBUG, "[S] rejtext       =[%.*s]", sizeof(p->rejtext	), p->rejtext	    	);	// 58(Text) // 거부사유
+wg_log(LV_DEBUG, "===========================================================");
+
+	_set_pad(sbuf, slen);
+	rc = agdque_wrn (&qout, WG_DAT_DIR, NULL, WGDQ_SNDRS, WGSEM_SNDRS, dsiz, sbuf, slen);
+	if (rc <= 0)
+		wg_log(LV_ERR, "(%s:%d) agdque_wrn error (%d)", __func__, __LINE__, rc);
+
+	return ;
+}
+
+int make_send_rej(WGCOM *cr, WGCOM *cs, int rejcd, char *rejmsg)
+{
+	int		rc, dsiz = 1024, slen=sizeof(WGCOM);
+	char	c_rejcd[ 8+1], rejtext[128+1], stemp[64];
+
+	WG_QUOT_REQ *qr=NULL;
+	WG_QUOT_RES *qs=NULL;
+	WG_ORD      *or=NULL;
+	WG_ORD_EXC  *os=NULL;
+		
+	memcpy((char *)&cs->wgkey, (char *)&cr->wgkey, WG_KEYLEN);
+
+	memset(c_rejcd, 0x00, sizeof(c_rejcd));
+	memset(rejtext, 0x00, sizeof(rejtext));
+
+	switch (cr->msgtp[0])
+	{
+	case MSG_QTREQ :		// Quote Request 에 대한 거부 또는 종료
+
+		cs->msgtp[0] = MSG_QTRES;
+		
+		qr = (WG_QUOT_REQ *)(cr->data);
+		qs = (WG_QUOT_RES *)(cs->data);
+
+		slen += sizeof(WG_QUOT_RES);
+
+// ★★★★ TODO : 에러코드 관리기준 보완 필요 (코드값 마이너스 기준도 통일)
+rejcd = ERR_FXGO_OTHR;
+
+		if (rejcd != 0)	{				// Quote 요청거부
+			qs->tag35[0] = 'b';
+			sprintf(c_rejcd, "%d", sizeof(qs->rejcd), rejcd);
+			memcpy(qs->rejcd, c_rejcd, sizeof(qs->rejcd));
+		}
+		else
+			qs->tag35[0] = 'Z';			// Quote 해지요청 일반
+
+		if (rejmsg)	strncpy(rejtext, rejmsg, sizeof(qs->rejtext));
+
+		strcat(rejtext, DF_REJ_KBEMAL);
+		memcpy(qs->rejtext, rejmsg, strlen(rejmsg));
+
+		memcpy(qs->reqID,    qr->reqID,    sizeof(qs->reqID));
+		memcpy(qs->echoTags, qr->echoTags, sizeof(qs->echoTags));
+
+		break;
+
+	case MSG_ORDER :		// 'O' New/Amend/Cncl Order  에 대한 거부처리
+	case MSG_ORDEXC :		// 'E' Order Ack/Execution 에 대한 거부처리
+
+		cs->msgtp[0] = MSG_ORDEXC;
+
+		or = (WG_ORD      *)(cr->data);
+		os = (WG_ORD_EXC  *)(cs->data);
+
+		slen += sizeof(WG_ORD_EXC);
+
+		sprintf(c_rejcd, "%d", sizeof(os->rejcd), rejcd);
+		memcpy(os->rejcd, c_rejcd, sizeof(os->rejcd));
+
+		if (rejmsg)	strncpy(rejtext, rejmsg, sizeof(os->rejtext));
+		
+		strcat(rejtext, DF_REJ_KBEMAL);
+		memcpy(os->rejtext, rejmsg, strlen(rejmsg));
+
+		// 주문상태 : '0'-NEW, '1'-Partially filled, '2'-Filled, '4'-Canceled, '8'-Rejected
+		os->ordstatus[0] = API_ORDST_REJT;
+		// 체결상태 : '0'-New, '4'-Canceled, '8'-Rejected, 'I'-Order Status, 'F'-Filled
+		os->exectype[0] = API_EXST_REJT;
+
+		// CHECK : FXGO 에서는 거부에서도 ExecID가 있어야 하기 때문에, 시간으로 채번하여 전송
+		time_t	t = time(0);
+		sprintf(stemp, "%u", t);
+		MEMCPY(os->execid, stemp);
+
+		memcpy(os->echoTags, or->echoTags, sizeof(os->echoTags));
+
+		break;
+
+	default :
+		break;
+	}
+
+	wg_log(LV_INFO, "(%s:%d) (%.20s/%.20s) send reject (%d:%s)", __func__, __LINE__, cs->wgkey.sendcompid, cs->wgkey.sendsubid, rejcd, rejmsg);
+
+if (qs)	wg_log(LV_INFO, "(%s:%d) sendto FIX. (%.6s) quot(%.2s:%.20s)", __func__, __LINE__, qr->symb, qs->tag35, qs->reqID);
+else	wg_log(LV_INFO, "(%s:%d) sendto FIX. (%.20s) ord(%.24s/%.24s) stat(%.1s:%.1s)", __func__, __LINE__, cs->wgkey.sendcompid, os->clordid, os->ordid, os->ordstatus, os->exectype);
+
+	_set_pad((char *)cs, slen);
+	rc = agdque_wrn (&qout, WG_DAT_DIR, NULL, WGDQ_SNDRS, WGSEM_SNDRS, dsiz, (char *)cs, slen);
+	if (rc <= 0)
+		wg_log(LV_ERR, "(%s:%d) agdque_wrn error (%d)", __func__, __LINE__, rc);
+
+	return rc;
+}
+
+int make_send_cncl(WGCOM *cr, WGCOM *cs)
+{
+	int		rc, dsiz=1024, slen=sizeof(WGCOM)+sizeof(WG_ORD_EXC);
+	char	strtmp[256];
+	
+	WG_ORD *pr     = cr->data;
+	WG_ORD_EXC *ps = cs->data;
+
+	memset(strtmp, 0x00, sizeof(strtmp));
+
+	cs->msgtp[0] = MSG_ORDEXC;
+	ps->tag35[0] = '8';
+	memcpy(ps->echoTags, pr->echoTags, sizeof(ps->echoTags));
+	
+	// 주문상태 : '0'-NEW, '1'-Partially filled, '2'-Filled, '4'-Canceled, '8'-Rejected
+	ps->ordstatus[0] = API_ORDST_CNCL;
+	// 체결상태 : '0'-New, '4'-Canceled, '8'-Rejected, 'I'-Order Status, 'F'-Filled
+	ps->exectype[0] = API_EXST_CNCL;
+
+	if (pr->timeinforce[0] == API_ORDTF_IOC || pr->timeinforce[0] == API_ORDTF_FOK)
+	{
+		strcpy(strtmp, "rest amount of IOC/FOK has been canceled.");
+		memcpy(ps->rejtext, strtmp, strlen(strtmp));
+	}
+
+wg_log(LV_INFO, "(%s:%d) sendto FIX. (%.20s) ord(%.24s/%.24s) stat(%.1s:%.1s)", __func__, __LINE__, cs->wgkey.sendcompid, ps->clordid, ps->ordid, ps->ordstatus, ps->exectype);
+
+wg_log(LV_DEBUG, "(%s) ===========================================================", __func__);
+wg_log(LV_DEBUG, "[S] msgtp         =[%.*s]", sizeof(cr->msgtp      ), cs->msgtp        );  // 'R' Quote Request(subscribe)
+wg_log(LV_DEBUG, "[S] sendcompid    =[%.*s]", sizeof(cs->wgkey.sendcompid   ), cs->wgkey.sendcompid);   // 49(SenderCompID)
+wg_log(LV_DEBUG, "[S] sendsubid     =[%.*s]", sizeof(cs->wgkey.sendsubid    ), cs->wgkey.sendsubid );   // 50(SenderSubID)
+wg_log(LV_DEBUG, "[S] keysymb       =[%.*s]", sizeof(cs->wgkey.keysymb      ), cs->wgkey.keysymb   );   // 55(Symbol)
+wg_log(LV_DEBUG, "[S] tag35         =[%.*s]", sizeof(ps->tag35      ), ps->tag35        );  // 송신 Tag35
+wg_log(LV_DEBUG, "[S] quotID        =[%.*s]", sizeof(ps->quotID     ), ps->quotID       );  // RFS인 경우 주문에 연동된 시세패킷 QuoteID (Tag117=QuoteID)
+wg_log(LV_DEBUG, "[S] account       =[%.*s]", sizeof(ps->account    ), ps->account      );  // Dealer ID
+wg_log(LV_DEBUG, "[S] clordid       =[%.*s]", sizeof(ps->clordid    ), ps->clordid      );  // TAG-11 기관주문번호     : 기관 주문번호
+wg_log(LV_DEBUG, "[S] ordid         =[%.*s]", sizeof(ps->ordid      ), ps->ordid        );  // TAG-37 주문번호         : 데몬에서 채번한 KB주문번호
+wg_log(LV_DEBUG, "[S] origordid     =[%.*s]", sizeof(ps->origordid  ), ps->origordid    );  // TAG-37 내부원주문번호   : 취소주문(35=F)인 경우 고객이 보낸 KB원주문번호
+wg_log(LV_DEBUG, "[S] stype         =[%.*s]", sizeof(ps->stype      ), ps->stype        );  // Tag167=SecurityType or Tag9063=Tenor Code (S:FXSPOT,F:FXFWD,W:FXSWAP)
+wg_log(LV_DEBUG, "[S] symb          =[%.*s]", sizeof(ps->symb       ), ps->symb         );  // PK // WGKEY + SYMBOL
+wg_log(LV_DEBUG, "[S] setldate      =[%.*s]", sizeof(ps->setldate   ), ps->setldate     );  // 결제일(YYYYMMDD) (swap 인 경우 near)
+wg_log(LV_DEBUG, "[S] setldate2     =[%.*s]", sizeof(ps->setldate2  ), ps->setldate2    );  // SWAP 인 경우 far 결제일(YYYYMMDD)
+wg_log(LV_DEBUG, "[S] side          =[%.*s]", sizeof(ps->side       ), ps->side         );  // '0'=2way, '1'=buy, '2'=sell
+wg_log(LV_DEBUG, "[S] orderqty      =[%.*s]", sizeof(ps->orderqty   ), ps->orderqty     );  // 밴드구분 기준 값 (ex. 주문금액) : RFS, RFQ 인 경우 필수
+wg_log(LV_DEBUG, "[S] currency      =[%.*s]", sizeof(ps->currency   ), ps->currency     );  // Primary Currency
+wg_log(LV_DEBUG, "[S] price         =[%.*s]", sizeof(ps->price      ), ps->price        );  // 주문가격
+wg_log(LV_DEBUG, "[S] ordtype       =[%.*s]", sizeof(ps->ordtype    ), ps->ordtype      );  // 주문유형 : '1'-Market '2'-Limit
+wg_log(LV_DEBUG, "[S] timeinforce   =[%.*s]", sizeof(ps->timeinforce), ps->timeinforce  );  // 체결조건 : '0'-For Day
+wg_log(LV_DEBUG, "[S] lastqty       =[%.*s]", sizeof(ps->lastqty    ), ps->lastqty      );  // TAG-32   체결수량         : 
+wg_log(LV_DEBUG, "[S] execid        =[%.*s]", sizeof(ps->execid     ), ps->execid       );  // TAG-17   채결ID           : KB 체결번호
+wg_log(LV_DEBUG, "[S] lastpx        =[%.*s]", sizeof(ps->lastpx     ), ps->lastpx       );  // TAG-31   체결가격         : 
+wg_log(LV_DEBUG, "[S] ordstatus     =[%.*s]", sizeof(ps->ordstatus  ), ps->ordstatus    );  // TAG-39   주문상태         : '0'-NEW
+wg_log(LV_DEBUG, "[S] exectype      =[%.*s]", sizeof(ps->exectype   ), ps->exectype     );  // TAG-150  거래유형         : '0'-New
+wg_log(LV_DEBUG, "[S] commission    =[%.*s]", sizeof(ps->commission ), ps->commission   );  // TAG-12   수수료           : 
+wg_log(LV_DEBUG, "[S] rejcd         =[%.*s]", sizeof(ps->rejcd      ), ps->rejcd        );  // 300(QuoteRejectReason) // 거부코드
+wg_log(LV_DEBUG, "[S] rejtext       =[%.*s]", sizeof(ps->rejtext    ), ps->rejtext      );  // 58(Text) // 거부사유
+wg_log(LV_DEBUG, "===========================================================");
+
+	_set_pad((char *)cs, slen);
+	rc = agdque_wrn (&qout, WG_DAT_DIR, NULL, WGDQ_SNDRS, WGSEM_SNDRS, dsiz, (char *)cs, slen);
+	if (rc <= 0)
+		wg_log(LV_ERR, "(%s:%d) agdque_wrn error (%d)", __func__, __LINE__, rc);
+
+	return 0;
+}
+
+/*===============================================================
+ * 고객별 한도체크 : WTR003.sqc 내 체크로직 카피 (2024.03.08)
+ * ★★★★ TODO : 채널별로 체크 대상인 경우만 호출(RFS/RFQ) , API는 속도 이슈로 체크 제외(?)
+===============================================================*/
+/*
+int check_ord_limit(WGREQ *pq, char *rejmsg)
+{
+EXEC SQL BEGIN DECLARE SECTION;
+EXEC SQL INCLUDE "ordfld.h";
+	JUM_ORD		JORD;
+	double		d_limit_s_amt;
+	double		d_limit_fa_amt;
+	double		d_limit_fb_amt;
+EXEC SQL END DECLARE SECTION;
+
+	E_MSG		e_msg;
+	char		stemp[128];
+
+	memset(&JORD,  0x00, sizeof(JORD));
+	memset(&e_msg, 0x00, sizeof(e_msg));
+
+// SET JORD : 세팅제외필드 확인 필요
+//JORD.s_bk_no          [ 11+1];  // 북번호
+//JORD.s_fr_prdct_dstcd [  1+1];  // 원일물상품구분코드
+//JORD.s_fr_deal_dstcd  [  1+1];  // 원일물매매구분코드
+
+	memcpy(JORD.s_group_co_cd,	"KB0",				3);
+	memcpy(JORD.s_fx_ordr_ymd,	wgmst->bizdate,		sizeof(wgmst->bizdate));
+	memcpy(JORD.s_fx_prdct_cd,	pq->symb,			sizeof(pq->symb));
+	memcpy(JORD.s_lgen_no,		pq->user.lgen_no,	sizeof(pq->user.lgen_no));
+	memcpy(JORD.s_sp_pyacc_ymd, pq->sptymd,			sizeof(JORD.s_sp_pyacc_ymd));
+
+	memcpy(JORD.s_ntnl_cncycd,	pq->req.currency,	sizeof(pq->req.currency));
+	JORD.d_ntnl_crncy_amt   = pq->req.orderqty;		// API주문인 경우는 값이 없음.
+	JORD.s_fx_deal_dstcd[0] = pq->req.side[0];
+	if (pq->req.reqtp[0] == REQTP_ABT || pq->req.reqtp[0] == REQTP_API)
+		JORD.s_chnl_dstcd[0] = 'D';		// 차익API='D', ECM='1', ECM_WEB='2', 기업뱅킹='4'
+	else
+		JORD.s_chnl_dstcd[0] = '1';
+
+	// FX상품구분 ('1'-TD, '2'-TOM, '3'-FXSpot, '4'-FXForward, '5'-FXSwap, '6'-바로환전, '7'-FXNDF, '8'-MAR, '9'-MP)
+	if (pq->stype[0] == DF_FXSPT)			JORD.s_fx_prdct_dstcd[0] = '3';
+	else if (pq->stype[0] == DF_FXFWD)		JORD.s_fx_prdct_dstcd[0] = '4';
+	else if (pq->stype[0] == DF_FXSWP)		JORD.s_fx_prdct_dstcd[0] = '5';
+
+	if ( f_trade_amt(&JORD, &e_msg) != 0 )
+	{
+		wg_log(LV_ERR, "(%s:%d) f_trade_amt error (%s:%s)", __func__, __LINE__, e_msg.code, e_msg.mesg);
+		return (ERR_SYSTEM*(-1));
+	}
+
+	// 차익 API 주문은 한도금액을 별도 관리 API 2023.11
+	// API는 원장에서 한도 체크하기 때문에 호출되지 않음.
+	if (pq->req.reqtp[0] == REQTP_ABT || pq->req.reqtp[0] == REQTP_API)
+	{
+	EXEC SQL
+		SELECT	SPEX_API_TRAN_SCHAMT
+		  INTO	:JORD.d_spex_tran_schamt  -- 현물환거래예정금액
+		  FROM	INST1.TSKEILM11 -- 거래참여자 CMBS한도내역
+		 WHERE	GROUP_CO_CD = :JORD.s_group_co_cd
+		   AND	LGEN_NO     = :JORD.s_lgen_no
+		WITH UR;
+
+		if (SQLCODE != SQL_SUCCESS)
+		{
+			if (SQLCODE == NO_DATA_FOUND)
+			{
+				wg_log(LV_INFO, "(%s) no limit for API error (%.20s:%.6s)", __FUNCTION__, pq->wgkey.sendcompid, pq->symb);
+				sprintf(rejmsg, "no limit for API customer.");
+				return (ERR_USR_INFO*(-1));
+			}
+			wg_log(LV_ERR, "(%s) select limit for API error [%d:%s]\n", __func__, SQLCODE, SQLERRM);
+			return (ERR_SYSTEM*(-1));
+		}
+	}
+	else
+	{
+	EXEC SQL
+		SELECT A1.SPEX_TRAN_SCHAMT
+			 , A1.FWRD_BUY_SCHAMT
+			 , A1.FWRD_SELL_SCHAMT
+			 , A1.FWRD_BUY_ANTICI_EXPIR_NOMN
+			 , DECODE(B1.HOLDY_DSTCD, NULL, A1.BUY_LAST_YMD , B1.NXBIZ_YMD)
+			 , A1.FWRD_SELL_ANTICI_EXPIR_NOMN
+			 , DECODE(C1.HOLDY_DSTCD, NULL, A1.SELL_LAST_YMD, C1.NXBIZ_YMD)
+		  INTO :JORD.d_spex_tran_schamt           
+			 , :JORD.d_fwrd_buy_schamt            
+			 , :JORD.d_fwrd_sell_schamt           
+			 , :JORD.l_fwrd_buy_antici_expir_nomn 
+			 , :JORD.s_buy_last_ymd 
+			 , :JORD.l_fwrd_sell_antici_expir_nomn
+			 , :JORD.s_sell_last_ymd 
+		  FROM (
+				SELECT A.GROUP_CO_CD                        AS GROUP_CO_CD                  -- 그룹회사코드
+					 , A.SPEX_TRAN_SCHAMT                   AS SPEX_TRAN_SCHAMT             -- 현물환거래예정금액(한도금액)
+					 , A.FWRD_BUY_SCHAMT                    AS FWRD_BUY_SCHAMT              -- 선물환매입예정금액(매입한도)
+					 , A.FWRD_SELL_SCHAMT                   AS FWRD_SELL_SCHAMT             -- 선물환매도예정금액(매도한도)
+					 , A.FWRD_BUY_ANTICI_EXPIR_NOMN         AS FWRD_BUY_ANTICI_EXPIR_NOMN   -- 선물환매입예상만기월수
+					 , TO_CHAR(TO_DATE(:JORD.s_sp_pyacc_ymd, 'YYYYMMDD') + A.FWRD_BUY_ANTICI_EXPIR_NOMN MONTH, 'YYYYMMDD')
+															   AS BUY_LAST_YMD
+					 , A.FWRD_SELL_ANTICI_EXPIR_NOMN        AS FWRD_SELL_ANTICI_EXPIR_NOMN  -- 선물환매도예상만기월수
+					 , TO_CHAR(TO_DATE(:JORD.s_sp_pyacc_ymd, 'YYYYMMDD') + A.FWRD_SELL_ANTICI_EXPIR_NOMN MONTH, 'YYYYMMDD')
+															   AS SELL_LAST_YMD
+				  FROM INST1.TSKEILM11 A -- 한도내역
+				 WHERE A.GROUP_CO_CD = :JORD.s_group_co_cd
+				   AND A.LGEN_NO     = :JORD.s_lgen_no
+				   AND A.BASE_YMD    = :JORD.s_fx_ordr_ymd
+			   ) A1
+			 , INST1.TSKEIAM95 B1 -- 영업일정보(BUY) 
+			 , INST1.TSKEIAM95 C1 -- 영업일정보(SELL)
+		 WHERE A1.GROUP_CO_CD   = B1.GROUP_CO_CD(+)
+		   AND '00'             = B1.CLND_DSTCD (+)
+		   AND A1.BUY_LAST_YMD  = B1.BASE_YMD   (+)
+		   AND A1.GROUP_CO_CD   = C1.GROUP_CO_CD(+)
+		   AND '00'             = C1.CLND_DSTCD (+)
+		   AND A1.SELL_LAST_YMD = C1.BASE_YMD   (+)
+		WITH UR;
+		;
+		if (SQLCODE != SQL_SUCCESS)
+		{
+			if (SQLCODE == NO_DATA_FOUND)
+			{
+				wg_log(LV_INFO, "(%s) get limit info error (%.20s:%.6s)", __FUNCTION__, pq->wgkey.sendcompid, pq->symb);
+				sprintf(rejmsg, "get limit info error (%.20s:%.6s)", pq->wgkey.sendcompid, pq->symb);
+				return (ERR_USR_INFO*(-1));
+			}
+			wg_log(LV_ERR, "(%s) select limit info error [%d:%s]\n", __func__, SQLCODE, SQLERRM);
+			return (ERR_SYSTEM*(-1));
+		}
+	}
+
+	d_limit_s_amt  = 0.0;
+	d_limit_fa_amt = 0.0;
+	d_limit_fb_amt = 0.0;
+
+	EXEC SQL
+	SELECT CAST(ROUND(:JORD.d_ote_usd_bid_amt + :JORD.d_ote_usd_bid_namt + :JORD.d_ote_usd_ask_amt + :JORD.d_ote_usd_ask_namt, 2) AS DECIMAL(20, 2))
+		 , CAST(ROUND(:JORD.d_fwd_usd_bid_amt + :JORD.d_fwd_usd_bid_namt, 2) AS DECIMAL(20,2))
+		 , CAST(ROUND(:JORD.d_fwd_usd_ask_amt + :JORD.d_fwd_usd_ask_namt, 2) AS DECIMAL(20,2))
+	  INTO :d_limit_s_amt
+		 , :d_limit_fb_amt
+		 , :d_limit_fa_amt
+	  FROM SYSIBM.DUAL
+	WITH UR;
+	;
+	if (SQLCODE != SQL_SUCCESS)
+	{
+		wg_log(LV_ERR, "(%s) calc limit error [%d:%s]\n", __func__, SQLCODE, SQLERRM);
+		return (ERR_SYSTEM*(-1));
+	}
+	wg_log(LV_DEBUG, "(%s) --------------------------------",   __func__);
+	wg_log(LV_DEBUG, "(%s) 현물환    한도금액(달러) = [%lf]",   __func__, JORD.d_spex_tran_schamt);
+	wg_log(LV_DEBUG, "(%s) 선물환매수한도금액(달러) = [%lf]",   __func__, JORD.d_fwrd_buy_schamt );
+	wg_log(LV_DEBUG, "(%s) 선물환매도한도금액(달러) = [%lf]",   __func__, JORD.d_fwrd_sell_schamt);
+	wg_log(LV_DEBUG, "(%s) 선물환매수가능최종일자   = [%s]",    __func__, JORD.s_buy_last_ymd    );
+	wg_log(LV_DEBUG, "(%s) 선물환매도가능최종일자   = [%s]",    __func__, JORD.s_sell_last_ymd   );
+	wg_log(LV_DEBUG, "(%s) 현물환    매매금액(달러) = [%.10f]", __func__, d_limit_s_amt );
+	wg_log(LV_DEBUG, "(%s) 선물환매수매매금액(달러) = [%.10f]", __func__, d_limit_fb_amt);
+	wg_log(LV_DEBUG, "(%s) 선물환매도매매금액(달러) = [%.10f]", __func__, d_limit_fa_amt);
+
+	//---------------------------------------------------------------------
+	// 3.E.2 한도금액을 체크한다.
+	//---------------------------------------------------------------------
+	// SWAP은 FAR만 체크하기로 함. : 2023.03.07 BY P.B.Y
+	//---------------------------------------------------------------------
+	if (JORD.s_fx_prdct_dstcd[0] == ECM_PRDCT_DSTCD_SWAP)
+	{
+		// ------------------------------------------------------
+		// FAR 체크
+		// ------------------------------------------------------
+		if (JORD.s_fr_prdct_dstcd[0] == ECM_PRDCT_DSTCD_TOD ||
+			JORD.s_fr_prdct_dstcd[0] == ECM_PRDCT_DSTCD_TOM ||
+			JORD.s_fr_prdct_dstcd[0] == ECM_PRDCT_DSTCD_SP  )
+		{
+			// TOD, TOM, SP인 경우
+			if (d_limit_s_amt > JORD.d_spex_tran_schamt)
+			{
+				wg_log(LV_INFO, "(%s) case1 : 총액 > 한도금액 = [%.10f]>[%.10f]\n", __func__, d_limit_s_amt, JORD.d_spex_tran_schamt);
+				return (ERR_ORD_LIMIT*(-1));
+			}
+		}
+		else
+		{
+			// FWD 인 경우
+			if (JORD.s_fr_deal_dstcd[0] == ECM_DEAL_DSTCD_BUY)
+			{
+				if (d_limit_fb_amt > JORD.d_fwrd_buy_schamt)
+				{
+					wg_log(LV_INFO, "(%s) case2 : 매수금액 > 매수한도금액 = [%.10f]>[%.10f]\n", __func__, d_limit_fb_amt, JORD.d_fwrd_buy_schamt);
+					return (ERR_ORD_LIMIT*(-1));
+				}
+			}
+			else
+			{
+				if (d_limit_fa_amt > JORD.d_fwrd_sell_schamt)
+				{
+					wg_log(LV_INFO, "(%s) case3 : 매도금액 > 매도한도금액 = [%.10f]>[%.10f]\n", __func__, d_limit_fa_amt, JORD.d_fwrd_sell_schamt);
+					return (ERR_ORD_LIMIT*(-1));
+				}
+			}
+		}
+	}
+	else
+	{
+		if (JORD.s_fx_prdct_dstcd[0] == ECM_PRDCT_DSTCD_TOD ||
+			JORD.s_fx_prdct_dstcd[0] == ECM_PRDCT_DSTCD_TOM ||
+			JORD.s_fx_prdct_dstcd[0] == ECM_PRDCT_DSTCD_SP  ||
+			JORD.s_fx_prdct_dstcd[0] == ECM_PRDCT_DSTCD_MAR )
+		{
+			// TOD, TOM, SPOT, MAR인경우
+			if (d_limit_s_amt > JORD.d_spex_tran_schamt)
+			{
+				wg_log(LV_INFO, "(%s) case4 : 총액 > 한도금액 = [%.10f]>[%.10f]\n", __func__, d_limit_s_amt, JORD.d_spex_tran_schamt);
+				return (ERR_ORD_LIMIT*(-1));
+			}
+		}
+		else
+		{
+			// FWD                인경우 
+			if (JORD.s_fx_deal_dstcd[0] == ECM_DEAL_DSTCD_BUY)
+			{
+				if (d_limit_fb_amt > JORD.d_fwrd_buy_schamt)
+				{
+					wg_log(LV_INFO, "(%s) case5 : 매수금액 > 매수한도금액 = [%.10f]>[%.10f]\n", __func__, d_limit_fb_amt, JORD.d_fwrd_buy_schamt);
+					return (ERR_ORD_LIMIT*(-1));
+				}
+			}
+			else
+			{
+				if (d_limit_fa_amt > JORD.d_fwrd_sell_schamt)
+				{
+					wg_log(LV_INFO, "(%s) case6 : 매도금액 > 매도한도금액 = [%.10f]>[%.10f]\n", __func__, d_limit_fa_amt, JORD.d_fwrd_sell_schamt);
+					return (ERR_ORD_LIMIT*(-1));
+				}
+			}
+		}
+	}
+
+	wg_log(LV_DEBUG, "(%s) order limit check done...", __func__);
+
+	return 0;
+}
+*/
+
+int send_autohedge(WGCOM *cr, WGCOM *cs)
+{
+	int		rc;
+	char	strtmp[128], symb[8], clordid[24+1];
+	SMB_ST	smb;
+
+	WG_ORD	   *pr = cr->data;
+	WG_ORD_EXC *ps = cs->data;
+	
+	memset(&smb, 0x20, SMB_ST_SZ);
+//wg_log(0, "(%s) autohedge start !!...", __func__);
+
+	// TIME SET
+	struct timeval tv;
+	struct tm *tm; 
+	
+	gettimeofday(&tv, NULL);
+	tm = localtime(&tv.tv_sec);
+	
+	smb.smb_MsgType[0] = 'D';  // TAG-35  메세지유형
+	// SELECT * FROM TSKEITR16 WHERE FCM_ID = 'SMBS'
+	strcpy(smb.smb_SenderCompID,	"KOOKMIN_TRADE");  // TAG-49  송신회사ID (JORD.s_trsmt_taget_id) "KOOKMIN_TRADE"
+	strcpy(smb.smb_TargetCompID,	"SMBS_FX"      );  // TAG-56  수신회사ID (JORD.s_recv_taget_id) "SMBS_FX"
+	strcpy(smb.smb_Account,			"KOKAPI"       );  // TAG-1   계좌(현재는 DEALER번호) (JORD.s_fcm_acno) "SMBS"
+
+	memset(clordid, 0x00, sizeof(clordid));
+//	sprintf(clordid, "%04d%02d%02d1%.9s", tm->tm_year+1900, tm->tm_mon+1, tm->tm_mday, &ps->ordid[1]);	// 일자(8) + (채번한 내부주문번호 + 1000000000 (10억))
+	sprintf(clordid, "%.8s1%.9s", wgmst->bizdate, &ps->ordid[1]);	// 일자(8) + (채번한 내부주문번호 + 1000000000 (10억))
+
+	memcpy(smb.smb_ClOrdID,		clordid,		sizeof(smb.smb_ClOrdID)	);  // TAG-11   회원처리항목1 (JORD.s_ordr_trsmt_no)
+	memcpy(smb.smb_Currency,	ps->currency,	sizeof(ps->currency)	);  // TAG-15   통화코드 (JORD.s_base_cncycd)
+	memcpy(smb.smb_OrderQty,	ps->lastqty,	sizeof(ps->lastqty)		);  // TAG-38   주문수량 (JORD.s_ordr_qanty)
+	// ★★★★★ TODO 4) : 고객의 환율은 수수료 포함이기 떄문에 원가 햇지하려면 주문가격 다시 계산해야 함.
+	memcpy(smb.smb_Price,		ps->price,		sizeof(ps->price)		);  // TAG-44   주문가격 (JORD.s_fx_ordr_prc)
+	memcpy(smb.smb_Side,		ps->side,		sizeof(ps->side)		);  // TAG-54   매매구분 (JORD.s_fx_deal_dstcd)
+
+	memset(symb, 0x00, sizeof(symb));
+	sprintf(symb, "%.3s/%.3s", ps->symb, &ps->symb[3]);
+	memcpy(smb.smb_Symbol,		symb,			7						);  // TAG-55   상품코드 (JORD.s_smbs_prdct_cd_ctnt)
+
+	smb.smb_OrdType[0]     = API_ORDTP_LIMIT; // TAG-40   주문유형(항상:지정가)
+	smb.smb_TimeInForce[0] = API_ORDTF_IOC;   // TAG-59   체결조건('3'-IOC)
+
+	sprintf(strtmp, "%04d%02d%02d-%02d:%02d:%02d.%03d", 
+				tm->tm_year+1900, tm->tm_mon+1, tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec, tv.tv_usec/1000);
+	memcpy(smb.smb_TransactTime, strtmp, strlen(strtmp));  // TAG-60   주문일시 (JORD.s_tr_time)
+
+	smb.smb_EOF[0] = 0x00;
+
+/// TODO : wfg 변경에 따른 API 수정하면 다시 적용해야 함.
+#if 0
+	rc = SendWfgOrd(ordflag, "SMBQ_ORD_CLI", "SMBQ_ORD_REQ", &smb, SMB_ST_SZ);		// SendWfgOrd(ordflag, "EBSQ_ORD_CLI", "EBSQ_ORD_REQ", &SMB, SMB_ST_SZ);
+	if (rc <= 0)
+	{
+		if (rc < 0)		ordflag = 1;
+
+		wg_log(LV_ERR, "(%s) SendSmbOrd error (%d)", __func__, rc);
+		return (-3);
+	}
+	ordflag = 0;
+#endif
+wg_log(LV_DEBUG, "(%s) AutoHedge Order Send OK.. order=(%.6s:%s) >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> ", __func__, smb.smb_Symbol, smb.smb_ClOrdID);
+
+	return 0;
+}
+
+/************************************************************************
+ ■ 주문서비스 호출 (일반주문/RFS/RFQ  포함)
+	1) W3370A01 서비스 호출
+	2) 수신이 멀티쓰레드가 아니기 때문에 mutex_lock 하지 않는다. (추후 멀티로 변경 시 필요)
+************************************************************************/
+int mymqcall_W3370A01(WGREQ *q, WG_ORD *o, char *rejmsg)
+{
+	int			slen = 0, rlen = 0;
+	int			notion=DF_OFF;
+	char		sndbuf[1024*4] = {0};
+	char		stemp[128];
+	char		*prcv;
+	double		nprc, fprc;
+	double		ovol, bamt, tamt;
+	MyMQ		*mymq;
+	COMHDR		*pcom;
+	W3370A01_I	*tri;
+	W3370A01_O	*tro;
+
+	memset(sndbuf, 0x00, sizeof(sndbuf));
+	pcom = (COMHDR *)sndbuf;
+
+	// 공통헤더 세팅
+	zsedit(pcom->trxc, "W3370A01" );
+	zsedit(pcom->loip, "127.0.0.1");			// 로컬 IP
+	zsedit(pcom->auip, "127.0.0.1");			// 공인 IP
+	zsedit(pcom->ctyp, DF_AGR_CH);				// 접속매체구분 '5'
+	zsedit(pcom->chnl, DF_AGR_CH);				// 접속매체구분 '5'
+	zsedit(pcom->usid, q->user.lgen_no);		// 사용자 Lgen_no
+	zsedit(pcom->msid, q->wgkey.sendcompid);	// SenderCompID 사용 : 원장에서는 TRSMT_TAGET_ID + LGEN_NO 조합으로 TSKEIAM87 테이블 조회함.
+
+wg_log(LV_DEBUG, "[%s] mymq service call [%s] >>>>>>>>>>>>>>>>>>>>>>>",__func__, pcom->trxc);
+
+	// TR INPUT 세팅
+	tri = (W3370A01_I *)&sndbuf[COMHDR_LEN];
+
+	if (memcmp(o->symb, o->currency, sizeof(o->currency)) != 0)		notion = DF_ON;		// 노셔널체크
+
+	// 기본값 세팅
+	ovol = str2d(o->orderqty,  sizeof(o->orderqty));		// 주문수량
+	nprc = str2d(o->price,     sizeof(o->price));			// 주문가격(근월물)
+	if (q->stype[0] == DF_FXSWP)
+		fprc = str2d(o->price2, sizeof(o->price2));			// 원월물가격
+
+	//=====================================================================================
+	// 입력필드 세팅
+	//=====================================================================================
+
+// tri->fx_ordr_ymd                  // FX주문년월일
+	memcpy(tri->fx_ordr_ymd, wgmst->bizdate, sizeof(tri->fx_ordr_ymd));
+// tri->lgen_no                      // lgen_no
+	memcpy(tri->lgen_no, q->user.lgen_no, sizeof(tri->lgen_no));
+
+////////// tri->trdr_no                      // 트레이더번호
+
+// tri->fx_ordr_dstcd                // FX주문구분코드(1-신규, 2-정정, 3-취소)	
+		 if (o->tag35[0] == 'D')	tri->fx_ordr_dstcd[0] = '1';
+	else if (o->tag35[0] == 'F')	tri->fx_ordr_dstcd[0] = '3';
+
+// tri->fx_tran_ptrncd               // FX거래유형코드('1'-일반, '2'-MAR, '3'-RFQ, '4'-RFS)
+		 if (q->req.reqtp[0] == REQTP_RFQ)	tri->fx_tran_ptrncd[0] = '3';
+	else if (q->req.reqtp[0] == REQTP_RFS)	tri->fx_tran_ptrncd[0] = '4';
+	else									tri->fx_tran_ptrncd[0] = '1';
+
+// tri->auto_tran_dstcd              // 자동거래구분코드('1'-일반, '2'-AH, '3'-MM, '4'-AH(MAR), '5'-AH(API))
+	tri->auto_tran_dstcd[0] = '1';
+
+// tri->fx_prdct_dstcd               // FX상품구분(1-TD, 2-TOM, 3-현물환, 4-선물환, 5-스왑, 6-바로환전, 7-NDF)
+		 if (q->stype[0] == DF_FXSPT)		tri->fx_prdct_dstcd[0] = '3';
+	else if (q->stype[0] == DF_FXFWD) {
+			 if (memcmp(o->setldate, q->todymd, sizeof(o->setldate)) == 0)		tri->fx_prdct_dstcd[0] = '1';
+		else if (memcmp(o->setldate, q->tomymd, sizeof(o->setldate)) == 0)		tri->fx_prdct_dstcd[0] = '2';
+		else if (memcmp(o->setldate, q->sptymd, sizeof(o->setldate)) == 0)		tri->fx_prdct_dstcd[0] = '3';
+		else																	tri->fx_prdct_dstcd[0] = '4';
+	}
+	else if (q->stype[0] == DF_FXSWP)		tri->fx_prdct_dstcd[0] = '5';
+
+// tri->fx_prdct_cd                  // FX상품코드
+	memcpy(tri->fx_prdct_cd, o->symb, sizeof(tri->fx_prdct_cd));
+
+// tri->pyacc_ymd                    // 결제년월일 (SWAP은 FAR)
+	if (q->stype[0] == DF_FXSWP)	memcpy(tri->pyacc_ymd, o->setldate2, sizeof(tri->pyacc_ymd));
+	else							memcpy(tri->pyacc_ymd, o->setldate,  sizeof(tri->pyacc_ymd));
+
+// tri->fx_deal_dstcd                // FX매매구분코드(1-매수(BID-BUY, SELL & BUY), 2-매도(ASK-SELL, BUY & SELL))
+	tri->fx_deal_dstcd[0] = o->side[0];
+
+// tri->fx_ofpr_dstcd                // FX호가구분코드('1'-시장가, '2'-지정가, '3'-예약(STOP), '4'-OCO, '5'-SOR)
+		 if (q->req.reqtp[0] == REQTP_RFQ)	tri->fx_ofpr_dstcd[0] = API_ORDTP_LIMIT;
+	else if (q->req.reqtp[0] == REQTP_RFS)	tri->fx_ofpr_dstcd[0] = API_ORDTP_MARKET;
+	else 									tri->fx_ofpr_dstcd[0] = o->ordtype[0];
+
+////////// tri->fx_spot_prc                  // FX스팟가격
+////////// tri->fx_spot_prc_mrkup            // FX스팟마크업
+////////// tri->fx_spot_prc_mrgn             // FX스팟마진
+////////// tri->fx_swap_prc                  // FX스왑가격
+////////// tri->fx_swap_prc_mrkup            // FX스왑마크업
+////////// tri->fx_swap_prc_mrgn             // FX스왑마진
+tri->fx_spot_prc[0]       = '0';
+tri->fx_spot_prc_mrkup[0] = '0';
+tri->fx_spot_prc_mrgn[0]  = '0';
+tri->fx_swap_prc[0]       = '0';
+tri->fx_swap_prc_mrkup[0] = '0';
+tri->fx_swap_prc_mrgn[0]  = '0';
+
+// tri->fx_ordr_prc                  // FX주문가격
+	if (q->stype[0] == DF_FXSWP) {
+		sprintf(stemp, "%.*f", q->zCustdiv, fprc - nprc);
+		memcpy(tri->fx_ordr_prc, stemp, strlen(stemp));
+	}
+	else
+		memcpy(tri->fx_ordr_prc, o->price, sizeof(o->price));
+
+////////// tri->fx_ordr_prc_mrkup            // FX주문마크업
+////////// tri->fx_ordr_prc_mrgn             // FX주문마진
+////////// tri->fx_obsr_dmnd_prc             // FX감시요청가격
+////////// tri->fx_obsr_pfrm_ordr_prc        // FX감시집행주문가격
+tri->fx_ordr_prc_mrkup[0]     = '0';
+tri->fx_ordr_prc_mrgn[0]      = '0';
+tri->fx_obsr_dmnd_prc[0]      = '0';
+tri->fx_obsr_pfrm_ordr_prc[0] = '0';
+
+// tri->ordr_qanty                   // FX주문수량
+	memcpy(tri->ordr_qanty, o->orderqty, sizeof(o->orderqty));			// o->orderqty[16] 가 더 작음.
+
+// tri->base_cncycd                  // 기준통화코드
+	memcpy(tri->base_cncycd, o->symb, sizeof(tri->base_cncycd));
+
+// tri->base_crncy_amt               // 기준통화금액
+	if (notion) {
+		sprintf(stemp, "%.2f", ovol / nprc);		// 노셔널 : 주문금액/주문환율
+		MEMCPY(tri->base_crncy_amt, stemp);
+	} else
+		memcpy(tri->base_crncy_amt, o->orderqty, sizeof(o->orderqty));		// o->orderqty[16] 가 더 작음.
+
+// tri->cnprt_cncycd                 // 상대통화코드
+	memcpy(tri->cnprt_cncycd, &o->symb[3], sizeof(tri->cnprt_cncycd));
+
+// tri->cnprt_crncy_amt              // 상대통화금액
+	if (!notion) {
+		sprintf(stemp, "%.2f", ovol * nprc);		// 일반 : 주문금액*주문환율
+		MEMCPY(tri->cnprt_crncy_amt, stemp);
+	} else
+		memcpy(tri->cnprt_crncy_amt, o->orderqty, sizeof(o->orderqty));		// o->orderqty[16] 가 더 작음.
+
+// tri->ntnl_cncycd                  // 관념통화코드
+	if (notion)	memcpy(tri->ntnl_cncycd, tri->cnprt_cncycd, sizeof(tri->ntnl_cncycd));	// 노셔널 : 상대통화
+	else		memcpy(tri->ntnl_cncycd, tri->base_cncycd,  sizeof(tri->ntnl_cncycd));	// 일반   : 기준통화
+
+// tri->ntnl_crncy_amt               // 관념통화금액
+	memcpy(tri->ntnl_crncy_amt, o->orderqty, sizeof(o->orderqty));	// o->orderqty[16] 가 더 작음.
+
+// tri->ordr_end_ymd                 // 주문종료일자
+	memcpy(tri->ordr_end_ymd, tri->fx_ordr_ymd, sizeof(tri->ordr_end_ymd));
+
+// tri->req_quote_id                 // RFQ_QUOTE_ID
+	if (q->req.reqtp[0] == REQTP_RFS || q->req.reqtp[0] == REQTP_RFQ)
+		memcpy(tri->rfq_quote_id, q->req.rfskey, sizeof(q->req.rfskey));		// W6109A04_O 의 RFSkey는 [15] 이지만, [30]으로 크게 잡음.
+
+// FXGO 추가필드
+// tri->fx_orgi_ordr_no              // FX원주문번호 (취소주문의 KB원주문번호)
+	memcpy(tri->fx_orgi_ordr_no,	o->origordid,	sizeof(tri->fx_orgi_ordr_no));
+	memcpy(tri->cust_ordr_no,		o->clordid,		sizeof(o->clordid));				// o->clordid [24]     로 더 작다.
+	if (tri->fx_ordr_dstcd[0] != '1')	// 신규주문이 아니면.
+		memcpy(tri->cust_orgi_ord_no,	o->origclordid,	sizeof(o->origclordid));		// o->origclordid [24] 로 더 작다
+
+//########## SWAP 세팅
+// 체결엔진에서는 스왑주문의 INPUT 중 near결제일, far결제일, near가격 만 사용하며 나머지는 다시 계산함. (스왑은 시장가주문만 가능함)
+if (q->stype[0] == DF_FXSWP) {
+
+// tri->fx_nr_prdct_dstcd            // 근-FX상품구분코드 (1-TD, 2-TOM, 3-현물환, 4-선물환)
+		 if (memcmp(o->setldate, q->todymd, sizeof(o->setldate)) == 0)	tri->fx_nr_prdct_dstcd[0] = '1';
+	else if (memcmp(o->setldate, q->tomymd, sizeof(o->setldate)) == 0)	tri->fx_nr_prdct_dstcd[0] = '2';
+	else if (memcmp(o->setldate, q->sptymd, sizeof(o->setldate)) == 0)	tri->fx_nr_prdct_dstcd[0] = '3';
+	else																tri->fx_nr_prdct_dstcd[0] = '4';
+
+// tri->fx_nr_pyacc_ymd              // 근-결제년월일
+	memcpy(tri->fx_nr_pyacc_ymd, o->setldate, sizeof(tri->fx_nr_pyacc_ymd));
+
+// tri->fx_nr_deal_dstcd             // 근-매매구분코드
+	tri->fx_nr_deal_dstcd[0] = (o->side[0]=='1'?'2':'1');
+
+// tri->fx_nr_swap_prc               // 근-스왑가격
+	memcpy(tri->fx_nr_swap_prc, o->price, sizeof(o->price));		// fx_nr_swap_prc [30] 동일 사이즈
+
+////////// tri->fx_nr_swap_prc_mrkup         // 근-스왑가격마크업
+////////// tri->fx_nr_swap_prc_mrgn          // 근-스왑가격마진
+tri->fx_nr_swap_prc_mrkup[0] = '0';
+tri->fx_nr_swap_prc_mrgn[0]  = '0';
+
+// tri->fx_nr_ordr_prc               // 근-주문가격
+	memcpy(tri->fx_nr_ordr_prc, o->price, sizeof(o->price));		// fx_nr_ordr_prc [30] 동일 사이즈
+
+////////// tri->fx_nr_ordr_prc_mrkup         // 근-주문가격마크업
+////////// tri->fx_nr_ordr_prc_mrgn          // 근-주문가격마진
+tri->fx_nr_ordr_prc_mrkup[0] = '0';
+tri->fx_nr_ordr_prc_mrgn[0]  = '0';
+
+// tri->fx_nr_base_crncy_amt         // 근-기준통화금액		// !!! CHECK 사용여부 확인
+// tri->fx_nr_cnprt_crncy_amt        // 근-상대통화금액		// !!! CHECK 사용여부 확인
+tri->fx_nr_base_crncy_amt[0]  = '0';
+tri->fx_nr_cnprt_crncy_amt[0] = '0';
+//------------------------------------------------------------------------
+// tri->fx_fr_prdct_dstcd            // 원-FX상품구분코드 (1-TD, 2-TOM, 3-현물환, 4-선물환)
+		 if (memcmp(o->setldate2, q->todymd, sizeof(o->setldate2)) == 0)	tri->fx_fr_prdct_dstcd[0] = '1';
+	else if (memcmp(o->setldate2, q->tomymd, sizeof(o->setldate2)) == 0)	tri->fx_fr_prdct_dstcd[0] = '2';
+	else if (memcmp(o->setldate2, q->sptymd, sizeof(o->setldate2)) == 0)	tri->fx_fr_prdct_dstcd[0] = '3';
+	else																	tri->fx_fr_prdct_dstcd[0] = '4';
+
+// tri->fx_fr_pyacc_ymd              // 원-결제년월일
+	memcpy(tri->fx_fr_pyacc_ymd, o->setldate2, sizeof(tri->fx_fr_pyacc_ymd));
+
+// tri->fx_fr_deal_dstcd             // 원-매매구분코드
+	tri->fx_fr_deal_dstcd[0] = o->side[0];
+
+// tri->fx_fr_swap_prc               // 원-스왑가격
+	memcpy(tri->fx_fr_swap_prc, o->price2, sizeof(o->price2));		// fx_fr_swap_prc [30] 동일 사이즈
+
+////////// tri->fx_fr_swap_prc_mrkup         // 원-스왑가격마크업
+////////// tri->fx_fr_swap_prc_mrgn          // 원-스왑가격마진
+tri->fx_fr_swap_prc_mrkup[0] = '0';
+tri->fx_fr_swap_prc_mrgn[0]  = '0';
+
+// tri->fx_fr_ordr_prc               // 원-주문가격
+	memcpy(tri->fx_fr_ordr_prc, o->price2, sizeof(o->price2));		// fx_fr_ordr_prc [30] 동일 사이즈
+
+////////// tri->fx_fr_ordr_prc_mrkup         // 원-주문가격마크업
+////////// tri->fx_fr_ordr_prc_mrgn          // 원-주문가격마진
+tri->fx_fr_ordr_prc_mrkup[0] = '0';
+tri->fx_fr_ordr_prc_mrgn[0]  = '0';
+
+// tri->fx_fr_base_crncy_amt         // 원-기준통화금액		// !!! CHECK 사용여부 확인
+// tri->fx_fr_cnprt_crncy_amt        // 원-상대통화금액		// !!! CHECK 사용여부 확인
+tri->fx_fr_base_crncy_amt[0]  = '0';
+tri->fx_fr_cnprt_crncy_amt[0] = '0';
+
+////////// tri->fx_orgi_ordr_no              // 원주문번호
+
+} // if (q->stype[0] == DF_FXSWP)
+//########## SWAP 세팅
+
+	//=====================================================================================
+	// 서비스 호출
+	//=====================================================================================
+	//int mymq_call(MyMQ *mymq, const char *host, const char *xchg, const char *rkey, const char *sndb, int sndl, char **rcvb, int timeout)
+	rlen = mymq_call(mymq, NULL, "dom", "W3370A01", sndbuf, sizeof(COMHDR) + sizeof(W3370A01_I), &prcv, 5);
+
+	pcom = (COMHDR *)prcv;
+	tro  = (W3370A01_O *)(prcv+COMHDR_LEN);
+
+	wg_log(LV_DEBUG, "return comhdr [%d:%.1s:%.1s:%.5s:%s]\n", rlen, pcom->eflg, pcom->rtyp, pcom->rcod, pcom->eflg);
+
+	if (pcom->eflg[0] != '0') {
+		get_errmsg(pcom->rtyp, pcom->rcod, rejmsg);
+		wg_log(LV_ERR, "(%s) service(W3370A01) call error! (%.1s:%.5s:%s)", __func__, pcom->rtyp, pcom->rcod, rejmsg);
+		//sprintf(rejmsg, "request RFS/RFQ error !");
+		return (ERR_SYSTEM*(-1));
+	}
+
+	wg_log(LV_DEBUG, "[%s] OUT >>>>>>>>>>>>>>>>>>>>>>>",pcom->trxc);
+	wg_log(LV_DEBUG, "fx_ordr_ymd   =[%.*s]", sizeof(tro->fx_ordr_ymd), tro->fx_ordr_ymd);  // FX주문년월일 
+	wg_log(LV_DEBUG, "fx_ordr_no    =[%.*s]", sizeof(tro->fx_ordr_no ), tro->fx_ordr_no );  // FX주문번호
+
+	if (q->req.reqtp[0] == REQTP_RFS || q->req.reqtp[0] == REQTP_RFQ)
+		memcpy(q->req.orderno, tro->fx_ordr_no, sizeof(q->req.orderno));			// 주문번호 보관
+
+	free(prcv);
+
+	return (0);
+}
+
+/************************************************************************
+ ■ RFS/RFQ : 
+	1) W6109A04 서비스 호출로 마크업/수수료/RFS키 수신
+	2) RFS키 는 WGREQ.req.rfskey 에 저장. (호가수신시 KEY로 사용)
+	 - RFS는 세팅된 마크업/수수료 로 호가생성하여 Feeding..
+	 - RFQ는 handler_rfq() 에서 딜러가 입력한 호가데이터 수신 (W6109A02)
+	 - RFQ 딜러거부나 시간초과거부는 (BW520030) 데몬에서 거부호가 줌.
+************************************************************************/
+int mymqcall_W6109A04(WGREQ *q, W6109A04_O *p, char *rejmsg)
+{
+	int			slen = 0, rlen = 0;
+	char		sndbuf[1024*4] = {0};
+	char		*prcv;
+	MyMQ		*mymq;
+	COMHDR		*pcom;
+	W6109A04_I	*tri;
+	W6109A04_O	*tro;
+
+	memset(sndbuf, 0x00, sizeof(sndbuf));
+
+	pcom = (COMHDR *)sndbuf;
+
+	// 공통헤더 세팅
+	zsedit(pcom->trxc, "W6109A04" );
+	zsedit(pcom->loip, "127.0.0.1");			// 로컬 IP
+	zsedit(pcom->auip, "127.0.0.1");			// 공인 IP
+	zsedit(pcom->ctyp, DF_AGR_CH);				// 접속매체구분 '5', starFX는 'W'
+	zsedit(pcom->usid, q->user.lgen_no);		// 사용자 Lgen_no
+	zsedit(pcom->msid, q->wgkey.sendcompid);	// SenderCompID 사용 : 원장에서는 TRSMT_TAGET_ID + LGEN_NO 조합으로 TSKEIAM87 테이블 조회함.
+
+wg_log(LV_DEBUG, "[%s] mymq service call [%s] >>>>>>>>>>>>>>>>>>>>>>>",__func__, pcom->trxc);
+
+	// TR INPUT 세팅
+	tri = (W6109A04_I *)&sndbuf[COMHDR_LEN];
+	memcpy(tri->LgenNo, q->user.lgen_no, sizeof(q->user.lgen_no));		// 거래참여자번호
+
+	// FX상품구분드 : TD=1, TOM=2, 현물환=3, 선물환=4, 스왑=5, 바로환전=6, NDF=7, MAR=8  
+	if (q->stype[0] == DF_FXSPT)		tri->PrdctClsfi[0] = '3';
+	else if (q->stype[0] == DF_FXFWD)	tri->PrdctClsfi[0] = '4';
+	else if (q->stype[0] == DF_FXSWP)	tri->PrdctClsfi[0] = '5';
+
+	tri->DealDstic[0] = q->req.side[0];		// 매매구분 0:양방향 1:buy 2:sell
+	memcpy(tri->PrdctCd,        q->symb,         sizeof(q->symb));				// 상품코드  
+	memcpy(tri->BaseCncycd,     q->symb,         sizeof(tri->BaseCncycd));		// 기준통화코드
+	memcpy(tri->NearExpireDate, q->markup[0].setldate, sizeof(tri->NearExpireDate));	// Near만기일
+	sprintf(tri->BaseCrncyAmt, "%f", q->req.orderqty);			// 기준통화금액
+	if (q->stype[0] == DF_FXSWP)
+		memcpy(tri->FarExpireDate, q->markup[1].setldate, sizeof(tri->FarExpireDate));	// Far만기일
+
+	//int mymq_call(MyMQ *mymq, const char *host, const char *xchg, const char *rkey, const char *sndb, int sndl, char **rcvb, int timeout)
+	rlen = mymq_call(mymq, NULL, "dom", "W6109A04", sndbuf, sizeof(COMHDR) + sizeof(W6109A04_I), &prcv, 5);
+
+	pcom = (COMHDR *)prcv;
+	tro  = (W6109A04_O *)(prcv+COMHDR_LEN);
+
+//	wg_log(LV_DEBUG, "COMHDR return [%d:%.1s:%.5s:%s]", rlen, pcom->rtyp, pcom->rcod, pcom->eflg);
+
+	if (pcom->eflg[0] != '0') {
+		get_errmsg(pcom->rtyp, pcom->rcod, rejmsg);
+		wg_log(LV_ERR, "(%s) service(W6109A04) call error! (%.1s:%.1s:%.5s)(%s)", __func__, pcom->eflg, pcom->rtyp, pcom->rcod, rejmsg);
+		//sprintf(rejmsg, "request RFS/RFQ error !");
+		return (ERR_SYSTEM*(-1));
+	}
+	wg_log(LV_DEBUG, "[%s] OUT >>>>>>>>>>>>>>>>>>>>>>>",pcom->trxc);
+	wg_log(LV_DEBUG, "TranPtrncd      =[%.*s]", sizeof(tro->TranPtrncd      ), tro->TranPtrncd          );  // 거래유형코드 1:RFS 2:RFQ 
+	wg_log(LV_DEBUG, "RFSKey          =[%.*s]", sizeof(tro->RFSKey          ), tro->RFSKey              );  // RFS키
+	wg_log(LV_DEBUG, "UpdatCycl       =[%.*s]", sizeof(tro->UpdatCycl       ), tro->UpdatCycl           );  // 갱신주기(초)
+	wg_log(LV_DEBUG, "bid_mrkup       =[%.*s]", sizeof(tro->bid_mrkup       ), tro->bid_mrkup           );  // SPOT BID마크업
+	wg_log(LV_DEBUG, "ask_mrkup       =[%.*s]", sizeof(tro->ask_mrkup       ), tro->ask_mrkup           );  // SPOT ASK마크업
+	wg_log(LV_DEBUG, "bid_prc         =[%.*s]", sizeof(tro->bid_prc         ), tro->bid_prc             );  // SPOT BID가격 
+	wg_log(LV_DEBUG, "ask_prc         =[%.*s]", sizeof(tro->ask_prc         ), tro->ask_prc             );  // SPOT ASK가격 
+	wg_log(LV_DEBUG, "bid_swapmrkup   =[%.*s]", sizeof(tro->bid_swapmrkup   ), tro->bid_swapmrkup       );  // SWAP BID마크업
+	wg_log(LV_DEBUG, "ask_swapmrkup   =[%.*s]", sizeof(tro->ask_swapmrkup   ), tro->ask_swapmrkup       );  // SWAP ASK마크업
+	wg_log(LV_DEBUG, "bid_swapprc     =[%.*s]", sizeof(tro->bid_swapprc     ), tro->bid_swapprc         );  // SWAP BID가격 
+	wg_log(LV_DEBUG, "ask_swapprc     =[%.*s]", sizeof(tro->ask_swapprc     ), tro->ask_swapprc         );  // SWAP ASK가격 
+	wg_log(LV_DEBUG, "KRWbid_mrkup    =[%.*s]", sizeof(tro->KRWbid_mrkup    ), tro->KRWbid_mrkup        );  // SPOT BID마크업
+	wg_log(LV_DEBUG, "KRWask_mrkup    =[%.*s]", sizeof(tro->KRWask_mrkup    ), tro->KRWask_mrkup        );  // SPOT ASK마크업
+	wg_log(LV_DEBUG, "KRWbid_prc      =[%.*s]", sizeof(tro->KRWbid_prc      ), tro->KRWbid_prc          );  // SPOT BID가격 
+	wg_log(LV_DEBUG, "KRWask_prc      =[%.*s]", sizeof(tro->KRWask_prc      ), tro->KRWask_prc          );  // SPOT ASK가격
+	wg_log(LV_DEBUG, "KRWbid_swapmrkup=[%.*s]", sizeof(tro->KRWbid_swapmrkup), tro->KRWbid_swapmrkup    );  // SWAP BID마크업
+	wg_log(LV_DEBUG, "KRWask_swapmrkup=[%.*s]", sizeof(tro->KRWask_swapmrkup), tro->KRWask_swapmrkup    );  // SWAP ASK마크업
+	wg_log(LV_DEBUG, "KRWbid_swapprc  =[%.*s]", sizeof(tro->KRWbid_swapprc  ), tro->KRWbid_swapprc      );  // SWAP BID가격
+	wg_log(LV_DEBUG, "KRWask_swapprc  =[%.*s]", sizeof(tro->KRWask_swapprc  ), tro->KRWask_swapprc      );  // SWAP ASK가격
+	wg_log(LV_DEBUG, "mrgn_prc        =[%.*s]", sizeof(tro->mrgn_prc        ), tro->mrgn_prc            );  // 마진가격
+
+	// W6109A04 서비스에서 금액기준으로 RFS,RFQ 전환 함.
+	if (tro->TranPtrncd[0] == '2')		// && q->req.reqtp[0] == REQTP_RFS)
+	{
+		wg_log(LV_DEBUG, "[%s] request is changed into RFQ..!!! ", q->reqID);
+		q->req.reqtp[0] = REQTP_RFQ;
+	}
+
+	// RFQ는 업무쪽 데몬에서 시간체크하여 거부메시지 송신함. (handler_rfq 에서 처리)
+	// 수신한 유효시간으로 RFS 종료시간 UPDATE
+	struct timeval	tv;
+	struct tm *lt;
+	int		ttl=0;
+	char	stime[32];
+
+	gettimeofday(&tv, NULL);
+
+	if (q->req.reqtp[0] == REQTP_RFS)
+		ttl = str2i(tro->UpdatCycl, sizeof(tro->UpdatCycl));
+	else //if (q->req.reqtp[0] == REQTP_RFQ)
+		ttl = 110;		// 딜러가 호가 입력 후부터 시간계산되며, 다른 데몬이 RFQ 타임아웃 내려주므로 여유있게 설정
+
+	tv.tv_sec += ttl;
+	lt = localtime(&tv.tv_sec);
+	sprintf (stime, "%02d%02d%02d000",lt->tm_hour, lt->tm_min, lt->tm_sec);
+	memcpy(q->req.etime, stime, sizeof(q->req.etime));
+
+	// 수신한 RFS/RFQ KEY 저장		
+	memcpy(q->req.rfskey, tro->RFSKey, sizeof(tro->RFSKey));
+
+	memcpy((char *)p, (char *)tro, sizeof(W6109A04_O));
+	
+	free(prcv);
+
+	return (0);
+}
+
+/*===============================================================
+ * 오류코드 메시지 조회
+===============================================================*/
+int get_errmsg(char *msgtp, char *msgcd, char *rejmsg)
+{
+EXEC SQL BEGIN DECLARE SECTION;
+	char	v_msg_type_dstcd	[ 1+1];
+	char	v_noti_msg_cd		[ 5+1];
+	char	v_eng_ctnt			[200+1];
+EXEC SQL END DECLARE SECTION;
+	
+	memset(v_msg_type_dstcd,	0x00,	sizeof(v_msg_type_dstcd));
+	memset(v_noti_msg_cd,		0x00,	sizeof(v_noti_msg_cd));
+	memset(v_eng_ctnt,			0x00,	sizeof(v_eng_ctnt));
+
+	memcpy(v_msg_type_dstcd, msgtp, sizeof(v_msg_type_dstcd)-1);
+	memcpy(v_noti_msg_cd,    msgcd, sizeof(v_noti_msg_cd)-1);
+
+EXEC SQL
+	SELECT	ENG_CTNT
+	  INTO	:v_eng_ctnt
+	  FROM	INST1.TSKEIAM74
+	 WHERE	MSG_TYPE_DSTCD = :v_msg_type_dstcd
+	   AND	NOTI_MSG_CD = :v_noti_msg_cd
+	WITH UR
+	;
+	if (SQLCODE != SQL_SUCCESS)
+	{
+//		wg_log(LV_ERR, "(%s) (%s:%s) get message code error..(%d:%s)", __func__, msgtp, msgcd, SQLCODE, SQLERRM);
+		l_db2rollback();
+		return (-1);
+	}
+	l_db2commit();
+	
+	strcpy(rejmsg, v_eng_ctnt);
+	
+	return 0;
+}
+
+/*===============================================================
+ * 채번함수 : 주문번호/체결번호 (오라클 시퀀스 채번)
+===============================================================*/
+sqlint32 get_seqno(int gb)
+{
+EXEC SQL BEGIN DECLARE SECTION;
+	sqlint32	seqno;
+EXEC SQL END DECLARE SECTION;
+
+	switch(gb)
+	{
+	case 	GB_ORDNO :
+		EXEC SQL
+		SELECT	INST1.SQ_KEI_TR0001.NEXTVAL
+		  INTO	:seqno
+		  FROM	SYSIBM.DUAL
+		;
+		break;
+	
+	case 	GB_EXCNO :
+		EXEC SQL
+		SELECT	INST1.SQ_KEI_TR0201.NEXTVAL
+		  INTO	:seqno
+		  FROM	SYSIBM.DUAL
+		;
+		break;
+
+	default :
+		break;
+	}
+
+	if (SQLCODE != SQL_SUCCESS)
+	{
+		wg_log(LV_ERR, "(%s) get sequence error..(%d:%s)", __func__, SQLCODE, SQLERRM);
+		l_db2rollback();
+		return (-1);
+	}
+
+	l_db2commit();
+	
+	return seqno;
+}
+
+void _set_pad(char *p, int len)
+{
+	int		ii;
+
+	for (ii=0; ii<len; ii++) {
+		if (*(p+ii) == 0x00)	*(p+ii)=0x20;
+	}
+	*(p+len) = 0x00;
+
+	return ;
+}
+
+int _rtrim(char *p, int len)
+{
+	int		ii, pos;
+	pos = len;
+
+	for (ii=len-1; ii>=0; ii--) {
+		if (*(p+ii) == 0x20 || *(p+ii) == 0x00)		*(p+ii)=0x00;
+		else	break;
+
+		pos = ii;
+	}
+
+	return pos;
+}
+
+/*===============================================================
+ * BASIC FUNCTION
+===============================================================*/
+// Print formating string for debugging
+void wg_log(int level, const char *format, ...)
+{
+	char			*cp = NULL;
+	key_t			key = 0;
+	key_t			shmkey = 0xff180010;
+	int				mymqlv = LV_ERR;
+	int				templevel;
+
+	static int		shmid = -1;
+	static int		*ptype = (void *) -1;
+
+	if(shmid == -1 || ptype == (void *) -1)
+	{
+		cp = getenv("WIN_LOG_KEY");		// mymq shm
+		if(cp != NULL) {
+			key = strtol(cp, NULL, 16);
+			if(key != 0x00)	shmkey = key;
+		}
+
+		shmid = shmget(shmkey, sizeof(int), 0660 | IPC_CREAT);
+		if(shmid == -1)		return;
+
+		ptype = (int *)shmat(shmid, 0, 0);
+		if(ptype == (void *) -1)	return;
+
+		templevel = *ptype; 
+		if(templevel <= 0 || templevel > LV_DEBUG)  // 7
+			*ptype = LV_ERR;
+	}
+
+///////  MYMQ LOG LEVEL CHECK
+	mymqlv = *ptype; 
+//	if (level > mymqlv)		return;
+
+	char	logmsg[5*1024], logpath[128], lstr[40];
+	va_list	vl;
+
+	time_t	t;
+	struct tm *tm;
+	struct timeval tv;
+
+	if (whoami == NULL)		return ;
+
+	t = gettimeofday(&tv, NULL);
+	tm = localtime(&tv.tv_sec);
+
+
+	switch (level)
+	{
+		case LV_MUST :		strcpy(lstr, "***");	break;
+		case LV_ERR :		strcpy(lstr, "ERR");	break;
+		case LV_WARN :		strcpy(lstr, "WRN");	break;
+		case LV_INFO :		strcpy(lstr, "INF");	break;
+		case LV_DEBUG :		strcpy(lstr, "DBG");	break;
+		default :			strcpy(lstr, "   ");	break;
+	}
+sprintf(logmsg, "%02d/%02d %02d:%02d:%02d:%06d] %s ", tm->tm_mon+1, tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec, tv.tv_usec, lstr);
+	va_start(vl, format);
+	vsprintf(&logmsg[strlen(logmsg)], format, vl);
+	va_end(vl);
+
+	struct stat fst;
+
+	if (logF == NULL || logdate != tm->tm_mday)
+	{
+		if (logF)	fclose(logF);
+
+		sprintf(logpath, "%s/%s-%04d%02d%02d.log", WG_LOG_DIR, whoami, tm->tm_year+1900, tm->tm_mon+1, tm->tm_mday);
+		logF    = fopen(logpath, "a");
+		logdate = tm->tm_mday;
+	}
+	else
+	{
+		fstat(fileno(logF), &fst);
+
+		if (fst.st_nlink <= 0)
+			logF = fopen(logpath, "a");
+	}
+
+	fprintf(logF, "%s\n", logmsg);
+	fflush(logF);
+
+	return ;
+}

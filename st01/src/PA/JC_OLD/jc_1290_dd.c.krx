@@ -1,0 +1,198 @@
+#define		_GLOBAL
+/*------------------------------------------------------------------------
+#	System	: TLFEP System
+#	Module	: 선물옵션 특화주문응답 분배
+#	File	: jc_1290_dd.c
+------------------------------------------------------------------------*/
+
+/*------------------------------------------------------------------------
+	Header Files
+------------------------------------------------------------------------*/
+#include	"fep_fepj.h"
+#include	"jc_struct.h"
+#include	"krx_struct.h"
+
+#define		DATA_SIZE	381					  /* Header(81) + Data(300) */
+#include	"buf_struct.h"
+
+/*------------------------------------------------------------------------
+	Constants and Structures
+------------------------------------------------------------------------*/
+#define		OS_LINE_CNT		8
+#define		FILE_NO_BASE	30
+
+#define		DATA_TIME	60 * 1000
+#define		READ_MAX	(FILE_BUF_LEN/(sizeof(FILE_RW_HEAD)+DATA_SIZE+1))
+
+/*------------------------------------------------------------------------
+	Global Variables
+------------------------------------------------------------------------*/
+int					R_Cnt;
+FILE_BUFF_FORMAT	R_Fmt[READ_MAX], W_Fmt;
+
+/*------------------------------------------------------------------------
+	Function Prototypes
+------------------------------------------------------------------------*/
+void	JC_1290_DD (void);
+void	Analyze_Data (void);
+void	Write_Data (int);
+
+/*----------------------------------------------------------------------*/
+int		main (int argc, char *argv[])
+/*----------------------------------------------------------------------*/
+{
+	Init_Proc (argc, argv);
+	JC_1290_DD ();
+	Exit_Process ();
+}	/* End of main ()	*/
+
+/*----------------------------------------------------------------------*/
+void	JC_1290_DD (void)
+/*----------------------------------------------------------------------*/
+{
+	int		rt;
+
+	while (START_S != JOB_END)
+	{
+		Stat_Save ();
+
+		while (START_S != JOB_END)
+		{
+			Stat_Save ();
+			memset (R_Fmt, 0, sizeof (FILE_BUFF_FORMAT) * READ_MAX);
+
+			R_Cnt = DSHM_R (PS_R_2, (void *)R_Fmt, READ_MAX);
+
+			if (R_Cnt < 0)
+			{
+				SLog (DSH_FATAL, "cannot read DSHM[%s,%d:%s]",
+					IDN(D_K,P_K,0), SYS_NO, SYS_STR);
+				sleep (1);
+				Exit_Process ();
+			}
+			else if (R_Cnt == 0)
+				break;
+
+			SLog (DSH_OK, "SHM RD [%s:%d][%d]",
+				IDN(D_K,P_K,0), R_Cnt, IDR(D_K,P_K,0,1));
+			Analyze_Data ();
+		}
+
+		rt = Poll_File (DATA_TIME);
+
+		if (rt == 1)
+			SLog (USR_OK, "poll timeout <%d>", INT_SEQ);
+		else if (rt == -1)
+			continue;
+	}
+}	/* End of JC_1290_DD ()	*/
+
+/*************************************************************************
+	Function		: . Analyze_Data
+	Parameters IN	: .
+	Parameters OUT	: .
+	Return Code		: . void
+	Comment			: . analyze and divide data
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+void	Analyze_Data (void)
+/*----------------------------------------------------------------------*/
+{
+	int					i, line;
+
+	for (i = 0; i < R_Cnt; i ++)
+	{
+		memcpy (&W_Fmt, &R_Fmt[i], sizeof (FILE_BUFF_FORMAT));
+
+		KRX_JUMUN_DATA_ST *dat =
+		(KRX_JUMUN_DATA_ST *)&R_Fmt[i].Data[sizeof(KRX_HEADER)+
+											sizeof(KRX_JUMUN_R_DATA)+11];
+
+		/*================================================================
+		Byte#	설명
+		-------	----------------------------------------------------------
+		1		S:상품, W:위탁, D:특화(직접접속)
+		2		F:선물, O:옵션
+		3		T:OS, P:PK
+		4-5		channel(e.g. 01~08:OS, 31~50:PK-C)
+		6		주문경로구분(' ':일반, A:PK-Server, C:PK-Client)
+		================================================================*/
+		if (dat->MembershipItem[2] == 'T')			/* OS	*/
+		{
+			line = AtoIf (&dat->MembershipItem[3], 2) % OS_LINE_CNT;
+
+			if (line == 0)
+				line = OS_LINE_CNT;
+
+			Write_Data (line);
+		}
+		else if (dat->MembershipItem[2] == 'P')		/* PK	*/
+		{
+			line = AtoIf (&dat->MembershipItem[3], 2) 
+					- FILE_NO_BASE;
+
+			if (line >= 12 && line <= 19) 
+			{
+				if (line <= 15)
+					line = 12;
+				else
+					line = 16;
+
+				for (i = 0; i < 4; i ++)
+				{
+					Write_Data (OS_LINE_CNT + line + i);
+				}
+			}
+			else
+			{
+				Write_Data (OS_LINE_CNT + line);
+			}
+		}
+		else
+		{
+			SLog (USR_ERROR, "세부주문처오류 [%c][%.6s]",
+				dat->MembershipItem[2], 
+				dat->MembershipItem);
+			Dshm_Add_Count (PS_R_2, 1);
+			INT_SEQ ++;
+			continue;
+		}
+	}
+
+	return;
+}	/* End of Analyze_Data ()	*/
+
+/**************************************************************************
+	Function		: . Write_Data
+	Parameters IN	: . w_type	: write flag
+	Parameters OUT	: .
+	Return Code		: . void
+	Comment			: . write data to data SHM
+**************************************************************************/
+/*-----------------------------------------------------------------------*/
+void	Write_Data (int w_type)
+/*-----------------------------------------------------------------------*/
+{
+	int		rt;
+
+	rt = DSHM_W (w_type * 10, (void *)&W_Fmt, 1);
+
+	if (rt != 1)
+	{
+		SLog (DSH_FATAL, "DSHM write OD%d[%s:%d]",
+			w_type, ODN(D_K,P_K,w_type-1), rt);
+		Exit_Process ();
+	}
+
+	Dshm_Add_Count (PS_R_2, 1);
+	INT_SEQ ++;
+	SLog (USR_OK, "DSHM write OD%d[%s:%d][%d]",
+		w_type, ODN(D_K,P_K,w_type-1), rt, ODW(D_K,P_K,w_type-1,0));
+	Set_TR_Time ();
+
+	return;
+}	/* End of Write_Data ()	*/
+
+/*************************************************************************
+	End of Program (jc_1290_dd.c)
+*************************************************************************/

@@ -1,0 +1,368 @@
+#include "def.h"
+#include "shm_memory.h"
+
+extern SHM_FIN_FUT     *g_md_shm_fut;
+extern SHM_FIN_FUT     *g_md_shm_fut_ngt;
+extern RISK            *g_md_shm_spot;
+extern Config g_cfg;
+
+time_t make_end_time(int ymd, int hms)
+{
+	struct tm tm;
+	memset(&tm, 0, sizeof(tm));
+
+	tm.tm_year = (ymd / 10000) - 1900;
+	tm.tm_mon  = ((ymd / 100) % 100) -1;
+	tm.tm_mday = ymd % 100;
+
+	tm.tm_hour = hms / 10000;
+	tm.tm_min  = (hms / 100) % 100;
+	tm.tm_sec  = hms % 100;
+
+	return mktime(&tm);
+}
+
+void l_arb_set_data(char *msg)
+{
+    STRATEGY_BODY *bd = (STRATEGY_BODY *)(msg);
+	int  arb_tp = 0;      
+    int  exec_mode = 0;   
+    int  close_t1_tp = 0, close_t2_tp = 0;
+    char ord_type_fut[1+1]={0, }, ord_type_spot[1+1]={0, };
+
+    // G_STRAT->strategy_id = strategy_no;
+    memcpy(G_STRAT->strategy_name  , bd->sf_mrgn_rule_id                   , sizeof(bd->sf_mrgn_rule_id         )); // 현선물차익거래룰ID (전략명)
+    G_STRAT->exch_spot[0]          = bd->fx_exch_dstcd[0];
+    memcpy(G_STRAT->spot_sym       , bd->fx_prdct_cd                       , sizeof(bd->fx_prdct_cd             ));
+    memcpy(G_STRAT->fut_sym        , bd->ftrs_items_cd                     , sizeof(bd->ftrs_items_cd           ));
+    G_STRAT->base_lot_fut          = str2int(bd->ftrs_base_ordr_unit_qty   , sizeof(bd->ftrs_base_ordr_unit_qty ));
+    G_STRAT->base_lot_spot         = str2int(bd->fx_base_ordr_unit_qty     , sizeof(bd->fx_base_ordr_unit_qty   ));
+    G_STRAT->max_lot_abs_fut       = str2int(bd->ftrs_max_ordr_unit_qty    , sizeof(bd->ftrs_max_ordr_unit_qty  ));
+    G_STRAT->max_lot_abs_spot      = str2int(bd->fx_max_ordr_unit_qty      , sizeof(bd->fx_max_ordr_unit_qty    ));
+    G_STRAT->min_lot_fut           = str2int(bd->ftrs_min_rmandr           , sizeof(bd->ftrs_min_rmandr         ));
+    G_STRAT->tick_unit_fut         = str2double(bd->ftrs_tick_unit         , sizeof(bd->ftrs_tick_unit          ));
+    G_STRAT->entry_buy_spread_bp   = str2double(bd->ent_buy_sprd           , sizeof(bd->ent_buy_sprd            ));
+    G_STRAT->entry_sell_spread_bp  = str2double(bd->ent_sell_sprd          , sizeof(bd->ent_sell_sprd           ));
+    G_STRAT->exit_spread_bp        = str2double(bd->lqdt_sprd              , sizeof(bd->lqdt_sprd               ));
+	G_STRAT->entry_start_time      = str2int(bd->ent_sched_hms             , sizeof(bd->ent_sched_hms           ));
+	
+	close_t1_tp = str2int(bd->lqdt_start_sprd_dstcd , sizeof(bd->lqdt_start_sprd_dstcd));
+    if (close_t1_tp != 9)
+    {
+        G_STRAT->close_spread_enabled_t1 = 1;     // 1차청산 사용   : +1
+        G_STRAT->close_t1              = str2int(bd->lqdt_start_sched_hms     , sizeof(bd->lqdt_start_sched_hms      ));
+        G_STRAT->close_spread_bp_t1    = str2double(bd->lqdt_start_sprd       , sizeof(bd->lqdt_start_sprd           ));
+    }
+    else
+	{
+        G_STRAT->close_spread_enabled_t1 = -1;   // 1차청산 미사용 : -1
+		G_STRAT->close_t1 = 999999;
+	}
+
+	close_t2_tp = str2int(bd->lqdt_cmpl_sprd_dstcd  , sizeof(bd->lqdt_cmpl_sprd_dstcd ));
+    if (close_t2_tp != 9)
+    {
+        G_STRAT->close_spread_enabled_t2 = 1;     // 2차청산 사용   : +1
+        G_STRAT->close_t2                = str2int(bd->lqdt_cmpl_sched_hms    , sizeof(bd->lqdt_cmpl_sched_hms       ));
+        G_STRAT->close_spread_bp_t2      = str2double(bd->lqdt_cmpl_sprd      , sizeof(bd->lqdt_cmpl_sprd            ));
+    }
+    else
+	{
+        G_STRAT->close_spread_enabled_t2 = -1;    // 2차청산 미사용   : -1
+		G_STRAT->close_t2 = 999999;
+	}
+
+    G_STRAT->hard_cut_time  = str2int(bd->last_lqdt_end_sched_hms  , sizeof(bd->last_lqdt_end_sched_hms ));
+    if (G_STRAT->hard_cut_time != 999999)
+    {
+        G_STRAT->hard_cut_enabled  = 1;     // 하드컷 사용 : +1
+    }
+    else
+        G_STRAT->hard_cut_enabled  = -1;    // 하드컷 미사용 : -1
+
+	arb_tp = str2int(bd->mrgn_drct_dstcd, sizeof(bd->mrgn_drct_dstcd)); // 차익방향구분코드 - 1.매수, 2.매도, 3.양방향
+    if (arb_tp == 1)
+        G_STRAT->arb_dir_mode   = ARB_BUY;
+    else if (arb_tp == 2)
+        G_STRAT->arb_dir_mode   = ARB_SELL;
+    else
+        G_STRAT->arb_dir_mode   = ARB_BOTH;
+
+    exec_mode = str2int(bd->ordr_prity_dstcd , sizeof(bd->ordr_prity_dstcd)); // 주문우선순위구분코드 - 1.동시, 2.선물우선, 3:현물우선
+    if (exec_mode == 1)
+        G_STRAT->exec_mode = EX_SIMUL;
+    else if (exec_mode == 2)
+        G_STRAT->exec_mode = EX_FUT_FIRST;
+	else
+	    G_STRAT->exec_mode = EX_SPOT_FIRST;
+
+    G_STRAT->basis_cd             = str2int(bd->basis_calc_dstcd   , sizeof(bd->basis_calc_dstcd   )); // 베이시스계산구분코드 - 1.Swap, 2.이론스프레드(딜러수기입력)
+    G_STRAT->basis_spread         = str2double(bd->basis_calc_sprd , sizeof(bd->basis_calc_sprd    )); // 베이시스계산스프레드
+    G_STRAT->strategy_stat        = str2int(bd->sf_mrgn_stus_dstcd , sizeof(bd->sf_mrgn_stus_dstcd )); // 현선물차익거래상태구분코드 - 1.구동, 2:일시정지, 3:정지
+    G_STRAT->seq_no               = str2int(bd->seq_no             , sizeof(bd->seq_no             )); // 전략인덱스(전략Slot 인덱스 결정)
+
+	memcpy(ord_type_fut , bd->ftrs_ofpr_dstcd     , sizeof(bd->ftrs_ofpr_dstcd));
+    if (ord_type_fut[0] == 'T')
+	{
+        G_STRAT->ord_type_fut  = ORD_TYPE_M;  // 시장가주문
+		G_STRAT->tif_type_fut  = OT_FAS;      // 시장가일때 FAS 주문만 가능함
+		G_STRAT->tick_offset   = 0;      
+    }
+	else if (ord_type_fut[0] == '2')
+	{
+        G_STRAT->ord_type_fut  = ORD_TYPE_L;  // 지정가주문
+		G_STRAT->tif_type_fut  = OT_FOK;      // FAS
+		G_STRAT->tick_offset   = 0;      
+	}
+	else if (ord_type_fut[0] == '3')
+	{
+        G_STRAT->ord_type_fut  = ORD_TYPE_L;  // 지정가(FAS-1호가)
+		G_STRAT->tif_type_fut  = OT_FAS;      // FAS 
+		G_STRAT->tick_offset   = 0;      
+	}
+	else if (ord_type_fut[0] == '4')
+	{
+        G_STRAT->ord_type_fut  = ORD_TYPE_L;  // 지정가(FAS-2호가)
+		G_STRAT->tif_type_fut  = OT_FAS;      // FAS
+		G_STRAT->tick_offset   = G_STRAT->tick_unit_fut * 1.0;      
+	}
+	else
+	{
+        G_STRAT->ord_type_fut  = ORD_TYPE_L;  // 지정가(FAS-3호가)
+		G_STRAT->tif_type_fut  = OT_FAS;      // FAS
+		G_STRAT->tick_offset   = G_STRAT->tick_unit_fut * 2.0;      
+	}
+
+    memcpy(ord_type_spot, bd->fx_ofpr_dstcd, sizeof(bd->fx_ofpr_dstcd));
+    if (ord_type_spot[0] == '2')
+        G_STRAT->ord_type_spot = ORD_TYPE_L;  // 지정가주문
+
+	if (G_STRAT->exch_spot[0] == 'J') 
+		G_STRAT->tif_type_spot = OT_FOK;  		  // JPM -> 지정가 FOK 
+	else if (G_STRAT->exch_spot[0] == 'N')
+		G_STRAT->tif_type_spot = OT_FOK;  		  // NH -> 지정가 FOK 
+	else         
+		G_STRAT->tif_type_spot = OT_FAS;  		  // Shinhan -> 지정가 IOC / FOK 미정
+
+    memcpy(G_STRAT->fcm_acno_spot      , bd->fx_fcm_acno                , sizeof(bd->fx_fcm_acno       )); // 현물FCM계좌번호
+    memcpy(G_STRAT->fcm_acno_fut       , bd->ftrs_fcm_acno              , sizeof(bd->ftrs_fcm_acno     )); // 선물FCM계좌번호
+    memcpy(G_STRAT->fcm_id_fut         , bd->ftrs_fcm_id                , sizeof(bd->ftrs_fcm_id       )); // 선물FCMID
+    memcpy(G_STRAT->ref_no             , bd->ref_no                     , sizeof(bd->ref_no            )); // 참조번호(1 구분자 + 8 주문일자 + 6 일런번호)
+    memcpy(G_STRAT->bsns_dt_fut        , bd->ftrs_bsns_dt               , sizeof(bd->ftrs_bsns_dt      )); // 선물영업일자
+    memcpy(G_STRAT->bsns_dt_spot       , bd->spot_bsns_dt               , sizeof(bd->spot_bsns_dt      )); // 현물영업일자
+    memcpy(G_STRAT->bk_no              , bd->bk_no                      , sizeof(bd->bk_no             )); // 북번호
+    memcpy(G_STRAT->lgen_no            , bd->lgen_no                    , sizeof(bd->lgen_no           )); // 거래참여자번호
+    memcpy(G_STRAT->trdr_no            , bd->trdr_no                    , sizeof(bd->trdr_no           )); // 트레이더번호
+    
+	G_STRAT->order_interval_ms         = str2int(bd->ordr_intval_ms     , sizeof(bd->ordr_intval_ms    )); // 주문간격(ms)
+	G_STRAT->retry_cnt                 = str2int(bd->retry_cnt          , sizeof(bd->retry_cnt         )); // 현물주문재시도횟수 
+    G_STRAT->retry_interval_ms         = str2int(bd->retry_intval_ms    , sizeof(bd->retry_intval_ms   )); // 현물주문재시도간격
+
+    memcpy(G_STRAT->scid               , bd->scid                       , sizeof(bd->scid              )); // SendCompID 
+    memcpy(G_STRAT->tgid               , bd->tgid                       , sizeof(bd->tgid              )); // TargetCompID
+    memcpy(G_STRAT->day_ngt_cd         , bd->day_ngt_dstcd              , sizeof(bd->day_ngt_dstcd     )); // 주야간구분코드 - 0:주간 1:야간 
+    memcpy(G_STRAT->expire_dt          , bd->expire_dt                  , sizeof(bd->expire_dt         )); // 만기일자
+
+	// 2026/04/29 전략자동종료시간설정 추가 
+	time_t t;
+	struct tm *tm;
+	char   s_end_ymd[8+1] = {0,};
+	int    i_end_today    = 0;
+	char   i_end_next_day = 0;
+	time(&t);
+	tm = localtime(&t);
+	sprintf(s_end_ymd, "%04d%02d%02d", tm->tm_year+1900, tm->tm_mon+1, tm->tm_mday);
+	i_end_today = str2int(s_end_ymd     , sizeof(s_end_ymd));
+	
+	tm->tm_mday += 1;
+	mktime(tm);
+	sprintf(s_end_ymd, "%04d%02d%02d", tm->tm_year+1900, tm->tm_mon+1, tm->tm_mday);
+	i_end_next_day = str2int(s_end_ymd     , sizeof(s_end_ymd));
+
+    l_dbg(L_DBG, "end_today[%d] end_next_day[%d] ngt_tm[%d] day_tm[%d]", i_end_today, i_end_next_day, g_cfg.ngt_end_time,g_cfg.day_end_time);
+
+	// 진입시간, 1차청산시간, 2차청산시간, 일괄청산시간 보정
+	// 야간일경우 입력값이 00~06시 이전인 경우에는 다음날로 종료일자를 넘긴다.
+	// 그 외의 값인 경우에는 당일로 판단한다.
+	if (G_STRAT->day_ngt_cd[0] == '1') // 야간
+	{
+		G_STRAT->end_tm_t = make_end_time(i_end_next_day, g_cfg.ngt_end_time);
+		
+		if (G_STRAT->ent_sched_hms =< 60000)	{
+			G_STRAT->ent_tm_t = make_end_time(i_end_next_day, G_STRAT->ent_sched_hms);
+		} else	{
+			G_STRAT->ent_tm_t = make_end_time(i_end_today, G_STRAT->ent_sched_hms);
+		}
+
+		if (G_STRAT->close_t1 =< 60000)	{
+			G_STRAT->close_t1_t = make_end_time(i_end_next_day, G_STRAT->close_t1);
+		} else {
+			G_STRAT->close_t1_t = make_end_time(i_end_today, G_STRAT->close_t1);
+		}
+
+		if (G_STRAT->close_t2 =< 60000) {
+			G_STRAT->close_t2_t = make_end_time(i_end_next_day, G_STRAT->close_t2);
+		} else {
+			G_STRAT->close_t2_t = make_end_time(i_end_today, G_STRAT->close_t2);
+		}
+
+		if (G_STRAT->hard_cut_time =< 60000)	{
+			G_STRAT->hard_cut_time_t = make_end_time(i_end_next_day, G_STRAT->hard_cut_time);
+		} else	{
+			G_STRAT->hard_cut_time_t = make_end_time(i_end_today, G_STRAT->hard_cut_time);
+		}
+	} 
+	else {
+		G_STRAT->ent_tm_t = make_end_time(i_end_today, g_cfg.day_end_time);
+		G_STRAT->close_t1_t = make_end_time(i_end_today, G_STRAT->close_t1);
+		G_STRAT->close_t2_t = make_end_time(i_end_today, G_STRAT->close_t2);
+		G_STRAT->hard_cut_time_t = make_end_time(i_end_today, G_STRAT->hard_cut_time);
+	}
+
+    l_dbg(L_DBG, "=============================== ARB 전략 Setting Start ===============================");
+    l_dbg(L_DBG, " 1.today                   [%d]", G_STRAT->today                    );
+    l_dbg(L_DBG, " 2.strategy_id             [%d]", G_STRAT->strategy_id              );
+    l_dbg(L_DBG, " 3.strategy_stat           [%d]", G_STRAT->strategy_stat            );
+    l_dbg(L_DBG, " 4.aptype                  [%s]", G_STRAT->aptype                   );
+    l_dbg(L_DBG, " 5.strategy_name           [%s]", G_STRAT->strategy_name            );
+    l_dbg(L_DBG, " 6.spot_sym                [%s]", G_STRAT->spot_sym                 );
+    l_dbg(L_DBG, " 7.fut_sym                 [%s]", G_STRAT->fut_sym                  );
+    l_dbg(L_DBG, " 8.base_lot_spot           [%d]", G_STRAT->base_lot_spot            );
+    l_dbg(L_DBG, " 9.base_lot_fut            [%d]", G_STRAT->base_lot_fut             );
+    l_dbg(L_DBG, "10.max_lot_abs_fut         [%d]", G_STRAT->max_lot_abs_fut          );
+    l_dbg(L_DBG, "11.max_lot_abs_spot        [%d]", G_STRAT->max_lot_abs_spot         );
+    l_dbg(L_DBG, "12.min_lot_fut             [%d]", G_STRAT->min_lot_fut              );
+    l_dbg(L_DBG, "13.tick_unit_fut           [%f]", G_STRAT->tick_unit_fut            );
+    l_dbg(L_DBG, "14.tick_offset             [%f]", G_STRAT->tick_offset              );
+    l_dbg(L_DBG, "15.entry_buy_spread_bp     [%f]", G_STRAT->entry_buy_spread_bp      );
+    l_dbg(L_DBG, "16.entry_sell_spread_bp    [%f]", G_STRAT->entry_sell_spread_bp     );
+    l_dbg(L_DBG, "17.exit_spread_bp          [%f]", G_STRAT->exit_spread_bp           );
+    l_dbg(L_DBG, "18.entry_start_time        [%d]", G_STRAT->entry_start_time         );
+    l_dbg(L_DBG, "19.close_t1                [%d]", G_STRAT->close_t1                 );
+    l_dbg(L_DBG, "20.close_t2                [%d]", G_STRAT->close_t2                 );
+    l_dbg(L_DBG, "21.hard_cut_time           [%d]", G_STRAT->hard_cut_time            );
+    l_dbg(L_DBG, "22.close_spread_enabled_t1 [%d]", G_STRAT->close_spread_enabled_t1  );
+    l_dbg(L_DBG, "23.close_spread_bp_t1      [%f]", G_STRAT->close_spread_bp_t1       );
+    l_dbg(L_DBG, "24.close_spread_enabled_t2 [%d]", G_STRAT->close_spread_enabled_t2  );
+    l_dbg(L_DBG, "25.close_spread_bp_t2      [%f]", G_STRAT->close_spread_bp_t2       );
+    l_dbg(L_DBG, "26.hard_cut_enabled        [%d]", G_STRAT->hard_cut_enabled         );
+    l_dbg(L_DBG, "27.hard_cut_bp             [%f]", G_STRAT->hard_cut_bp              );
+    l_dbg(L_DBG, "28.tif_type_fut            [%d]", G_STRAT->tif_type_fut             );
+    l_dbg(L_DBG, "29.tif_type_spot           [%d]", G_STRAT->tif_type_spot            );
+    l_dbg(L_DBG, "30.fill_pref_entry         [%d]", G_STRAT->fill_pref_entry          );
+    l_dbg(L_DBG, "31.ord_type_fut            [%d]", G_STRAT->ord_type_fut             );
+    l_dbg(L_DBG, "32.ord_type_spot           [%d]", G_STRAT->ord_type_spot            );
+    l_dbg(L_DBG, "33.exec_mode               [%d]", G_STRAT->exec_mode                );
+    l_dbg(L_DBG, "34.arb_dir_mode            [%d]", G_STRAT->arb_dir_mode             );
+    l_dbg(L_DBG, "35.order_interval_ms       [%d]", G_STRAT->order_interval_ms        );
+    l_dbg(L_DBG, "36.pos_spot                [%d]", G_STRAT->pos_spot                 );
+    l_dbg(L_DBG, "37.pos_fut                 [%d]", G_STRAT->pos_fut                  );
+    l_dbg(L_DBG, "48.basis_cd                [%d]", G_STRAT->basis_cd                 );
+    l_dbg(L_DBG, "49.basis_spread            [%f]", G_STRAT->basis_spread             );
+    l_dbg(L_DBG, "40.fcm_id_fut              [%s]", G_STRAT->fcm_id_fut               );
+    l_dbg(L_DBG, "41.fcm_acno_fut            [%s]", G_STRAT->fcm_acno_fut             );
+    l_dbg(L_DBG, "42.exch_spot               [%s]", G_STRAT->exch_spot                );
+    l_dbg(L_DBG, "43.fcm_acno_spot           [%s]", G_STRAT->fcm_acno_spot            );
+    l_dbg(L_DBG, "44.ref_no                  [%s]", G_STRAT->ref_no                   );
+    l_dbg(L_DBG, "45.bsns_dt_fut             [%s]", G_STRAT->bsns_dt_fut              );
+    l_dbg(L_DBG, "46.bsns_dt_spot            [%s]", G_STRAT->bsns_dt_spot             );
+    l_dbg(L_DBG, "47.bk_no                   [%s]", G_STRAT->bk_no                    );
+    l_dbg(L_DBG, "48.lgen_no                 [%s]", G_STRAT->lgen_no                  );
+    l_dbg(L_DBG, "59.trdr_no                 [%s]", G_STRAT->trdr_no                  );
+    l_dbg(L_DBG, "50.seq_no                  [%d]", G_STRAT->seq_no                   );
+    l_dbg(L_DBG, "51.retry_cnt               [%d]", G_STRAT->retry_cnt                );
+    l_dbg(L_DBG, "52.retry_interval_ms       [%d]", G_STRAT->retry_interval_ms        );
+    l_dbg(L_DBG, "53.scid                    [%s]", G_STRAT->scid                     );
+    l_dbg(L_DBG, "54.tgid                    [%s]", G_STRAT->tgid                     );
+    l_dbg(L_DBG, "55.day_ngt_cd              [%s]", G_STRAT->day_ngt_cd               );
+    l_dbg(L_DBG, "56.expire_dt               [%s]", G_STRAT->expire_dt                );
+    l_dbg(L_DBG, "57.전략자동종료시간        [%ld]", G_STRAT->end_tm_t                );
+    l_dbg(L_DBG, "58.진입시간                [%ld]", G_STRAT->ent_tm_t                );
+    l_dbg(L_DBG, "59.1차청산시간             [%ld]", G_STRAT->close_t1_t              );
+    l_dbg(L_DBG, "60.2차청산시간             [%ld]", G_STRAT->close_t2_t              );
+    l_dbg(L_DBG, "61.최종청산시간            [%ld]", G_STRAT->hard_cut_time_t         );
+	l_dbg(L_DBG, "============================= ARB 전략 Setting End   ==================================");
+                   
+    return;
+}
+
+// ------------------------------------------------------------
+// l_arb_set_hoga
+//  기능: 실제 시세 데이터 시세 주입 (공유 메모리 G_SNAP에 직접)
+// ------------------------------------------------------------
+int l_arb_set_hoga()
+{
+	char tmp[20];
+    MarketSnap *snap = G_SNAP;
+
+    snap->tick_size_spot = 0.01;
+    snap->tick_size_fut  = 0.10;
+    snap->px_low_spot    = -9999.0;
+    snap->px_high_spot   = +9999.0;
+    snap->px_low_fut     = -9999.0;
+    snap->px_high_fut    = +9999.0;
+
+	/* 선물가격 */
+	memset(tmp, 0x00, sizeof(tmp));
+	
+	if (G_STRAT->day_ngt_cd[0] == '0')
+		memcpy(tmp, g_md_shm_fut[G_STRAT->fut_idx].B6.bid1_price, sizeof(g_md_shm_fut[G_STRAT->fut_idx].B6.bid1_price));  // 선물매수1단계우선호가가격
+	else 
+		memcpy(tmp, g_md_shm_fut_ngt[G_STRAT->fut_idx].B6.bid1_price, sizeof(g_md_shm_fut_ngt[G_STRAT->fut_idx].B6.bid1_price));  // 선물매수1단계우선호가가격
+   	
+	snap->px_fut_bid  = strtod(tmp, NULL); 
+
+	memset(tmp, 0x00, sizeof(tmp));
+	
+	if (G_STRAT->day_ngt_cd[0] == '0')
+		memcpy(tmp, g_md_shm_fut[G_STRAT->fut_idx].B6.ask1_price, sizeof(g_md_shm_fut[G_STRAT->fut_idx].B6.ask1_price));  // 선물매도1단계우선호가가격 
+    else
+		memcpy(tmp, g_md_shm_fut_ngt[G_STRAT->fut_idx].B6.ask1_price, sizeof(g_md_shm_fut_ngt[G_STRAT->fut_idx].B6.ask1_price));  // 선물매도1단계우선호가가격 
+
+	snap->px_fut_ask  = strtod(tmp, NULL);
+
+	/* 선물잔량 */
+	memset(tmp, 0x00, sizeof(tmp));
+
+	if (G_STRAT->day_ngt_cd[0] == '0')
+		memcpy(tmp, g_md_shm_fut[G_STRAT->fut_idx].B6.bid1_qty, sizeof(g_md_shm_fut[G_STRAT->fut_idx].B6.bid1_qty));  // 선물매수1단계우선호가잔량
+	else
+		memcpy(tmp, g_md_shm_fut_ngt[G_STRAT->fut_idx].B6.bid1_qty, sizeof(g_md_shm_fut_ngt[G_STRAT->fut_idx].B6.bid1_qty));  // 선물매수1단계우선호가잔량
+
+	snap->qty_fut_bid = strtod(tmp, NULL);
+
+	memset(tmp, 0x00, sizeof(tmp));
+
+	if (G_STRAT->day_ngt_cd[0] == '0')
+		memcpy(tmp, g_md_shm_fut[G_STRAT->fut_idx].B6.ask1_qty, sizeof(g_md_shm_fut[G_STRAT->fut_idx].B6.ask1_qty));  // 선물매도1단계우선호가잔량
+	else
+		memcpy(tmp, g_md_shm_fut_ngt[G_STRAT->fut_idx].B6.ask1_qty, sizeof(g_md_shm_fut_ngt[G_STRAT->fut_idx].B6.ask1_qty));  // 선물매도1단계우선호가잔량
+
+	snap->qty_fut_ask = strtod(tmp, NULL);
+
+	/* 현물가격 */
+	snap->px_spot_bid = g_md_shm_spot[0].FX_Sise[0][G_STRAT->spot_idx].buy_1_price; 
+	snap->px_spot_ask = g_md_shm_spot[0].FX_Sise[0][G_STRAT->spot_idx].sell_1_price; 
+    snap->ts_mono_ms  = get_hhmmss_now();
+
+	if (snap->px_fut_bid <= 0 || snap->px_fut_ask <= 0)
+	{
+		l_dbg(L_ERR, "선물 호가이상 확인요망 : fut_bid [%.2f] fut_ask [%.2f] spot_bid [%.5f] spot_ask [%.5f]", 
+			snap->px_fut_bid,  snap->px_fut_ask, snap->px_spot_bid, snap->px_spot_ask);
+		return -1;
+	}
+
+	if (snap->px_spot_bid <= 0 || snap->px_spot_ask <= 0)
+	{
+		l_dbg(L_ERR, "현물 호가이상 확인요망 : fut_bid [%.2f] fut_ask [%.2f] spot_bid [%.5f] spot_ask [%.5f]", 
+			snap->px_fut_bid, snap->px_fut_ask, snap->px_spot_bid, snap->px_spot_ask);
+		return -1;
+	}
+
+	l_dbg(L_INF, "현물[bid:%.5f ask:%.5f] 선물[bid:%.2f ask:%.2f qbid:%d qask:%d]",
+		snap->px_spot_bid, snap->px_spot_ask, snap->px_fut_bid, snap->px_fut_ask, snap->qty_fut_bid, snap->qty_fut_ask);
+
+	return 0;
+}
+
+

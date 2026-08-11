@@ -1,0 +1,1037 @@
+#define  _GLOBAL
+/*------------------------------------------------------------------------
+#   Module : Online 송신 (TCP client), FEP 주문송신접속, async
+#   File : pa_2100_ts.c
+#   2025 : imeco 고속 FEP 접속 Process
+------------------------------------------------------------------------*/
+
+/*------------------------------------------------------------------------
+    Header Files
+------------------------------------------------------------------------*/
+#include    "fep_fepp.h"
+#include    "pa_struct.h"
+#include    "ifaddrs.h"
+#include    "fep_common.h"
+
+/*------------------------------------------------------------------------
+    Constants and Structures
+------------------------------------------------------------------------*/
+#define     DATA_SIZE   200
+#include    "buf_struct.h"
+
+#define  TCP_TIME_OUT   30
+
+#define     FIFO_EVENT      0
+#define     SOCKET_EVENT    1
+#define     FILE_EVENT      2
+
+#define  P_TYPE     PS_R_1
+
+#ifdef  SAM_USE
+#define  WR_CNT     W_CNT(0,0)
+#define  RD_CNT     R_CNT(0,0)
+#define  IN_NAME    IFN(D_K,P_K,0)
+#else
+#define  WR_CNT     IDW_CNT(0,0)
+#define  RD_CNT     IDR_CNT(0,0)
+#define  IN_NAME    IDN(D_K,P_K,0)
+#endif
+
+/*------------------------------------------------------------------------
+    Global Variables
+------------------------------------------------------------------------*/
+int     Sockfd, PortNo, DataCnt, PollCnt, PktType, MaxCnt;
+int     LegSize, DataSize, RetryCnt;
+char    ApType[10], RecvPkt[TCP_BUFF_MAX_LEN], SendPkt[TCP_BUFF_MAX_LEN];
+char    IpAddr[20], DeviceSendFlag;
+char    Tcp_DataHeader[100];
+/* 20220223 FEP 재접속시 재처리하면 한도가 중복으로 잡히는것 처리 */
+int     ReFlag;
+
+FILE_BUFF_FORMAT    R_Buf[1], W_Fmt[1];
+
+struct  pollfd Poll[3];
+IMECO_TCP_HEAD      *R_Pkt = (IMECO_TCP_HEAD *)RecvPkt;         /* 20 byte */
+IMECO_TCP_MESSAGE   *S_Pkt = (IMECO_TCP_MESSAGE *)SendPkt;      /* 20 + 4280 */
+
+/*------------------------------------------------------------------------
+    Function Prototypes
+------------------------------------------------------------------------*/
+void    PA_2100_TS(void);
+void    Init_Parameters(void);
+void    Connection(void);
+void    Communicate_Routine(void);
+void    Fifo_Event_Rtn(void);
+int     Receive_Packet(void);
+int     Check_Header(void);
+void    Write_Response_Data(int);
+void    File_Event_Rtn(void);
+void    Send_Packet(void);
+void    Register_Signal(void);
+void    Catch_Signal(int);
+int     Chk_Risk_All(char *);
+void    Set_Band_Unit(int, double);
+int     Cross_Chk(int, int, int, int, double);
+void    Init_Proc(int argc, char *argv[]);
+void    Device_Close(void);
+
+/*----------------------------------------------------------------------*/
+int  main(int argc, char *argv[])
+/*----------------------------------------------------------------------*/
+{
+    Init_Proc(argc, argv);
+
+    PA_2100_TS();
+
+    TCP2_CON_STA = OFF;
+    close(Sockfd);
+    Exit_Process();
+}   /* End of main () */
+
+/*----------------------------------------------------------------------*/
+void    PA_2100_TS(void)
+/*----------------------------------------------------------------------*/
+{
+    int  i, rt;
+
+    Register_Signal();
+    Init_Parameters();
+
+#ifdef  HOLIDAY_CHECK
+    while (1) {
+        char     t_time[12], dt[20];
+        time_t   t = time(NULL);
+        struct  tm tm, *tp;
+
+        Get_Time(t_time);
+
+        memset(dt, 0, sizeof (dt));
+        sprintf(dt, "%.4s-%.2s-%.2s %.2s:%.2s:%.2s", DAEMON(D_K).date,
+                DAEMON(D_K).date+4, DAEMON(D_K).date+6, t_time, t_time+2, t_time+4);
+        strptime(dt, "%Y-%m-%d %H:%M:%S", &tm);
+        tp  = localtime(&t);
+
+        if  (tp->tm_wday == 0 || tp->tm_wday == 6) /* sun, sat */ {
+            SLog(USR_OK, "it's weekend. sleeping...[%d]", tp->tm_wday);
+            sleep(60);
+            continue;
+        }
+        else {
+            SLog(USR_OK, "it's not weekend. not sleeping...[%d]", tp->tm_wday);
+            break;
+        }
+    }
+#endif
+
+    PktType = T_LINK;
+    sleep(5);
+    Connection();
+    Send_Packet();
+
+    while (1) {
+        rt = Receive_Packet();
+
+        if (rt == FAIL)
+            continue;
+        else if (rt == NOTOK)
+            return;
+        else
+            break;
+    }
+
+    Communicate_Routine();
+    Device_Close();
+
+    return;
+}   /* End of PA_2100_TS () */
+
+/*************************************************************************
+    Function  : . Init_Parameters
+    Parameters IN : .
+    Parameters OUT : .
+    Return Code  : . void
+    Comment   : . initiate the global variables
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+void    Init_Parameters(void)
+/*----------------------------------------------------------------------*/
+{
+    int     rt;
+
+    /* 20220223 */
+    ReFlag = INT_SEQ;
+
+    SYS_NO = 0;
+    S_K = 0;
+    RetryCnt = 0;
+    DeviceSendFlag = OFF;
+
+    Poll[0].fd = START_FD;
+    Poll[0].events = POLLIN;
+    Poll[2].fd = INPUT_FD;
+    Poll[2].events = POLLIN;
+
+    if (TIME_OUT == 0)
+        TIME_OUT = TCP_TIME_OUT;
+
+    sprintf(ApType, "%-2.2s%-4.4s%c%c",
+            _Exe_Name, _Exe_Name+3, _Exe_Name[8], _Exe_Name[9] == 's' ? 'R' : 'S');
+    LtoU(ApType, strlen(ApType));
+
+#ifdef  SAM_USE
+    LegSize = TCP_DATA_HEAD_LEN + IFS(D_K,P_K,0);
+    DataSize = IFS(D_K,P_K,0);
+#else
+    LegSize = TCP_DATA_HEAD_LEN + IDS(D_K,P_K,0);
+    DataSize = IDS(D_K,P_K,0);
+#endif
+
+    /*  메리츠증권은 async로 사용하고 1건씩 처리한다.(복수건은 sync일때만)
+        MaxCnt = TCP_DATA_LEN / LegSize;
+
+        if (MaxCnt > 8)
+         MaxCnt = 8;
+    */
+    MaxCnt = 1;
+
+    /* 송신시 데이터헤더 70바이트를 SPACE 처리한다. 협의시 수정 가능 */
+    memset(Tcp_DataHeader, 0x20, sizeof(Tcp_DataHeader));
+
+    sprintf(IpAddr, "%d.%d.%d.%d", TCP2_IP1(D_K,P_K,S_K),
+            TCP2_IP2(D_K,P_K,S_K), TCP2_IP3(D_K,P_K,S_K), TCP2_IP4(D_K,P_K,S_K));
+    PortNo = TCP2_PORT_NO;
+
+    return;
+}   /* End of Init_Parameters () */
+
+/*************************************************************************
+    Function  : . Connection
+    Parameters IN : .
+    Parameters OUT : .
+    Return Code  : . void
+    Comment   : . connect to server
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+void    Connection(void)
+/*----------------------------------------------------------------------*/
+{
+    int  rt;
+
+    while (START_S != END) {
+        Sockfd = Socket();
+
+        if (Sockfd < 0) {
+            TCP2_CON_STA = OFF;
+            TCP2_LINE_ST = OFF;
+            Log(TCP_ERROR, "socket fail:Sockfd[%d] {%d:%s}", Sockfd, SYS_NO, SYS_STR);
+            sleep(5);
+            continue;
+        }
+
+        TCP2_LINE_ST = ON;
+        SLog(USR_OK, "socket created:Sockfd[%d]", Sockfd);
+        SLog(USR_OK, "connecting to %s:%d", IpAddr, PortNo);
+
+        rt = Connect(Sockfd, IpAddr, PortNo);
+
+        if (rt < 0) {
+            TCP2_CON_STA = OFF;
+            TCP2_LINE_ST = OFF;
+            TCP2_NET_STA(S_K) = OFF;
+            Log(TCP_ERROR, "connect fail {%d:%s}", SYS_NO, SYS_STR);
+            close(Sockfd);
+
+            if (PktType == T_LINK)
+                Exit_Process();
+        }
+
+        TCP2_NET_STA(S_K) = ON;
+        SLog(USR_OK, "connected to %s:%d", IpAddr, PortNo);
+        break;
+    }
+
+    Set_Socket_Linger(Sockfd);
+
+    return;
+}   /* End of Connection () */
+
+/*************************************************************************
+    Function  : . Communicate_Routine
+    Parameters IN : .
+    Parameters OUT : .
+    Return Code  : . void
+    Comment   : . communicate routine
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+void    Communicate_Routine(void)
+/*----------------------------------------------------------------------*/
+{
+    int  rt, i;
+    char t_time[12];
+
+    /*
+        Poll[0] : START_FD (signal)
+        Poll[1] : Sockfd   (소켓수신)
+        Poll[2] : INPUT_FD (메모리수신)
+    */
+    Poll[1].fd = Sockfd;
+    Poll[1].events = POLLIN;
+
+    while (START_S < JOB_END) {
+        Stat_Save();
+
+        if (DeviceSendFlag == ON)  // Logon & Heart_bit
+            PollCnt = 2;
+        else {  // Data
+            while (START_S < JOB_END) {
+                if (WR_CNT > RD_CNT) {
+                    if (MAX_MICHE < (WR_CNT - RD_CNT)) {
+                        SLog(SAM_ERROR, "01 Memory Not Read So Delay WR_CNT[%d] RD_CNT[%d]", WR_CNT, RD_CNT);
+                        sleep(60);
+                        Exit_Process();
+                    }
+                    File_Event_Rtn();
+                    continue;
+                }
+                else
+                    break;
+            }
+
+            PollCnt = 3;
+        }
+
+        rt = poll(Poll, PollCnt, TIME_OUT * 1000);
+
+        if (rt > 0) {
+            for (i = 0; i < PollCnt; i ++) {
+                if (Poll[i].revents & POLLIN) {
+                    Poll[i].revents = 0;
+                    break;
+                }
+
+                if (Poll[i].revents & POLLHUP) {
+                    if (i == SOCKET_EVENT) {
+                        Log(TCP_ERROR, "socket disconnected[%#06x]", Poll[i].revents);
+                        return;
+                    }
+
+                    SLog(SYS_ERROR, "poll hangup[%d,%d]", i, PollCnt);
+                    continue;
+                }
+
+            }
+        }
+        else {
+            if (rt == 0) {
+                if (PollCnt == 2) {
+                    Log(TCP_ERROR, "poll timeout(no response)");
+                    return;
+                }
+
+                PktType = T_POLL;
+                Send_Packet();
+                continue;
+            }
+            else {
+                if (SYS_NO == EINTR)
+                    SLog(SYS_OK, "poll interrupted {%d:%s}", SYS_NO, SYS_STR);
+                else
+                    SLog(SYS_ERROR, "poll failure {%d:%s}", SYS_NO, SYS_STR);
+
+                continue;
+            }
+        }
+
+        switch (i) {
+            case    FIFO_EVENT:
+                Fifo_Event_Rtn();
+                break;
+            case    SOCKET_EVENT:
+                rt = Receive_Packet();
+                break;
+            case    FILE_EVENT:
+                File_Event_Rtn();
+
+                while (START_S < JOB_END) {
+                    if (WR_CNT > RD_CNT) {
+                        if (MAX_MICHE < (WR_CNT - RD_CNT)) {
+                            SLog(SAM_ERROR, "02 Memory Not Read So Delay WR_CNT[%d] RD_CNT[%d]", WR_CNT, RD_CNT);
+                            sleep(60);
+                            Exit_Process();
+                    }
+                    File_Event_Rtn();
+                    continue;
+                }
+                else
+                    break;
+            }
+            break;
+            default:
+                SLog(USR_ERROR, "event case error[%d,%d]", i, PollCnt);
+                return;
+                break;
+        }
+    }
+
+    return;
+}   /* End of Communicate_Routine () */
+
+/*************************************************************************
+    Function  : . Receive_Packet
+    Parameters IN : .
+    Parameters OUT : .
+    Return Code  : . int (0:success, -1:failure, 1:interrupted)
+    Comment   : . receive Receive_Packet
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+int  Receive_Packet(void)
+/*----------------------------------------------------------------------*/
+{
+    int  rt;
+
+    memset(RecvPkt, 0, sizeof (RecvPkt));
+
+    rt = Select_Receive_Imeco(Sockfd, RecvPkt);
+
+    if (rt == OK)
+        return (NOTOK);
+    else if (rt == NOTOK) {
+        if (SYS_NO == EINTR)
+            return (FAIL);
+
+        return (NOTOK);
+    }
+
+    DeviceSendFlag = OFF;
+    SLog(TCP_OK, "TCP RD [%s](%d)<%d>", RecvPkt, strlen(RecvPkt), INT_SEQ);
+
+    rt = Check_Header();
+
+    /* 거부처리 */
+    if (rt != OK) {
+        /* process죽이자. */
+        /* L인데 오류코드가 있으면 주문거부이니 주문거부처리 하고 아니면 */
+        /* 그냥 죽기고 재기동하게 해서 운영자가 인지하도록 한다.(어떤 오류인지 확인해야하니) */
+        if ((memcmp(R_Pkt->MsgType, "L", 1) != 0)  &&
+                (memcmp(R_Pkt->ResponseCode, "0000", sizeof(R_Pkt->ResponseCode)) != 0)    ) {
+            /* 거부처리 하자 */
+            /* 수신받은 seq로 변경시키고 20+주문찾아서 1201로 송신 */
+            PROC(D_K,P_K).counter_seq = RD_CNT = INT_SEQ = AtoIf(R_Pkt->SeqNo, sizeof (R_Pkt->SeqNo)) -1;
+            /* 나머지는 오류 처리 */
+            Write_Response_Data(1);  // 2201
+            Device_Close();  // 소켓 종료
+        }
+        else
+            Device_Close();  // 소켓 종료
+
+        sleep(3);
+        return (NOTOK);
+    }
+
+    /* 상대방 seq 기록, Logon시에만 처리 */
+    if ( PktType != T_DATA                  &&
+            (memcmp(R_Pkt->MsgType, "L", 1) == 0) ) {
+        if ((INT_SEQ != AtoIf(R_Pkt->SeqNo, sizeof (R_Pkt->SeqNo))) &&
+                (PROC(D_K,P_K).counter_seq < AtoIf(R_Pkt->SeqNo, sizeof (R_Pkt->SeqNo))) ) {
+            PROC(D_K,P_K).counter_seq = AtoIf(R_Pkt->SeqNo, sizeof (R_Pkt->SeqNo));
+        }
+    }
+
+    return (OK);
+}   /* Receive_Packet () */
+
+/*************************************************************************
+    Function  : . Check_Header
+    Parameters IN : .
+    Parameters OUT : .
+    Return Code  : . int (0:success, -1:failure, 1:error write)
+    Comment   : . check validity of the received header
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+int  Check_Header(void)
+/*----------------------------------------------------------------------*/
+{
+    int     rt;
+    char    U_ErrMsg[1024];
+
+    memset(U_ErrMsg, 0, sizeof(U_ErrMsg));
+
+    /* MsgType (운영코드)   */
+    if ( (memcmp(R_Pkt->MsgType, "L", 1) != 0) &&  // L:LogOn & Data오류시
+            (memcmp(R_Pkt->MsgType, "H", 1) != 0)     ) {
+        SLog(USR_ERROR, "MsgType The value is invalid [%1.1s:%s]", R_Pkt->MsgType, R_Pkt);
+        return (NOTOK);
+    }
+
+    /* Length (사이즈), Response of LogOn & HeartBit & Data Error Response */
+    rt = AtoIf(R_Pkt->Length, sizeof(R_Pkt->Length)) + IMECO_HEAD_LEN;
+    if (strlen(RecvPkt) < IMECO_HEAD_LEN || strlen(RecvPkt) != rt) {
+        SLog(USR_ERROR, "invalid length[%d:%d,%d]", strlen(RecvPkt), IMECO_HEAD_LEN, rt);
+        return (NOTOK);
+    }
+
+    /* ResponseCode (응답코드) */
+    /*
+        < Session >
+        E001    Invalid Interface Sequence
+        E002    Invalid ID or Password
+        E003    Unregistered MAC Address
+        E004    Message Size Error
+        E005    Send ‘H’ or ‘D’ Message Type without ‘L’ Message Type
+        E006    Message Type Error
+        < Order Validation >
+        E101    Invalid Order ID Range
+        E102    Duplicate Order ID
+        E103    Invalid Original Order ID Range
+        E104    Not Found Quantity of Original Order ID
+        E105    Not Amend Same Order Price
+        E106    Invalid Contract (ISIN) Code
+        E107    Ask/Bid Type Code Error
+        E108    Order Kind Error (New/Amend/Cancel Order)
+        E109    Account Information Error
+        E110    Invalid Quantity Unit
+        E111    Order Quantity Limit Exceeded
+        E112    Invalid Price Unit
+        E113    Order Type Error
+        E114    IOC/FOK Order Condition Error
+        E115    Upper/Lower Limit Price Error
+        E116    Conditional Limit Order Error (same to the upper/lower limit price)
+        E117    Institutional Trading Reject (Circuit Breaker, Market Stop, etc.)
+        E118    Order Rejection due to expiry
+        E119    KRX Connection Lost due to Hardware/Network Error
+        E120    Additional Margin Needed
+        E121    End of the Market
+        E122    Delta Position Limit Exceeded
+        E123    Prevention of Order Errors Limit Exceeded
+        E125    호가접수중지
+        E126    거래자ID오류
+        E127    MOC전문항목 오류
+        E999    Unknown Error
+    */
+    if (memcmp(R_Pkt->ResponseCode, "0000", sizeof(R_Pkt->ResponseCode)) != 0) {
+        /* KRX RESPONSE ERROR */
+        if (memcmp(R_Pkt->ResponseCode, "0001", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s", "User validation(ID, Password) error");
+        else if (memcmp(R_Pkt->ResponseCode, "0002", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s", "Session message sequence error");
+        else if (memcmp(R_Pkt->ResponseCode, "0003", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s", "Member ID(header) error");
+        else if (memcmp(R_Pkt->ResponseCode, "0004", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s", "Data sequence number error");
+        else if (memcmp(R_Pkt->ResponseCode, "0005", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s", "Data count error");
+        else if (memcmp(R_Pkt->ResponseCode, "0008", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s", "Session message type error. If undefined type is set. e.g. Login(SCHLIQ00000)");
+        else if (memcmp(R_Pkt->ResponseCode, "0010", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s", "Message length error");
+        else if (memcmp(R_Pkt->ResponseCode, "0011", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s", "Encryption or decryption error");
+        else if (memcmp(R_Pkt->ResponseCode, "0012", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s", "Null data in message body");
+        else if (memcmp(R_Pkt->ResponseCode, "0013", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s", "Order is not allowed. new(existing 0103)");
+        else if (memcmp(R_Pkt->ResponseCode, "0014", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s", "Incorrect message length. Available from 2013.06.27");
+        else if (memcmp(R_Pkt->ResponseCode, "0018", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s", "Incorrect transaction code on body");
+        else if (memcmp(R_Pkt->ResponseCode, "0019", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s", "After final deadline");
+        else if (memcmp(R_Pkt->ResponseCode, "0020", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s", "Over TPS counts");
+        else if (memcmp(R_Pkt->ResponseCode, "0101", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s", "Before trading hours. Can send orders after receiving a response to business-opening");
+        else if (memcmp(R_Pkt->ResponseCode, "0102", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s", "After trading hours. Denial message is sent via trade session");
+
+        /* Session */
+        else if (memcmp(R_Pkt->ResponseCode, "E001", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s", "Invalid Interface Sequence");
+        else if (memcmp(R_Pkt->ResponseCode, "E002", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s",  "Invalid ID or Password");
+        else if (memcmp(R_Pkt->ResponseCode, "E003", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s",  "Unregistered MAC Address");
+        else if (memcmp(R_Pkt->ResponseCode, "E004", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s",  "Message Size Error");
+        else if (memcmp(R_Pkt->ResponseCode, "E005", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s",  "Send ‘H’ or ‘D’ Message Type without ‘L’ Message Type");
+        else if (memcmp(R_Pkt->ResponseCode, "E006", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s",  "Message Type Error");
+
+        /* Order Validation */
+        else if (memcmp(R_Pkt->ResponseCode, "E101", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s",  "Invalid Order ID Range");
+        else if (memcmp(R_Pkt->ResponseCode, "E102", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s",  "Duplicate Order ID");
+        else if (memcmp(R_Pkt->ResponseCode, "E103", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s",  "Invalid Original Order ID Range");
+        else if (memcmp(R_Pkt->ResponseCode, "E104", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s",  "Not Found Quantity of Original Order ID");
+        else if (memcmp(R_Pkt->ResponseCode, "E105", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s",  "Not Amend Same Order Price");
+        else if (memcmp(R_Pkt->ResponseCode, "E106", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s",  "Invalid Contract(ISIN) Code");
+        else if (memcmp(R_Pkt->ResponseCode, "E107", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s",  "Ask/Bid Type Code Error");
+        else if (memcmp(R_Pkt->ResponseCode, "E108", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s",  "Order Kind Error(New/Amend/Cancel Order)");
+        else if (memcmp(R_Pkt->ResponseCode, "E109", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s",  "Account Information Error");
+        else if (memcmp(R_Pkt->ResponseCode, "E110", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s",  "Invalid Quantity Unit");
+        else if (memcmp(R_Pkt->ResponseCode, "E111", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s",  "Order Quantity Limit Exceeded");
+        else if (memcmp(R_Pkt->ResponseCode, "E112", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s",  "Invalid Price Unit");
+        else if (memcmp(R_Pkt->ResponseCode, "E113", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s",  "Order Type Error");
+        else if (memcmp(R_Pkt->ResponseCode, "E114", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s",  "IOC/FOK Order Condition Error");
+        else if (memcmp(R_Pkt->ResponseCode, "E115", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s",  "Upper/Lower Limit Price Error");
+        else if (memcmp(R_Pkt->ResponseCode, "E116", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s",  "Conditional Limit Order Error(same to the upper/lower limit price)");
+        else if (memcmp(R_Pkt->ResponseCode, "E117", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s",  "Institutional Trading Reject(Circuit Breaker, Market Stop, etc.)");
+        else if (memcmp(R_Pkt->ResponseCode, "E118", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s",  "Order Rejection due to expiry");
+        else if (memcmp(R_Pkt->ResponseCode, "E119", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s",  "KRX Connection Lost due to Hardware/Network Error");
+        else if (memcmp(R_Pkt->ResponseCode, "E120", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s",  "Additional Margin Needed");
+        else if (memcmp(R_Pkt->ResponseCode, "E121", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s",  "End of the Market");
+        else if (memcmp(R_Pkt->ResponseCode, "E122", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s",  "Delta Position Limit Exceeded");
+        else if (memcmp(R_Pkt->ResponseCode, "E123", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s",  "Prevention of Order Errors Limit Exceeded");
+        else if (memcmp(R_Pkt->ResponseCode, "E125", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s",  "호가접수중지");
+        else if (memcmp(R_Pkt->ResponseCode, "E126", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s",  "거래자ID오류");
+        else if (memcmp(R_Pkt->ResponseCode, "E127", sizeof(R_Pkt->ResponseCode)) == 0)
+            sprintf(U_ErrMsg, "%s",  "MOC전문항목 오류");
+        else
+            sprintf(U_ErrMsg, "%s",  "Unknown Error");
+
+        SLog(USR_ERROR, "LogOn Error ResponseCode[%.4s][%s]", R_Pkt->ResponseCode, U_ErrMsg);
+        return (NOTOK);
+    }
+
+    return (OK);
+}   /* End of Check_Header () */
+
+/*************************************************************************
+    Function        : . Write_Respose_Data
+    Parameters IN   : . d_cnt   : write count
+    Parameters OUT  : .
+    Return Code     : . void
+    Comment         : . 주문거부에 대한 값 돌려주기, file write
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+void    Write_Response_Data(int d_cnt)
+/*----------------------------------------------------------------------*/
+{
+    int     i, rt, cnt;
+    char    resp_time[12];
+
+    if (d_cnt <= 0)
+        return;
+
+    memset(R_Buf, 0, sizeof (FILE_BUFF_FORMAT));
+
+    /* 리턴받은 Error Data를 찾는다. 위에서 Seq는 처리해다.*/
+    /* 오류코드만 받기때문에 주문전문을 알수없다. 그래서 seq로 찾아야 한다. */
+    cnt = DSHM_R(PS_R_1, (void *)R_Buf, 1);
+    if (cnt < 0 || cnt > 1) {
+        /* Seq 원복
+        RD_CNT  = back_rd_cnt;
+        INT_SEQ = back_int_seq;
+        */
+
+        SLog(SAM_ERROR, "DSHM_R(PS_R_1)[%s] 거부처리 못했음", IDN(D_K,P_K,0));
+        return;  // 돌아가서 정리하고 죽는다.
+    }
+    else if (cnt == 0)
+        return;  // 돌아가서 정리하고 죽는다.
+
+    /* 주문거부는 수신받은 전문 "4+11+ 55(찾아서) + 주문전문"을 전달한다. */
+    /* KRX Header 82는 제외 */
+    /* Async로 1개만 처리한다 */
+    for (i = 0; i < d_cnt; i ++) {
+        /* Space로 초기화 */
+        memset(W_Fmt, 0x20, sizeof (FILE_BUFF_FORMAT) * 1);
+
+        /* 1. Seq (8) */
+        memcpy(W_Fmt[i].Seq,           &RecvPkt[4],            sizeof (W_Fmt[0].Seq));  // Data의 Seq
+        /* 2. If_Seq (8) */
+        memcpy(W_Fmt[i].If_Seq,        R_Pkt->SeqNo,           sizeof (W_Fmt[0].If_Seq));  // 헤더의 Seq
+        /* 3. ApType (8) */
+        memcpy(W_Fmt[i].ApType,        R_Buf[i].ApType,        sizeof (W_Fmt[0].ApType));
+        /* 4. ResponseCode (4), 전달은 정상으로 한다.(0000), 오류코드는 위에 */
+        memcpy(W_Fmt[i].ResponseCode,  RES_NORMAL,             strlen(RES_NORMAL));
+        /* 5. set KRX response time   (10)
+        sprintf (resp_time, "%010.06f", RespMsec);
+        memcpy (W_Fmt[i].RecvTime1, resp_time, sizeof (W_Fmt[i].RecvTime1));
+        */
+        /* 6. RecvTime2 (12) */
+        memcpy(W_Fmt[i].RecvTime2,     R_Buf[i].RecvTime2,     sizeof (W_Fmt[0].RecvTime2));
+        /* 7. DataHeader(20), Async라.. 알수없다 */
+        memcpy(W_Fmt[i].DataHeader,    R_Buf[i].DataHeader,    sizeof (W_Fmt[0].DataHeader));
+        /* 8. DATA 조합(4+11 +300) */
+
+        /* Write Format : 20 + 주문전문 */
+        /* IMECO Heaer (20) */
+        memcpy(W_Fmt[i].Data,          RecvPkt,                IMECO_HEAD_LEN);  // 20
+        /* Read Order Data (400 include tmp) */
+        memcpy(&W_Fmt[i].Data[IMECO_HEAD_LEN], R_Buf[i].Data,  150);  // 200중 150(0+주문번문)만 Copy
+        W_Fmt[i].LineFeed[0] = '\n';
+
+    }
+
+    rt = F_W(TS_W1_1, (void *)&W_Fmt, 1);  // OFN1 = pa_1201_mp
+    if (rt != 1) {
+        /* Seq 원복
+        RD_CNT  = back_rd_cnt;
+        INT_SEQ = back_int_seq;
+        */
+
+        SLog(SAM_FATAL, "file write fail[%s:%d]", OFN(D_K,P_K,0), rt);
+        return;
+    }
+
+    SLog(USR_OK, "Write!! Error Response Data[%s:%d:%d]", OFN(D_K,P_K,0), OFW(D_K,P_K,0,0), i);
+
+    return;
+}   /* End of Write_Response_Data ()    */
+
+/*************************************************************************
+    Function  : . File_Event_Rtn
+    Parameters IN : .
+    Parameters OUT : .
+    Return Code  : . void
+    Comment   : . read file and send data
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+void    File_Event_Rtn(void)
+/*----------------------------------------------------------------------*/
+{
+    int  rt, ow_seq;
+    char err_cd[10], tmp[128], w_buf[FILE_BUF_LEN];
+
+    memset(R_Buf, 0, sizeof (FILE_BUFF_FORMAT));
+
+#ifdef  SAM_USE
+    DataCnt = F_R(P_TYPE,      (void *)R_Buf, MaxCnt);
+#else
+    DataCnt = DSHM_R(P_TYPE,   (void *)R_Buf, MaxCnt);
+#endif
+
+    if (DataCnt < 0 || DataCnt > MaxCnt) {
+        SLog(SAM_FATAL, "cannot read file[%s] MaxCnt[%d] DataCnt[%d]", IN_NAME, MaxCnt, DataCnt);
+        sleep(1);
+        TCP2_CON_STA = OFF;
+        close(Sockfd);
+        Exit_Process();
+    }
+    else if (DataCnt == 0) {
+        SLog(USR_OK, "DataCnt = 0");
+        rt = read(INPUT_FD, tmp, sizeof(tmp));
+        return;
+    }
+
+    /* SKIP CHECK
+        if ( memcmp (&R_Buf[0].DataHeader[10],   "REJC", 4) == 0 ) {
+            Dshm_Add_Count (PS_R_1, 1);
+            return;        // SKIP
+        }
+    */
+
+    /* 비상정지 체크 */
+    rt = 0;
+    if (Shm_Risk[0].system_down || Shm_Risk[2].system_down)  // 전체시스템[0] 또는 금융파생[2] 송신중단
+        rt = -9999;
+    else
+        rt = Chk_Risk_All(R_Buf[0].Data);
+
+    if (rt < 0) {
+        // BUFF_RW_HEAD      : file buffer header (50 + 20 = 70 bytes)
+        // SEARCH_HEADER_LEN : sizeof (SEARCH_HEADER)) = 50 bytes
+        memset(w_buf, 0x20, sizeof (w_buf));
+        memcpy(w_buf, R_Buf[0].Seq, sizeof(BUFF_RW_HEAD));
+
+        memset(err_cd, 0, sizeof(err_cd));
+        if (abs(rt) > 9999)
+            sprintf(err_cd, "%04d", abs(rt)/10);
+        else
+            sprintf(err_cd, "%04d", abs(rt));
+
+        SLog(USR_WARN, "정합성오류 err_cd[%4.4s]", err_cd);
+        // 내려줄 Format 결정 필요
+        // 2025, 커스터마이징 필요, 회원처리호가 & 체결 전달
+        /* 0+112 */
+        memcpy(&w_buf[sizeof(BUFF_RW_HEAD)],       "0112DREJE00000000001",     20);  // IMECO헤더
+        /* Order Data */
+        memcpy(&w_buf[sizeof(BUFF_RW_HEAD)+20],    R_Buf[0].Data,  DATA_SIZE-20);  // DATA_SIZE (200)
+        w_buf[sizeof (BUFF_RW_HEAD)+OFS(D_K,P_K,0)] = '\n';
+
+        /* 오류전달 */
+        rt = F_W(TS_W1_1, w_buf, 1);
+        if (rt != 1) {
+            SLog(SAM_FATAL, "file write[%s] rt[%d]", w_buf, rt);
+            return ;
+        }
+        SLog(USR_OK, "File write OK[%s][%d]", w_buf, strlen(w_buf));
+
+        SLog(USR_OK, "Err F_W Done.");
+        Dshm_Add_Count(TS_W1_1, 1);
+
+        /* TimeOut을 해결하기위한 Poll 처리 */
+        if (WR_CNT <= RD_CNT) {
+            PktType = T_POLL;
+            Send_Packet();
+        }
+    }
+    else {
+        PktType = T_DATA;
+        Send_Packet();
+        Dshm_Add_Count(PS_R_1, 1);
+    }
+
+    while (1) {
+        rt = read(INPUT_FD, tmp, sizeof(tmp));
+#if defined __linux
+        if (rt == 0 || errno == EAGAIN)
+#else
+            if (rt == 0)
+#endif
+            break;
+    }
+
+    return;
+}   /* File_Event_Rtn () */
+
+/*************************************************************************
+    Function  : . Send_Packet
+    Parameters IN : .
+    Parameters OUT : .
+    Return Code  : . int (0:success, -1:failure)
+    Comment   : . send packet
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+void    Send_Packet(void)
+/*----------------------------------------------------------------------*/
+{
+    int  i, rt, next;
+    char t_time[12];
+
+    memset(SendPkt, 0, sizeof (SendPkt));
+
+    if ( PktType == T_LINK ) {  // LogOn
+        memset(SendPkt, 0x20, 20+60);
+
+        /* ************************************************************ */
+        /* Header  Part Setting                                         */
+        /* ************************************************************ */
+        /* 1. BodyLength, Header사이즈를 제외한 Body부 사이즈만 세팅 */
+        memcpy(S_Pkt->Head.Length, "0060",         sizeof (S_Pkt->Head.Length));
+        /* 2. MsgType */
+        memcpy(S_Pkt->Head.MsgType, "L",           sizeof (S_Pkt->Head.MsgType));
+        /* 3. ResponseCode */
+        memcpy(S_Pkt->Head.ResponseCode, "0000",   sizeof (S_Pkt->Head.ResponseCode));
+        /* 4. SeqNo */
+        ItoAf(INT_SEQ, S_Pkt->Head.SeqNo,          sizeof (S_Pkt->Head.SeqNo));
+        /* 5. MsgCount */
+        memcpy(S_Pkt->Head.MsgCount, "0",          sizeof (S_Pkt->Head.MsgCount));
+
+        /* ************************************************************ */
+        /* Data Part Setting                                            */
+        /* ************************************************************ */
+        /* 1. User ID */
+        memcpy(S_Pkt->Data,            LOGON_ID(D_K,P_K),  20);
+        /* 2. PassWord */
+        memcpy(&S_Pkt->Data[20],       LOGON_PW(D_K,P_K),  20);
+        /* 3. IP, 서버IP 하드코딩 */
+        memcpy(&S_Pkt->Data[40],       "123.123.123.123",  20);
+    }
+    else if ( PktType == T_POLL ) {  // Heartbeat
+        memset(SendPkt, 0x20, 20);
+
+        /* ************************************************************ */
+        /* Header  Part Setting                                         */
+        /* ************************************************************ */
+        /* 1. BodyLength, Header사이즈를 제외한 Body부 사이즈만 세팅 */
+        memcpy(S_Pkt->Head.Length, "0000",         sizeof (S_Pkt->Head.Length));
+        /* 2. MsgType */
+        memcpy(S_Pkt->Head.MsgType, "H",           sizeof (S_Pkt->Head.MsgType));
+        /* 3. ResponseCode */
+        memcpy(S_Pkt->Head.ResponseCode, "0000",   sizeof (S_Pkt->Head.ResponseCode));
+        /* 4. SeqNo */
+        memcpy(S_Pkt->Head.SeqNo,  "0000000000",   sizeof (S_Pkt->Head.SeqNo));
+        /* 5. MsgCount */
+        memcpy(S_Pkt->Head.MsgCount, "0",          sizeof (S_Pkt->Head.MsgCount));
+    }
+    else if ( PktType == T_DATA ) {  // 신규/정정/취소
+        memset(SendPkt, 0x20, 20+112);
+
+        /* ************************************************************ */
+        /* Header  Part Setting                                         */
+        /* ************************************************************ */
+        /* 1. BodyLength, Header사이즈를 제외한 Body부 사이즈만 세팅 */
+        memcpy(S_Pkt->Head.Length, "0112",         sizeof (S_Pkt->Head.Length));
+        /* 2. MsgType */
+        memcpy(S_Pkt->Head.MsgType, "D",           sizeof (S_Pkt->Head.MsgType));
+        /* 3. ResponseCode */
+        memcpy(S_Pkt->Head.ResponseCode, "0000",   sizeof (S_Pkt->Head.ResponseCode));
+        /* 4. SeqNo */
+        ItoAf(INT_SEQ, S_Pkt->Head.SeqNo,          sizeof (S_Pkt->Head.SeqNo));
+        /* 5. MsgCount */
+        memcpy(S_Pkt->Head.MsgCount, "1",          sizeof (S_Pkt->Head.MsgCount));
+
+        /* ************************************************************ */
+        /* Data Part Setting                                            */
+        /* ************************************************************ */
+        memcpy(S_Pkt->Data,        R_Buf[0].Data, DataSize);  // DataSize : 112
+    }
+
+    rt = Select_Send(Sockfd, SendPkt, strlen(SendPkt));
+    if (rt != OK) {
+        TCP2_CON_STA = OFF;
+        close(Sockfd);
+        Exit_Process();
+    }
+
+    SLog(TCP_OK, "TCP SD [%s](%d)<%d>", SendPkt, strlen(SendPkt), INT_SEQ);
+
+    if (PktType == T_DATA) {
+        //      Set_TR_Time ();
+        INT_SEQ += DataCnt;
+    }
+    else
+        DeviceSendFlag = ON;
+
+    return;
+}   /* Send_Packet () */
+
+/*************************************************************************
+    Function  : . Register_Signal
+    Parameters IN : .
+    Parameters OUT : .
+    Return Code  : . void
+    Comment   : . register signal
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+void    Register_Signal(void)
+/*----------------------------------------------------------------------*/
+{
+    struct sigaction act;
+
+    sigemptyset(&act.sa_mask);
+    act.sa_flags = 0;
+    act.sa_handler = Catch_Signal;
+
+    if (sigaction(SIGPIPE, &act, NULL) < 0) {
+        SLog(SYS_ERROR, "sigaction(SIGPIPE) {%d:%s}", SYS_NO, SYS_STR);
+        return;
+    }
+
+    if (sigaction(SIGTERM, &act, NULL) < 0) {
+        SLog(SYS_ERROR, "sigaction(SIGTERM) {%d:%s}", SYS_NO, SYS_STR);
+        return;
+    }
+
+    return;
+}   /* End of Register_Signal () */
+
+/*************************************************************************
+    Function  : . Catch_Signal
+    Parameters IN : . signo : signal number
+    Parameters OUT : .
+    Return Code  : . void
+    Comment   : . catch signal
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+void    Catch_Signal(int signo)
+/*----------------------------------------------------------------------*/
+{
+    _in_signal_handler = 1;
+    SIG_WRITE_MSG("[SIGNAL] pa_2100_ts caught signal\n");
+
+    TCP2_CON_STA = OFF;
+    close(Sockfd);
+    Exit_Process();
+}   /* End of Catch_Signal () */
+
+/*************************************************************************
+    Function        : . Chk_Risk_All
+    Parameters IN   : . p_buf   : received data
+    Parameters OUT  : .
+    Return Code     : . int
+    Comment         : . set sise data SHM (±aº≫/E￡°¡/A¼°a)
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+int     Chk_Risk_All(char *p_buf)
+/*----------------------------------------------------------------------*/
+{
+    return 0;
+}   /* End of Chk_Risk () */
+
+/*************************************************************************
+    Function        : . Set ksp,ksd spread band unit
+                      . 주식선물의 스프레드만 처리한다.
+    Parameters IN   : . market_gbn  :  0 . 코스피 호가단위
+                                       1 . 코스닥 호가단위
+                        basic_asset_price  : 기초자산전일종가
+    Parameters OUT  : .
+    Return Code     : .
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+void     Set_Band_Unit(int market_gbn, double basic_asset_price)
+/*----------------------------------------------------------------------*/
+{
+
+    return;
+}
+
+/*************************************************************************
+    Function        : . Cross_Chk, Only ETN
+    Parameters IN   : . 1. acc_seq
+                      . 2. mk_gbn
+                      . 3. item_seq
+                      . 4. mm_flag
+                      . 5. od_price
+    Parameters OUT  : .  0 : OK
+                        -1 : ERROR
+    Return Code     : . int (0:success, 1:timeout, -1:failure)
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+int     Cross_Chk(int acc_seq, int mk_gbn, int item_seq, int mm_flag, double od_price)
+/*----------------------------------------------------------------------*/
+{
+
+    return 0;
+}   /* End of Cross_Chk ()  */
+
+/*************************************************************************
+    Function        : .  Device_Close
+    Parameters IN   : .
+    Parameters OUT  : .
+    Return Code     : . void
+    Comment         : . Svm Line Status Set
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+void    Device_Close(void)
+/*----------------------------------------------------------------------*/
+{
+    close(Sockfd);
+    SLog(TCP_OK, "TCP device close");
+
+    TCP2_CON_STA = OFF;
+    TCP2_LINE_ST = OFF;
+    TCP2_NET_STA(S_K) = OFF;
+
+    return;
+}   /* End of Device_Close ()   */
+
+/*************************************************************************
+    End of Program (pa_2100_ts.c)
+*************************************************************************/

@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>FEP Process Relationship Map (Status=R)</title>
+<script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; background: #1a1a2e; color: #eee; }
+#header { padding: 10px 20px; background: #16213e; display: flex; justify-content: space-between; align-items: center; }
+#header h1 { font-size: 16px; color: #e94560; }
+#header .info { font-size: 12px; color: #aaa; }
+#controls { padding: 8px 20px; background: #0f3460; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+#controls label { font-size: 12px; color: #ccc; }
+#controls button { padding: 4px 12px; border: 1px solid #e94560; background: transparent; color: #e94560; border-radius: 4px; cursor: pointer; font-size: 12px; }
+#controls button:hover { background: #e94560; color: #fff; }
+#controls button.active { background: #e94560; color: #fff; }
+#network { width: 100%; height: calc(100vh - 120px); }
+#legend { position: absolute; bottom: 10px; left: 10px; background: rgba(22,33,62,0.95); border: 1px solid #333; border-radius: 6px; padding: 10px; font-size: 11px; z-index: 10; }
+#legend .row { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
+#legend .dot { width: 14px; height: 14px; border-radius: 3px; display: inline-block; }
+#detail { position: absolute; top: 80px; right: 10px; width: 300px; background: rgba(22,33,62,0.95); border: 1px solid #333; border-radius: 6px; padding: 12px; font-size: 12px; z-index: 10; display: none; max-height: 60vh; overflow-y: auto; }
+#detail h3 { color: #e94560; margin-bottom: 8px; }
+#detail .field { margin: 4px 0; }
+#detail .label { color: #888; }
+#detail .value { color: #eee; }
+#detail .close { position: absolute; top: 6px; right: 10px; cursor: pointer; color: #888; }
+</style>
+</head>
+<body>
+<div id="header">
+    <h1>FEP Process Relationship Map</h1>
+    <div class="info">proc.ini Status=R | 56 processes | Daemon A (pa_daemon_mp)</div>
+</div>
+<div id="controls">
+    <label>Filter:</label>
+    <button class="active" data-group="all">All (56)</button>
+    <button data-group="bond">Bond Order (1xxx)</button>
+    <button data-group="deriv">Derivatives (2xxx)</button>
+    <button data-group="fx">FX (4xxx)</button>
+    <button data-group="strategy">Strategy (5xxx)</button>
+    <button data-group="sise">Market Data (7xxx)</button>
+    <button data-group="client">Client (8xxx)</button>
+    <button data-group="mgmt">Mgmt (9xxx/1001/2001)</button>
+    <label style="margin-left:20px;">Edge:</label>
+    <button class="active" data-edge="file">FILE/FIFO</button>
+    <button data-edge="shm">SHM</button>
+    <button data-edge="all-edge">All</button>
+    <label style="margin-left:20px;">Layout:</label>
+    <button id="btn-physics">Physics On/Off</button>
+    <button id="btn-reset">Reset View</button>
+</div>
+<div id="network"></div>
+<div id="legend">
+    <div style="font-weight:bold; margin-bottom:6px;">Node Type</div>
+    <div class="row"><div class="dot" style="background:#e94560"></div> TS (TCP Send / Order TX)</div>
+    <div class="row"><div class="dot" style="background:#0ea5e9"></div> TR (TCP Recv / Response RX)</div>
+    <div class="row"><div class="dot" style="background:#22c55e"></div> MP (Manager Process)</div>
+    <div class="row"><div class="dot" style="background:#f59e0b"></div> UR (UDP Recv / Market Data)</div>
+    <div class="row"><div class="dot" style="background:#a855f7"></div> DD (Data Distribution)</div>
+    <div class="row"><div class="dot" style="background:#06b6d4"></div> QR/QS (Query Req/Svc)</div>
+    <div style="font-weight:bold; margin-top:8px; margin-bottom:6px;">Edge Type</div>
+    <div class="row"><div style="width:20px;height:2px;background:#e94560"></div> FILE (write→read)</div>
+    <div class="row"><div style="width:20px;height:2px;background:#22c55e"></div> SHM (strategy notify)</div>
+    <div class="row"><div style="width:20px;height:2px;background:#0ea5e9;border-top:1px dashed #0ea5e9"></div> TCP2 (external)</div>
+    <div class="row"><div style="width:20px;height:2px;background:#f59e0b;border-top:1px dashed #f59e0b"></div> UDP (multicast)</div>
+</div>
+<div id="detail">
+    <span class="close" onclick="document.getElementById('detail').style.display='none'">&times;</span>
+    <h3 id="det-title"></h3>
+    <div id="det-body"></div>
+</div>
+
+<script>
+// ===== Process Data (Status=R only, from proc.ini) =====
+const PROCS = [
+    { id:"pa_1101_ts", num:1, type:"TS2", comment:"채권주문송신(시장FEP)01", group:"bond",
+      in_shm:["pa_1101_ts"], in_fifo:["pa_1101_ts1"],
+      out_file:["pa_1201_mp","pa_5201_qs"], tcp2:"0,37221" },
+    { id:"pa_1201_tr", num:2, type:"TR2", comment:"채권응답체결수신(시장FEP)01", group:"bond",
+      out_file:["pa_1201_mp","pa_1401_mp","pa_5201_qs","pa_5401_qs"], tcp2:"0,57221" },
+    { id:"pa_1211_tr", num:3, type:"TR2", comment:"채권응답체결DP", group:"bond",
+      out_file:["pa_8111_ts"], tcp2:"0,61726" },
+    { id:"pa_1201_mp", num:4, type:"MP", comment:"채권응답처리", group:"bond",
+      in_file:["pa_1201_mp"], in_fifo:["pa_1201_mp1"],
+      out_file:["pa_8101_ts"], out_shm:["pa_50101mp~pa_50410mp"] },
+    { id:"pa_1291_mp", num:5, type:"MP", comment:"채권응답미체결", group:"bond",
+      in_file:["pa_1201_mp"], in_fifo:["pa_1201_mp2"] },
+    { id:"pa_1401_mp", num:6, type:"MP", comment:"채권주문체결처리", group:"bond",
+      in_file:["pa_1401_mp"], in_fifo:["pa_1401_mp1"],
+      out_file:["pa_8101_ts"], out_shm:["pa_50101mp~pa_50410mp"] },
+    { id:"pa_1491_mp", num:7, type:"MP", comment:"채권체결미니원장", group:"bond",
+      in_file:["pa_1401_mp"], in_fifo:["pa_1401_mp2"],
+      out_file:["pa_9001_mp","pa_1492_mp"] },
+    { id:"pa_1492_mp", num:8, type:"MP", comment:"채권체결재처리", group:"bond",
+      in_file:["pa_1492_mp"], in_fifo:["pa_1492_mp1"],
+      out_file:["pa_9001_mp"] },
+    { id:"pa_2101_ts", num:9, type:"TS2", comment:"파생주문송신(FEP)01", group:"deriv",
+      in_shm:["pa_2101_ts"], in_fifo:["pa_2101_ts1"],
+      out_file:["pa_2201_mp","pa_5211_qs"], tcp2:"0,13170" },
+    { id:"pa_2201_tr", num:10, type:"TR2", comment:"파생응답체결거부수신(FEP)01", group:"deriv",
+      out_file:["pa_2201_mp","pa_2401_mp","pa_5211_qs","pa_5411_qs"], tcp2:"0,13171" },
+    { id:"pa_2201_mp", num:11, type:"MP", comment:"파생응답처리", group:"deriv",
+      in_file:["pa_2201_mp"], in_fifo:["pa_2201_mp1"],
+      out_file:["pa_8101_ts"], out_shm:["pa_50101mp~pa_50410mp"] },
+    { id:"pa_2291_mp", num:12, type:"MP", comment:"파생응답미체결", group:"deriv",
+      in_file:["pa_2201_mp"], in_fifo:["pa_2201_mp2"] },
+    { id:"pa_2401_mp", num:13, type:"MP", comment:"파생주문체결처리", group:"deriv",
+      in_file:["pa_2401_mp"], in_fifo:["pa_2401_mp1"],
+      out_file:["pa_8101_ts"], out_shm:["pa_50101mp~pa_50410mp"] },
+    { id:"pa_2491_mp", num:14, type:"MP", comment:"파생체결미체결처리", group:"deriv",
+      in_file:["pa_2401_mp"], in_fifo:["pa_2401_mp2"],
+      out_file:["pa_9001_mp","pa_2492_mp"] },
+    { id:"pa_2492_mp", num:15, type:"MP", comment:"파생체결재처리", group:"deriv",
+      in_file:["pa_2492_mp"], in_fifo:["pa_2492_mp1"],
+      out_file:["pa_9001_mp"] },
+    { id:"pa_1601_tr", num:16, type:"TR2", comment:"KTS_Market_Info", group:"bond",
+      out_file:["pa_1601_mp"], tcp2:"0,61725" },
+    { id:"pa_2601_mp", num:19, type:"MP", comment:"DEV_공개장_채널", group:"deriv",
+      in_file:["pa_2601_mp"], in_fifo:["pa_2601_mp1"] },
+    { id:"pa_7102_ur", num:20, type:"UR", comment:"채권KTS_시세수신", group:"sise",
+      out_file:["pa_7102_dd"], udp:"0,10402" },
+    { id:"pa_7102_dd", num:21, type:"DD", comment:"채권KTS_시세Load", group:"sise",
+      in_file:["pa_7102_dd"], in_fifo:["pa_7102_dd1"] },
+    { id:"pa_7103_ur", num:22, type:"UR", comment:"채권KTS_M4수신", group:"sise",
+      out_file:["pa_7103_dd"], udp:"0,10406" },
+    { id:"pa_7103_dd", num:23, type:"DD", comment:"채권KTS_M4Load", group:"sise",
+      in_file:["pa_7103_dd"], in_fifo:["pa_7103_dd1"] },
+    { id:"pa_7181_dd", num:24, type:"DD", comment:"채권RDS01_ShmLoad", group:"sise",
+      in_file:["pa_7181_dd"], in_fifo:["pa_7181_dd1"] },
+    { id:"pa_7182_dd", num:25, type:"DD", comment:"채권RDS02_ShmLoad", group:"sise",
+      in_file:["pa_7182_dd"], in_fifo:["pa_7182_dd1"] },
+    { id:"pa_7201_dd", num:28, type:"DD", comment:"금융상품선물A0_Load", group:"sise",
+      in_file:["pa_7201_dd"], in_fifo:["pa_7201_dd1"] },
+    { id:"pa_7202_dd", num:30, type:"DD", comment:"금융상품선물시세ShmLoad", group:"sise",
+      in_file:["pa_7202_dd"], in_fifo:["pa_7202_dd1"] },
+    { id:"pa_7622_tr", num:33, type:"TR2", comment:"채권TCP수신", group:"sise",
+      out_file:["pa_7102_dd","pa_7103_dd"], tcp2:"0,42001" },
+    { id:"pa_7623_tr", num:34, type:"TR2", comment:"채권TCP수신", group:"sise",
+      out_file:["pa_7102_dd","pa_7103_dd"], tcp2:"0,42002" },
+    { id:"pa_7701_tr", num:35, type:"TR2", comment:"금융파생TCP_REAL", group:"sise",
+      out_file:["pa_7201_dd","pa_7202_dd","pa_7203_dd"], tcp2:"0,16511" },
+    { id:"pa_7801_tr", num:37, type:"TR2", comment:"채권TCP_RDS수신", group:"sise",
+      out_file:["pa_7801_dd","pa_7802_dd"], tcp2:"0,63725" },
+    { id:"pa_1801_ts", num:38, type:"TR2", comment:"채권일괄수신", group:"bond",
+      in_file:["pa_1801_ts"], out_file:["pa_8116_ts"], tcp2:"0,63724" },
+    { id:"pa_7801_dd", num:44, type:"DD", comment:"채권종목정보_RDS수신", group:"sise",
+      in_file:["pa_7801_dd"], in_fifo:["pa_7801_dd1"],
+      out_file:["pa_7181_dd"] },
+    { id:"pa_7802_dd", num:45, type:"DD", comment:"KTS종목정보_RDS수신", group:"sise",
+      in_file:["pa_7802_dd"], in_fifo:["pa_7802_dd1"],
+      out_file:["pa_7182_dd"] },
+    { id:"pa_8101_ts", num:88, type:"TS2", comment:"Client송신", group:"client",
+      in_file:["pa_8101_ts"], in_fifo:["pa_8101_ts1"], tcp2:"0,32001" },
+    { id:"pa_8111_ts", num:89, type:"TS2", comment:"채권체결DP송신", group:"client",
+      in_file:["pa_8111_ts"], in_fifo:["pa_8111_ts1"], tcp2:"0,32009" },
+    { id:"pa_8105_ts", num:90, type:"TS2", comment:"채권장운영송신_업무", group:"client",
+      in_file:["pa_1601_mp"], in_fifo:["pa_1601_mp2"], tcp2:"0,32008" },
+    { id:"pa_8116_ts", num:91, type:"TS2", comment:"채권RDS01송신_업무", group:"client",
+      in_file:["pa_8116_ts"], in_fifo:["pa_8116_ts1"], tcp2:"0,32016" },
+    { id:"pa_8117_ts", num:92, type:"TS2", comment:"채권RDS01송신_업무", group:"client",
+      in_file:["pa_7801_dd"], in_fifo:["pa_7801_dd2"], tcp2:"0,32017" },
+    { id:"pa_8118_ts", num:93, type:"TS2", comment:"채권RDS02송신_업무", group:"client",
+      in_file:["pa_7802_dd"], in_fifo:["pa_7802_dd2"], tcp2:"0,32018" },
+    { id:"pa_8201_tr", num:94, type:"TS2", comment:"Client수신", group:"client",
+      out_file:["pa_6001_mp","pa_9001_mp"],
+      out_shm:["pa_1101_ts","pa_2101_ts","pa_50101mp~pa_50410mp"], tcp2:"0,32011" },
+    { id:"pa_8211_tr", num:95, type:"TR2", comment:"채권Batch송신_업무계", group:"client",
+      out_file:["pa_1801_ts"], tcp2:"0,32019" },
+    { id:"pa_5001_qr", num:96, type:"QR", comment:"채권주문수신", group:"strategy",
+      out_shm:["pa_1101_ts"], out_file:["pa_1201_mp","pa_5201_qs"] },
+    { id:"pa_5011_qr", num:97, type:"QR", comment:"금융파생수신", group:"strategy",
+      out_shm:["pa_2101_ts"], out_file:["pa_2201_mp","pa_5211_qs"] },
+    { id:"pa_5201_qs", num:98, type:"QS", comment:"채권응답송신", group:"strategy",
+      in_file:["pa_5201_qs"], in_fifo:["pa_5201_qs1"] },
+    { id:"pa_5211_qs", num:99, type:"QS", comment:"금융파생응답송신", group:"strategy",
+      in_file:["pa_5211_qs"], in_fifo:["pa_5211_qs1"] },
+    { id:"pa_5401_qs", num:100, type:"QS", comment:"채권체결송신", group:"strategy",
+      in_file:["pa_5401_qs"], in_fifo:["pa_5401_qs1"] },
+    { id:"pa_5411_qs", num:101, type:"QS", comment:"금융파생응답송신", group:"strategy",
+      in_file:["pa_5411_qs"], in_fifo:["pa_5411_qs1"] },
+    { id:"pa_9001_mp", num:102, type:"MP", comment:"한도_전략관리", group:"mgmt",
+      in_file:["pa_9001_mp"], in_fifo:["pa_9001_mp1"],
+      out_file:["pa_8101_ts"], out_shm:["pa_50101mp~pa_50410mp"] },
+    { id:"pa_1001_mp", num:103, type:"MP", comment:"SyncManager", group:"mgmt" },
+    { id:"pa_2001_mp", num:104, type:"MP", comment:"LogManager", group:"mgmt" },
+    { id:"pa_7402_ur", num:105, type:"UR", comment:"금융상품시세수신_호가", group:"sise",
+      udp:"0,30021" },
+    { id:"pa_4201_qr", num:106, type:"QR", comment:"FX체결수신", group:"fx",
+      out_file:["pa_4201_mp","pa_4401_mp"] },
+    { id:"pa_4201_mp", num:107, type:"MP", comment:"FX응답처리", group:"fx",
+      in_file:["pa_4201_mp"], in_fifo:["pa_4201_mp1"],
+      out_shm:["pa_50101mp~pa_50410mp"] },
+    { id:"pa_4291_mp", num:108, type:"MP", comment:"FX응답미체결", group:"fx",
+      in_file:["pa_4201_mp"], in_fifo:["pa_4201_mp2"] },
+    { id:"pa_4401_mp", num:109, type:"MP", comment:"FX주문체결처리", group:"fx",
+      in_file:["pa_4401_mp"], in_fifo:["pa_4401_mp1"],
+      out_shm:["pa_50101mp~pa_50410mp"] },
+    { id:"pa_4491_mp", num:110, type:"MP", comment:"FX체결미니원장", group:"fx",
+      in_file:["pa_4401_mp"], in_fifo:["pa_4401_mp2"],
+      out_file:["pa_4492_mp"] },
+    { id:"pa_4492_mp", num:111, type:"MP", comment:"FX체결재처리", group:"fx",
+      in_file:["pa_4492_mp"], in_fifo:["pa_4492_mp1"] },
+];
+
+// ===== Color mapping =====
+const TYPE_COLORS = {
+    'TS2': '#e94560', 'TR2': '#0ea5e9', 'MP': '#22c55e',
+    'UR': '#f59e0b', 'DD': '#a855f7', 'QR': '#06b6d4', 'QS': '#06b6d4'
+};
+const GROUP_LABELS = {
+    bond: 'Bond (1xxx)', deriv: 'Derivatives (2xxx)', fx: 'FX (4xxx)',
+    strategy: 'Strategy (5xxx)', sise: 'Market Data (7xxx)',
+    client: 'Client (8xxx)', mgmt: 'Mgmt (9xxx)'
+};
+
+// ===== Build nodes =====
+function buildNodes(groupFilter) {
+    const filtered = groupFilter === 'all' ? PROCS : PROCS.filter(p => p.group === groupFilter);
+    return new vis.DataSet(filtered.map(p => ({
+        id: p.id,
+        label: p.id.replace('pa_','') + '\n' + p.comment,
+        color: { background: TYPE_COLORS[p.type] || '#666', border: '#fff',
+                 highlight: { background: '#fff', border: TYPE_COLORS[p.type] || '#666' } },
+        font: { color: '#fff', size: 11, face: 'monospace' },
+        shape: p.type === 'UR' ? 'diamond' : p.type === 'DD' ? 'triangle' :
+               (p.type === 'QR' || p.type === 'QS') ? 'hexagon' : 'box',
+        size: 20,
+        group: p.group,
+        _data: p
+    })));
+}
+
+// ===== Build edges =====
+function buildEdges(groupFilter, edgeFilter) {
+    const edges = [];
+    const filtered = groupFilter === 'all' ? PROCS : PROCS.filter(p => p.group === groupFilter);
+    const ids = new Set(filtered.map(p => p.id));
+    const edgeSet = new Set();
+
+    // FILE-based edges: process A out_file contains name X, process B in_file contains name X
+    if (edgeFilter === 'file' || edgeFilter === 'all-edge') {
+        // Build lookup: file_name -> readers
+        const fileReaders = {};
+        filtered.forEach(p => {
+            (p.in_file || []).forEach(f => {
+                const base = f.replace(/\d*$/, ''); // strip trailing digits for FIFO match
+                if (!fileReaders[f]) fileReaders[f] = [];
+                fileReaders[f].push(p.id);
+            });
+        });
+
+        filtered.forEach(p => {
+            (p.out_file || []).forEach(f => {
+                if (fileReaders[f]) {
+                    fileReaders[f].forEach(reader => {
+                        if (reader !== p.id && ids.has(reader)) {
+                            const key = p.id + '->' + reader + ':' + f;
+                            if (!edgeSet.has(key)) {
+                                edgeSet.add(key);
+                                edges.push({
+                                    from: p.id, to: reader,
+                                    label: f.replace('pa_',''),
+                                    color: { color: '#e94560', opacity: 0.7 },
+                                    font: { color: '#e9456088', size: 9 },
+                                    arrows: 'to', smooth: { type: 'curvedCW', roundness: 0.15 },
+                                    _type: 'file'
+                                });
+                            }
+                        }
+                    });
+                }
+            });
+        });
+    }
+
+    // SHM-based edges (strategy notifications): out_shm -> in_shm
+    if (edgeFilter === 'shm' || edgeFilter === 'all-edge') {
+        const shmReaders = {};
+        filtered.forEach(p => {
+            (p.in_shm || []).forEach(s => {
+                if (!shmReaders[s]) shmReaders[s] = [];
+                shmReaders[s].push(p.id);
+            });
+        });
+
+        filtered.forEach(p => {
+            (p.out_shm || []).forEach(s => {
+                if (s.includes('~')) return; // Skip strategy SHM ranges
+                if (shmReaders[s]) {
+                    shmReaders[s].forEach(reader => {
+                        if (reader !== p.id && ids.has(reader)) {
+                            const key = p.id + '->shm:' + reader;
+                            if (!edgeSet.has(key)) {
+                                edgeSet.add(key);
+                                edges.push({
+                                    from: p.id, to: reader,
+                                    label: 'SHM',
+                                    color: { color: '#22c55e', opacity: 0.5 },
+                                    font: { color: '#22c55e88', size: 8 },
+                                    arrows: 'to', dashes: true,
+                                    smooth: { type: 'curvedCCW', roundness: 0.2 },
+                                    _type: 'shm'
+                                });
+                            }
+                        }
+                    });
+                }
+            });
+        });
+    }
+
+    return new vis.DataSet(edges);
+}
+
+// ===== Initialize =====
+let currentGroup = 'all';
+let currentEdge = 'file';
+let physicsOn = true;
+let network = null;
+
+function createNetwork() {
+    const container = document.getElementById('network');
+    const nodes = buildNodes(currentGroup);
+    const edges = buildEdges(currentGroup, currentEdge);
+
+    const options = {
+        physics: {
+            enabled: physicsOn,
+            solver: 'forceAtlas2Based',
+            forceAtlas2Based: { gravitationalConstant: -80, centralGravity: 0.008, springLength: 180, springConstant: 0.04 },
+            stabilization: { iterations: 200 }
+        },
+        interaction: { hover: true, tooltipDelay: 100, navigationButtons: true, keyboard: true },
+        layout: { improvedLayout: true },
+        edges: { width: 1.5 }
+    };
+
+    network = new vis.Network(container, { nodes, edges }, options);
+
+    network.on('click', function(params) {
+        if (params.nodes.length > 0) {
+            const nodeId = params.nodes[0];
+            const proc = PROCS.find(p => p.id === nodeId);
+            if (proc) showDetail(proc);
+        }
+    });
+}
+
+function showDetail(p) {
+    const det = document.getElementById('detail');
+    document.getElementById('det-title').textContent = p.id + ' (' + p.type + ')';
+    let html = '';
+    html += '<div class="field"><span class="label">Comment: </span><span class="value">' + p.comment + '</span></div>';
+    html += '<div class="field"><span class="label">Proc#: </span><span class="value">' + p.num + '</span></div>';
+    html += '<div class="field"><span class="label">Group: </span><span class="value">' + (GROUP_LABELS[p.group]||p.group) + '</span></div>';
+    if (p.tcp2) html += '<div class="field"><span class="label">TCP2: </span><span class="value">port ' + p.tcp2.split(',')[1] + '</span></div>';
+    if (p.udp) html += '<div class="field"><span class="label">UDP: </span><span class="value">port ' + p.udp.split(',')[1] + '</span></div>';
+    if (p.in_file) html += '<div class="field"><span class="label">IN FILE: </span><span class="value">' + p.in_file.join(', ') + '</span></div>';
+    if (p.in_fifo) html += '<div class="field"><span class="label">IN FIFO: </span><span class="value">' + p.in_fifo.join(', ') + '</span></div>';
+    if (p.in_shm) html += '<div class="field"><span class="label">IN SHM: </span><span class="value">' + p.in_shm.join(', ') + '</span></div>';
+    if (p.out_file) html += '<div class="field"><span class="label">OUT FILE: </span><span class="value">' + p.out_file.join(', ') + '</span></div>';
+    if (p.out_shm) html += '<div class="field"><span class="label">OUT SHM: </span><span class="value">' + p.out_shm.join(', ') + '</span></div>';
+    document.getElementById('det-body').innerHTML = html;
+    det.style.display = 'block';
+}
+
+// ===== Controls =====
+document.querySelectorAll('#controls button[data-group]').forEach(btn => {
+    btn.addEventListener('click', function() {
+        document.querySelectorAll('#controls button[data-group]').forEach(b => b.classList.remove('active'));
+        this.classList.add('active');
+        currentGroup = this.dataset.group;
+        createNetwork();
+    });
+});
+document.querySelectorAll('#controls button[data-edge]').forEach(btn => {
+    btn.addEventListener('click', function() {
+        document.querySelectorAll('#controls button[data-edge]').forEach(b => b.classList.remove('active'));
+        this.classList.add('active');
+        currentEdge = this.dataset.edge;
+        createNetwork();
+    });
+});
+document.getElementById('btn-physics').addEventListener('click', function() {
+    physicsOn = !physicsOn;
+    if (network) network.setOptions({ physics: { enabled: physicsOn } });
+    this.textContent = physicsOn ? 'Physics Off' : 'Physics On';
+});
+document.getElementById('btn-reset').addEventListener('click', function() {
+    if (network) network.fit();
+});
+
+createNetwork();
+</script>
+</body>
+</html>

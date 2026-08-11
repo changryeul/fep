@@ -1,0 +1,45 @@
+---
+title: PB 채권 주문/응답/체결 흐름도
+---
+graph TD
+    KRX["KRX (채권 KTS)"]
+
+    subgraph ORDER["주문 경로"]
+        direction LR
+        ORD_RX["pb_1301_tr\n주문수신\n(from PA/Client)\n:41001"]
+        ORD_TX["pb_1101_ts\n채권주문송신\nLogon:M60501O\n:37221"]
+        ERR_TX["pb_1401_ts\n에러송신\n:41002"]
+    end
+
+    PA1["PA / Client"] -->|"TCP :41001"| ORD_RX
+    ORD_RX -->|"FIFO"| ORD_TX
+    ORD_TX -->|"TCP :37221"| KRX
+    ORD_TX -->|"FIFO (에러시)"| ERR_TX
+    ERR_TX -->|"TCP :41002"| PA2["PA / Client"]
+
+    subgraph RESP["응답/체결 경로"]
+        RESP_RX["pb_1201_tr\n채권응답체결수신\nLogon:M60501T\n:57221"]
+        RESP_TX["pb_1402_ts\n응답체결송신\n:41003"]
+    end
+
+    KRX -->|"TCP :57221"| RESP_RX
+    RESP_RX -->|"FIFO"| RESP_TX
+    RESP_TX -->|"TCP :41003"| PA3["PA / Client"]
+
+    subgraph DROPCOPY["DropCopy 경로"]
+        DP_RX["pb_1211_tr\n채권DP수신\nLogon:M60501D\n:61726"]
+        DP_TX["pb_8111_ts\nDP송신\n:32009"]
+    end
+
+    KRX -->|"TCP :61726"| DP_RX
+    DP_RX -->|"FIFO"| DP_TX
+    DP_TX -->|"TCP :32009"| PA4["PA / Client"]
+
+    subgraph MARKET_INFO["공개장운영 경로"]
+        MKT_RX["pb_1601_tr\n공개장운영수신\nLogon:M60501M\n:61725"]
+        MKT_TX["pb_1403_ts\n장운영정보송신\n:41004"]
+    end
+
+    KRX -->|"TCP :61725"| MKT_RX
+    MKT_RX -->|"FIFO"| MKT_TX
+    MKT_TX -->|"TCP :41004"| PA5["PA / Client"]

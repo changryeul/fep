@@ -1,0 +1,11 @@
+# all_psg
+# 기동 Program 확인
+# usage: 1) all_psg 2) all_psg a
+
+clear
+if [ $# = 0 ]
+then
+	ps -elafo pid,stime,etime,time,pcpu,pri,nice,args|grep p[a-z]_|sort +7|egrep -v 'tail|grep|std|vi' 
+else
+	ps -elafo pid,stime,etime,time,pcpu,pri,nice,args|grep p$1_|sort +7|egrep -v 'tail|grep|std|vi'
+fi

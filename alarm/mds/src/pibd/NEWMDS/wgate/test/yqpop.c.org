@@ -1,0 +1,86 @@
+#include "mds.h"
+#include "wfaapi.h"
+
+/*===============================================================
+ * MAIN PROCESS
+===============================================================*/
+int main(int argc, char *argv[])
+{
+	int		rc, seq=0, idx=0, first=1;
+	char	rbuf[1024];
+
+	memset(rbuf, 0x00, sizeof(rbuf));
+
+	char	*dpath  = "/fsfxwin/wfa";
+	char	*ddir	= "dat";
+	char	*dfnam	= "YARIQ";
+	int		semk	= 0x16000351;
+	int		dsiz	= 1024;
+	int		rwno[2];
+
+	if (argc > 1)	idx = atoi(argv[1]);
+
+	AG_DQUE dque;
+	AG_DQUECLS(&dque);
+	
+//dque->xas&AG_XAS_MTI : 해줘야 agipc_do_rlock() 호출
+
+	dque.xha |= AQ_XHA_OPN;
+	dque.xha |= AG_XAS_LIV;
+	dque.xha |= AG_XAS_CFM;  // 필요 ? 
+
+	//int agdque_at (Ag_Dque dque, char *dpath, char *ddir, char *dfnam, int semk, int rsiz)
+	rc = agdque_at (&dque, dpath, ddir, dfnam, semk, sizeof(rbuf));
+	if (rc < 0)
+	{
+		printf("\n agdque_at error.. [%d]\n", rc);
+		exit(0);
+	}
+	printf("\n agdque_at ok.. [%d]\n", rc);
+	/*
+	int agdque_at (Ag_Dque dque, char *dpath, char *ddir, char *dfnam, int semk, int rsiz)
+	int agdque_rdnx (Ag_Dque dque, char *pbuf, int psiz, int aid, int *rwno)
+	int agdque_wrnx (Ag_Dque dque, char *pbuf, int plen)
+	int agdque_rwi_io (Ag_Dque dque, int aid, int *rwno)
+	//dque->hdr.rno[idx] = dque->hdr.wno;
+	*/
+	memset(&rwno, 0x00, sizeof(rwno));
+	
+	printf("set aid[%d] read no [%d -> %d]\n", idx, dque.hdr.rno[idx], dque.hdr.wno);
+	rwno[0] = dque.hdr.wno;
+	rc = agdque_rwi_io (&dque, idx, &rwno);
+	if (rc < 0)
+	{
+		printf("\n agdque_rwi_io error.. [%d]\n", rc);
+		exit(0);		
+	}
+
+	while (1)
+	{
+/*tmic    - wait time (microseconds:1/1,000,000:AG_TM_MIC)
+ *        -  0: no wait (X:use it AG_TM_MIC)
+ *        - -1: wait to read 
+ *        -  ~: wait time
+ */
+		//rc = agdque_rdnx (&dque, rbuf, sizeof(rbuf), idx, &rwno);
+		rc = agdque_rdn (&dque, dpath, ddir, dfnam, semk, rbuf, sizeof(rbuf), idx, 1000000, &rwno);
+		if (rc == 0)
+		{
+			continue;
+		}
+		if (rc < 0)
+		{
+			printf("agdque_rdn error [%d]\n", rc);
+			break;
+		}
+/*
+		seq++;
+*/
+//		printf("read:%d:%d) [%d:%d] [%s]\n", seq, rc, rwno[0], rwno[1], rbuf);
+		printf("%s\n", rbuf);
+		memset(rbuf, 0x00, sizeof(rbuf));
+	}
+	printf("read:%d:%d) [%d:%d] [%s]\n", seq, rc, rwno[0], rwno[1], rbuf);
+
+	exit(0);
+}

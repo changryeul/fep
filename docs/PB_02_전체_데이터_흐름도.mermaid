@@ -1,0 +1,72 @@
+---
+title: PB 전체 데이터 흐름도
+---
+graph TD
+    KRX["KRX (채권 KTS)"]
+
+    subgraph PB_MODULE["PB (시장FEP)"]
+        subgraph KRX_SIDE["KRX측 프로세스"]
+            TS1["pb_1101_ts\n채권주문송신\n:37221"]
+            TR1["pb_1201_tr\n채권응답수신\n:57221"]
+            DP1["pb_1211_tr\n채권DP수신\n:61726"]
+            SISE1["pb_1601_tr\n시세수신\n:61725"]
+            RDS1["pb_7801_tr\nRDS수신\n:63725"]
+            BATCH1["pb_1801_ts\n일괄수신\n:63724"]
+        end
+
+        subgraph RELAY["중계 프로세스"]
+            ERR["pb_1401_ts\n에러송신\n:41002"]
+            RESP["pb_1402_ts\n응답체결송신\n:41003"]
+            MARKET["pb_1403_ts\n장운영정보\n:41004"]
+            RDS_TX["pb_1411_ts\nRDS송신\n:41005"]
+            DP_TX["pb_8111_ts\nDP송신\n:32009"]
+            BATCH_TX["pb_8116_ts\n일괄송신\n:32016"]
+        end
+
+        subgraph PA_SIDE["PA/Client측 수신"]
+            ORD_RX["pb_1301_tr\n주문수신\n:41001"]
+            BATCH_RX["pb_8211_tr\n일괄수신\n:32019"]
+        end
+
+        subgraph UDP_SISE["UDP 시세"]
+            UR1["pb_7102_ur\n채권KTS시세\nUDP:10402"]
+            UR2["pb_7103_ur\n채권M4시세\nUDP:10406"]
+            DD1["pb_7102_dd\nKTS Load"]
+            DD2["pb_7103_dd\nM4 Load"]
+        end
+    end
+
+    KRX --> TR1
+    KRX --> DP1
+    KRX --> SISE1
+    KRX --> RDS1
+    TS1 --> KRX
+    BATCH1 -->|":63724"| KRX
+
+    KRX -->|"UDP"| UR1
+    KRX -->|"UDP"| UR2
+
+    ORD_RX -->|"FIFO"| TS1
+    TS1 -->|"FIFO"| ERR
+
+    TR1 -->|"FIFO"| RESP
+    DP1 -->|"FIFO"| DP_TX
+    SISE1 -->|"FIFO"| MARKET
+    RDS1 -->|"FIFO"| RDS_TX
+    BATCH_RX -->|"FIFO"| BATCH1
+    BATCH1 -->|"FIFO"| BATCH_TX
+
+    UR1 --> DD1
+    UR2 --> DD2
+    DD1 --> SHM["SHM\n(시세 공유메모리)"]
+    DD2 --> SHM
+
+    PA["PA (간접FEP)\n/ Client"]
+    ERR -->|":41002"| PA
+    RESP -->|":41003"| PA
+    MARKET -->|":41004"| PA
+    RDS_TX -->|":41005"| PA
+    DP_TX -->|":32009"| PA
+    BATCH_TX -->|":32016"| PA
+    PA -->|":41001"| ORD_RX
+    PA -->|":32019"| BATCH_RX

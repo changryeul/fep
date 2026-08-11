@@ -1,0 +1,278 @@
+
+#include "mds2.h"
+#include "comrdb.h"
+#include <curses.h>
+
+EXEC SQL INCLUDE SQLCA;
+
+char *whoami = "ytest";
+
+int InsertTick2(MDSSISE *psise);
+
+MARKET	*market=NULL;
+
+struct A {
+	int		a;
+	int		b;
+	double	c;
+	char	d[12];
+};
+
+static struct A aa;
+
+
+static void *function1(int i)
+{
+	memset(&aa, 0x00, sizeof(struct A));
+
+	sprintf(aa.d, "%d", i+1);
+
+	return ((void *)aa.d);
+}
+
+char *function2(int i)
+{
+	char *p;
+	p = function1(i);	
+
+	return (char *)p;
+}
+
+int main(int ac, char **av)
+{
+	int		ii, rc;
+	char	msg[128];
+	MDFOLD	*pfold, *pusd;
+
+	memset(msg, 0x00, sizeof(msg));
+///////////////////////////////
+	MARKET m;
+	memset(&m, 0x00, sizeof(MARKET));
+	market = (MARKET *)&m;
+
+	SetCustFeed(market, pfold);
+
+exit(0);
+///////////////////////////////
+
+	rc = mds_updt_prcstat("CMBS", "USDKRW", 1, msg);
+	printf("rc=[%d] msg=[%s]\n", rc, msg);
+
+exit(0);
+////////////////////////////
+	struct timeval tt;
+	struct tm *tm;
+
+	gettimeofday(&tt, NULL);
+	tm = localtime(&tt.tv_sec);
+
+	printf("[%04d%02d%02d-%02d:%02d:%02d.%03d]\n",
+	tm->tm_year+1900, tm->tm_mon+1, tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec, tt.tv_usec/1000);
+
+exit(0);
+///////////////////////////
+	int	rtn;
+	char *p;
+
+p = function2(atoi(av[1]));
+
+printf("\n [%s]\n", p);
+
+exit(0);
+///////////////////////
+
+	rtn = iscrosstarget(av[1]);
+	printf("[%d]\n", rtn);
+
+exit(0);
+///////////////////////
+	double	bid, offer;
+
+//	char msg[128];
+	memset(msg, 0x00, sizeof(msg));
+	bid = atof(av[2]);
+	offer = atof(av[3]);
+
+	rtn = mds_make_custsise(av[1], bid, offer, msg);
+
+	printf("[%d:%s]\n", rtn, msg);
+
+exit(0);
+
+
+////////////////////////////////////////
+EXEC SQL BEGIN DECLARE SECTION;
+	char	v_tmstamp[32];
+	char	v_stime[32];
+EXEC SQL END DECLARE SECTION;
+	char	strtm[32];
+
+	struct timeval	tv;
+	struct tm *t;
+
+	gettimeofday(&tv, NULL);
+	t = localtime(&tv.tv_sec);
+
+	rtn = l_db2connect();		// 메모리 초기화를 위한 임시 CONNECT
+	if (rtn != 0)
+	{
+		printf("[%s] l_db2connect failed : (%d)\n",__func__, rtn);
+		exit(-1);
+	}
+
+////////////////////
+	memset(v_tmstamp, 0x00, sizeof(v_tmstamp));
+	memset(v_stime, 0x00, sizeof(v_stime));
+
+	sprintf(v_tmstamp, "%.04d-%02d-%02d %02d:%02d:%02d", t->tm_year+1900, t->tm_mon+1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
+printf("[%s]\n", v_tmstamp);
+
+	// 세팅 시간보다 1분먼저 EAI 조회 시작
+EXEC SQL
+	SELECT	TO_CHAR(TIMESTAMP(:v_tmstamp) - 1 MINUTES, 'YYYYMMDDHH24MISS')
+	  INTO	:v_stime
+	  FROM	SYSIBM.DUAL
+	;
+	if (SQLCODE != 0)
+	{
+		printf("[%s] select from dual error !!!  [%s] \n", __func__, SQLERRM);
+		exit(-1);
+	} 
+
+printf("[%s]\n", v_stime);
+
+exit(0);
+
+
+	MDSSISE	sise;
+
+	memset(&sise, 0x00, sizeof(sise));
+
+	sise.excode[0] = 'S';
+	strcpy(sise.symb, "EURUSD");
+	sise.bidprc = 1.13957816;
+	sise.offerprc = 1.12946290;
+
+	sprintf(strtm, "%04d%02d%02d", t->tm_year+1900, t->tm_mon+1, t->tm_mday);
+	memcpy(sise.date, strtm, strlen(strtm));
+	sprintf(strtm, "%02d%02d%02d%03d", t->tm_hour, t->tm_min, t->tm_sec, tv.tv_usec/1000);
+	memcpy(sise.time, strtm, strlen(strtm));
+	sprintf(sise.quotid, "Z%.6s%02d%02d%03d",sise.symb, t->tm_min, t->tm_sec, tv.tv_usec/1000);
+
+	pfold = mds_getfold("CUST", sise.symb, msg);
+	pusd  = mds_getfold("CUST", "USDKRW", msg);
+
+	if (!pfold || !pusd)
+	{
+		printf("msd_getfold error..[%s]\n", msg);
+		l_db2disconnect();
+		exit(0);
+	}
+
+	InsertTick(&sise);	
+	InsertTick_Fincl(&sise, pfold, pusd);
+
+	UpsertMin(&sise);
+	UpsertMin_Fincl(&sise, pfold, pusd);
+
+	UpsertDay(pfold, &sise);
+	UpsertDay_Fincl(&sise, pfold, pusd);
+
+	l_db2commit();
+
+	l_db2disconnect();
+
+	return 0;
+}
+/*
+// double 형 변수를 위한 테스트함수
+int InsertTick2(MDSSISE *psise)
+{
+	int		pind = 8;
+	
+EXEC SQL BEGIN DECLARE SECTION;
+	char	v_mrkup_dstcd		[ 1+1];
+	char	v_fx_prdct_cd		[ 6+1];
+	char	v_rgst_date			[ 8+1];
+	char	v_rgst_time			[ 9+1];
+	char	v_fx_ex_quote_id	[30+1];
+	char	v_bid_last_prc		[20+1];
+	double	d_bid_last_prc		;
+	double	d_offer_last_prc	;
+	double	d_mid_last_prc		;
+EXEC SQL END DECLARE SECTION;
+
+  //--------------------------------------------------------------------
+  // 1. initialization
+  //--------------------------------------------------------------------
+	memset(v_mrkup_dstcd,		0x00, sizeof(v_mrkup_dstcd));
+	memset(v_fx_prdct_cd,		0x00, sizeof(v_fx_prdct_cd));
+	memset(v_rgst_date,			0x00, sizeof(v_rgst_date));
+	memset(v_rgst_time,			0x00, sizeof(v_rgst_time));
+	memset(v_fx_ex_quote_id,	0x00, sizeof(v_fx_ex_quote_id));
+	d_bid_last_prc		= 0.0;
+	d_offer_last_prc	= 0.0;
+	d_mid_last_prc		= 0.0;
+
+// ★TODO-18 : 마크업구분코드. CMBS, Reuter, Manual 인 경우 '2'  그 외는 '1'
+	if (psise->excode[0] == 'C' || psise->excode[0] == 'R' || psise->excode[0] == 'H')
+		v_mrkup_dstcd[0] = '2';
+	else
+		v_mrkup_dstcd[0] = '1';
+
+	sprintf(v_fx_prdct_cd,		"%.6s%",	psise->symb);
+	sprintf(v_rgst_date,		"%.8s",		psise->date);
+	sprintf(v_rgst_time,		"%.9s",		psise->time);
+	sprintf(v_fx_ex_quote_id,	"%.*s",		sizeof(psise->quotid), psise->quotid);
+
+memset(v_bid_last_prc, 0x00, sizeof(v_bid_last_prc));
+sprintf(v_bid_last_prc, "%.*f", pind, psise->bidprc);
+	d_bid_last_prc		= psise->bidprc;
+	d_offer_last_prc	= psise->offerprc;
+	d_mid_last_prc		= (d_bid_last_prc+d_offer_last_prc)/2;
+
+	l_rtrim(v_mrkup_dstcd);
+	l_rtrim(v_fx_prdct_cd);
+	l_rtrim(v_rgst_date);
+	l_rtrim(v_rgst_time);
+	l_rtrim(v_fx_ex_quote_id);
+
+	//--------------------------------------------------------------------
+	// 1. initialization
+	//--------------------------------------------------------------------
+EXEC SQL 
+	INSERT INTO INST1.TSKEIMU50 (
+			 GROUP_CO_CD
+			,MRKUP_DSTCD --
+			,FX_PRDCT_CD
+			,REGI_YMD
+			,RGST_TIME
+			,BID_LAST_PRC
+			,OFFER_LAST_PRC
+			,MID_LAST_PRC --
+			,FX_EX_QUOTE_ID --
+			,SYS_LAST_PRCSS_YMS
+			,SYS_LAST_UNO
+	) VALUES (
+			'KB0'
+			,:v_mrkup_dstcd
+			,:v_fx_prdct_cd
+			,:v_rgst_date
+			,:v_rgst_time
+			,:d_bid_last_prc
+			,:d_offer_last_prc
+			,:d_mid_last_prc
+			,:v_fx_ex_quote_id
+			, substr(hex(current timestamp),1,20)
+			,'KEI000'
+	);
+
+	if (SQLCODE != 0)
+	{
+		mds_log(market, LOG_MUST, "TSKEIMU50 insert error [%d] [%.1s:%.6s] \n", SQLCODE, psise->excode, psise->symb);
+		return(-1);
+	}
+
+	return(0);
+}
+*/

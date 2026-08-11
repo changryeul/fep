@@ -1,0 +1,29 @@
+---
+title: PA IPC(FIFO/DSHM) 데이터 흐름도
+---
+graph LR
+    subgraph ORDER_PATH["주문 경로"]
+        CL1["Client\n(8201_tr)"] -->|"DSHM"| TS1["주문TS\n(1101/2101)"]
+        TS1 -->|"TCP"| KRX1["KRX"]
+    end
+
+    subgraph RESP_PATH["응답 경로"]
+        KRX2["KRX"] -->|"TCP"| TR1["응답TR\n(1201/2201)"]
+        TR1 -->|"FIFO"| MP1["응답MP\n(1201/2201_mp)"]
+        MP1 -->|"FIFO"| CL_TX1["Client송신\n(8101)"]
+        MP1 -->|"DSHM"| AUTO1["Auto전략\n(50xxx)"]
+    end
+
+    subgraph EXEC_PATH["체결 경로"]
+        KRX3["KRX"] -->|"TCP"| TR2["응답TR\n(1201/2201)"]
+        TR2 -->|"FIFO"| MP2["체결MP\n(1401/2401_mp)"]
+        MP2 -->|"FIFO"| CL_TX2["Client송신\n(8101)"]
+        MP2 -->|"DSHM"| AUTO2["Auto전략\n(50xxx)"]
+        MP2 -->|"FIFO"| HANDO["한도\n(9001)"]
+    end
+
+    subgraph SISE_PATH["시세 경로"]
+        KRX4["KRX"] -->|"UDP/TCP"| UR["시세UR/TR\n(7xxx)"]
+        UR -->|"FIFO"| DD["시세DD\n(7xxx_dd)"]
+        DD --> SHM["SHM\n(시세 공유메모리)"]
+    end

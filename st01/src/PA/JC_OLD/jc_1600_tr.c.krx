@@ -1,0 +1,783 @@
+#define		_GLOBAL
+
+/*------------------------------------------------------------------------
+#	System	: HANWHA FEP
+#	Author	: Y.P.K 
+#	Module	: 선물옵션 장운영 수신
+#	File	: jc_1600_tr.c
+------------------------------------------------------------------------*/
+
+/*------------------------------------------------------------------------
+	Header Files
+------------------------------------------------------------------------*/
+#include    "fep_fepj.h"
+#include    "krx_struct.h"
+
+#define		DATA_SIZE		281				  /* Header(81) + Data(200) */
+#include	"buf_struct.h"
+
+/*------------------------------------------------------------------------
+	Constants and Structures
+------------------------------------------------------------------------*/
+#define		DEVICE_TIME		3 * 1000						/* 3 sec	*/
+#define		FOREVER_TIME	30 * 1000						/* 30 sec	*/
+
+#define		FIFO_EVENT		0
+#define		SOCKET_EVENT	1
+
+#define     MAX_CNT         15
+
+#define     PORT_NO         TCP2_PORT_NO
+
+/*------------------------------------------------------------------------
+	Global Variables
+------------------------------------------------------------------------*/
+int		SockFd, RecvLen, SendLen, MsgLen, ErrCd;
+int		PollCnt, FirstSeq, TimeOut;
+char	DataBuff[4096], ApType[10], IpAddr[20];
+char    OpenFlag, LogOnFlag, ReSendFlag;
+
+FILE_BUFF_FORMAT	W_Fmt[MAX_CNT];
+KRX_JANG_FMT		JangFmt;
+KRX_SESSION_FMT     S_Fmt;
+struct pollfd		Poll[2];
+
+/*------------------------------------------------------------------------
+	Function Prototypes
+------------------------------------------------------------------------*/
+void	JC_1600_TR (void);
+void	Init_Parameters (void);
+void	Fifo_Event_Rtn (void);
+void	Socket_Event_Rtn (void);
+void	Device_Open (void);
+void	Device_Close (void);
+void	Device_Write (void);
+int		Device_Read (void);
+int		Make_Send_Msg (int);
+int		Analyze_Data (void);
+void	Write_Data (void);
+void    Log_Out (void);
+void    Err_Msg (void);
+
+/*----------------------------------------------------------------------*/
+int		main (int argc, char *argv[])
+/*----------------------------------------------------------------------*/
+{
+	Init_Proc (argc, argv);
+	JC_1600_TR ();
+	Exit_Process ();
+}	/* End of main ()	*/
+
+/*----------------------------------------------------------------------*/
+void	JC_1600_TR (void)
+/*----------------------------------------------------------------------*/
+{
+	int		rt, i;
+
+	Init_Parameters ();
+
+	while (START_S != END)
+	{
+		Stat_Save ();
+
+		if (TCP2_NET_STA(S_K) == END)
+		{
+			if (TCP2_LINE_ST == ON || OpenFlag == ON)
+				Device_Close ();
+
+			Log (USR_OK, "poll timeout <%d>", INT_SEQ);
+			sleep (60);
+			continue;
+		} 
+		else
+		{
+            if (OpenFlag == OFF)
+            {
+                if (LogOnFlag == OFF)
+                    Device_Open ();
+
+                if (LogOnFlag == OFF)
+                {
+                    PollCnt = 1;
+                    TimeOut = DEVICE_TIME;
+                }
+                else
+                {
+                    PollCnt = 2;
+                    TimeOut = FOREVER_TIME;
+                }
+
+            }
+            else
+            {
+                PollCnt = 2;
+                TimeOut = FOREVER_TIME;
+            }
+		}
+
+		rt = poll (Poll, PollCnt, TimeOut);
+		if (rt < 0)
+		{
+			if (SYS_NO == EINTR)
+				Log (SYS_OK, "poll interrupted {%d:%s}", SYS_NO, SYS_STR);
+			else
+				Log (SYS_ERROR, "poll failure {%d:%s}", SYS_NO, SYS_STR);
+			continue;
+		}
+		else if (rt == 0)
+		{
+			if (PollCnt == 2)
+			{
+				if (TCP2_NET_STA(S_K) == OFF || TCP2_NET_STA(S_K) == ON)
+				{
+					TCP2_LINE_ST = END;
+					Log (TCP_ERROR, "no data from KRX. check status <%d>", INT_SEQ);
+					Device_Close ();
+				}
+
+				Log (USR_OK, "poll timeout <%d>", INT_SEQ);
+			}
+			continue;
+		}
+
+		for (i = 0; i < PollCnt; i ++)
+		{
+			if (Poll[i].revents & POLLHUP)
+			{
+				if (i == SOCKET_EVENT)
+				{
+					Log (TCP_ERROR, "socket disconnected[%#06x]", 
+						Poll[i].revents);
+					return;
+				}
+
+				Log (SYS_ERROR, "poll hangup[%d,%d]", i, PollCnt);
+				continue;
+			}
+		}
+
+		for (i = 0; i < PollCnt; i ++)
+		{
+			if (Poll[i].revents & POLLIN)
+			{
+				Poll[i].revents = 0;
+				break;
+			}
+		}
+
+		switch (i)
+		{
+			case	FIFO_EVENT:
+				Fifo_Event_Rtn ();
+				break;
+			case	SOCKET_EVENT:
+				Socket_Event_Rtn ();
+				break;
+			default:
+				Log (USR_ERROR, "event case error[%d,%d]", i, PollCnt);
+				Exit_Process ();
+				break;
+		}
+	}
+
+	Device_Close ();
+
+	return;
+}	/* End of JC_1600_TR ()	*/
+
+/*************************************************************************
+	Function		: . Init_Parameters
+	Parameters IN	: .
+	Parameters OUT	: .
+	Return Code		: . void
+	Comment			: . All Program Parameters Init
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+void	Init_Parameters (void)
+/*----------------------------------------------------------------------*/
+{
+	ErrCd = 0;
+	OpenFlag = OFF;
+    LogOnFlag = OFF;
+	ReSendFlag = OFF;
+
+	S_K = TCP2_LINE_GU;
+
+	sprintf (IpAddr, "%d.%d.%d.%d", TCP2_IP1(D_K,P_K,S_K),
+			TCP2_IP2(D_K,P_K,S_K), TCP2_IP3(D_K,P_K,S_K), TCP2_IP4(D_K,P_K,S_K));
+	Log (TCP_OK, "IP[%s] port[%d]", IpAddr, PORT_NO);
+
+	TCP2_PROC_ST = ON;
+	TCP2_LINE_ST = OFF;
+
+	sprintf (ApType, "%-2.2s%-4.4s%-2.2s", _Exe_Name, _Exe_Name+3, _Exe_Name+8);
+	LtoU (ApType, strlen (ApType));
+
+	Poll[0].fd = START_FD;
+	Poll[0].events = POLLIN;
+
+	return;
+}	/* End of Init_Parameters ()	*/
+
+/*************************************************************************
+	Function		: . Fifo_Event_Rtn
+	Parameters IN	: .
+	Parameters OUT	: .
+	Return Code		: . void
+	Comment			: . 업무 통제 FIFO SIGNAL GET & No Action
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+void	Fifo_Event_Rtn (void)
+/*----------------------------------------------------------------------*/
+{
+	char	tmp[2];
+
+	read (START_FD, tmp, 1);
+
+	return;
+}	/* End of Fifo_Event_Rtn ()	*/
+
+/*************************************************************************
+   Function        : . Socket_Event_Rtn
+   Parameters IN   : .
+   Parameters OUT  : .
+   Return Code     : . void
+   Comment         : . Socket Data Recv & Response Action
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+void    Socket_Event_Rtn (void)
+/*----------------------------------------------------------------------*/
+{
+	int     rval, rt;
+
+	rval = Device_Read ();
+
+	if (rval < 0 || RecvLen == 0)
+		return;
+
+	if (TCP2_NET_STA(S_K) == END)
+	{
+		Log (TCP_ERROR, "종료후DATA수신:NSTAT[%d]", TCP2_NET_STA(S_K));
+		return;
+	}
+
+	memset (&JangFmt, 0, sizeof (KRX_JANG_FMT));
+	memcpy (&JangFmt, DataBuff, sizeof(KRX_JANG_FMT));
+
+	rval  = Analyze_Data ();
+	switch (rval)
+	{
+		case    TR_LINK:	/* 업무개시 요청 */
+			TCP2_NET_STA(S_K) = ON;
+            TCP2_LINE_ST = OpenFlag = ON;
+
+			rt = Make_Send_Msg (RP_LINK);
+			memset (DataBuff, 0, sizeof (DataBuff));
+			memcpy (DataBuff, &JangFmt, SendLen);
+			Device_Write ();
+			break;
+		case	TR_TEST:	/* 회선시험 요청 */
+			rt = Make_Send_Msg (RP_TEST);
+			memset (DataBuff, 0, sizeof (DataBuff));
+			memcpy (DataBuff, &JangFmt, SendLen);
+			Device_Write ();
+			break;
+		case	TR_DATA:	/* 공개장운영,공개정보,기준가결정,임의종료 */
+			if (ReSendFlag == ON)	/* 재전송 요청 상태 */
+			{
+				Log (USR_ERROR, "TR_DATA recv:데이타 Skip <%d:%d>",
+					FirstSeq, INT_SEQ);
+			}
+			else
+			{
+				if (FirstSeq > INT_SEQ + 1)	/* 재전송 요청 */
+				{
+					rt = Make_Send_Msg (TR_RESE);
+					memset (DataBuff, 0, sizeof (DataBuff));
+					memcpy (DataBuff, &S_Fmt, SendLen);
+					Device_Write ();
+
+					ReSendFlag = ON;
+				}
+				else if (FirstSeq == INT_SEQ + 1)
+				{
+					Write_Data ();
+				}
+				else
+				{
+					/* KRX 일련번호가 작은 경우 Log 처리후 Skip */
+					Log (USR_ERROR, "TR_DATA recv:일련번호 오류 <%d:%d>",
+						FirstSeq, INT_SEQ);
+					break;
+				}
+			}
+			break;
+		case	RP_RESE:
+			ReSendFlag = OFF;
+			break;
+		case    TR_STOP:
+			Log_Out ();
+			break;
+		default:
+			break;
+	}
+
+	return;
+}	/* End of Socket_Event_Rtn ()	*/
+
+/*************************************************************************
+	Function		: .  Device_Open
+	Parameters IN	: .
+	Parameters OUT	: .
+	Return Code		: . void
+	Comment			: . Svm Line Status Set & TCPIP Poll fd set
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+void	Device_Open (void)
+/*----------------------------------------------------------------------*/
+{
+	int 	rt;
+
+	SockFd = Socket ();
+
+	if (SockFd < 0)
+	{
+		Log (TCP_ERROR, "socket fail:SockFd[%d] {%d:%s}",
+			SockFd, SYS_NO, SYS_STR);
+		return;
+	}
+
+	Log (USR_OK, "socket created:SockFd[%d]", SockFd);
+	Log (USR_OK, "connecting to %s:%d", IpAddr, PORT_NO);
+
+	rt = Connect (SockFd, IpAddr, PORT_NO);
+
+	if (rt < 0)
+	{
+		Log (TCP_ERROR, "connect fail {%d:%s}", SYS_NO, SYS_STR);
+		close (SockFd);
+		return;
+	}
+
+    rt = Make_Send_Msg (TR_LOON);
+    memset (DataBuff, 0, sizeof (DataBuff));
+    memcpy (DataBuff, &S_Fmt, SendLen);
+    Device_Write ();
+    SLog (USR_OK, "send LOGON request");
+
+    rval = Device_Read ();
+    if (rval < 0)
+    {
+        SLog (USR_ERROR, "LOGON response recv error");
+        close (Sockfd);
+        return;
+    }
+
+    if (memcmp(DataBuff[81], "0000", 4) == 0)
+    {
+        SLog (USR_OK, "LOGON success");
+    }
+    else
+    {
+       ErrCd = AtoIf (DataBuff[81], 4);
+       Err_Msg ();
+
+       close (Sockfd);
+       return;
+    }
+
+	LogOnFlag = ON;
+
+	Poll[1].fd = SockFd;
+	Poll[1].events = POLLIN;
+	Log (TCP_OK, "TCP device open");
+
+	return;
+}	/* End of Device_Open ()	*/
+
+/*************************************************************************
+	Function		: .  Device_Close
+	Parameters IN	: .
+	Parameters OUT	: .
+	Return Code		: . void
+	Comment			: . Svm Line Status Set
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+void	Device_Close (void)
+/*----------------------------------------------------------------------*/
+{
+	close (SockFd);
+	Log (TCP_OK, "TCP device close");
+
+	LogOnFlag = OFF;
+	TCP2_LINE_ST = OpenFlag = OFF;
+	return;
+}	/* End of Device_Close ()	*/
+
+/*************************************************************************
+	Function		: .  Device_Write
+	Parameters IN	: .
+	Parameters OUT	: .
+	Return Code		: . void
+	Comment			: . TCP/IP Data Send
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+void	Device_Write (void)
+/*----------------------------------------------------------------------*/
+{
+	int		rt;
+
+	rt = Select_Send (SockFd, DataBuff, strlen (DataBuff));
+
+	if (rt < 0)
+	{
+		Log (TCP_ERROR, "TCP data send fail");
+		Device_Close ();
+	}
+
+	Log (TCP_OK, "TCP SD [%s](%d)<%d>", DataBuff, strlen (DataBuff), INT_SEQ);
+
+	return;
+}	/* End of Device_Write ()	*/
+
+/*************************************************************************
+	Function		: .  Device_Read
+	Parameters IN	: .
+	Parameters OUT	: .
+	Return Code		: . int (0:success, -1:failure)
+	Comment			: . TCP/IP Data Recv
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+int		Device_Read (void)
+/*----------------------------------------------------------------------*/
+{
+	int		rt;
+
+    memset (DataBuff, 0, sizeof (DataBuff));
+    RecvLen = 0;
+
+    rt = Select_Receive_Krx (Sockfd, DataBuff, sizeof(KRX_HEADER));
+
+    if (rt <= 0)
+    {
+        Device_Close ();
+        return (NOTOK);
+    }
+
+    RecvLen = rt;
+    SLog (TCP_OK, "TCP RD [%s](%d)<%d>", DataBuff, strlen (DataBuff), INT_SEQ);
+
+	return (OK);
+}	/* End of Device_Read ()	*/
+
+/*************************************************************************
+	Function		: . Make_Send_Msg
+	Parameters IN	: . TR_TYPE
+	Parameters OUT	: .
+	Return Code		: . int (-1:no data, 0:success)
+	Comment			: . Send data header making
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+int		Make_Send_Msg (int tr_code)
+/*----------------------------------------------------------------------*/
+{
+	int		rt, datacnt;
+	char	d_time[18];
+
+	rt = 0;
+    memset (&S_Fmt, 0, sizeof (KRX_SESSION_FMT));
+
+    memcpy (S_Fmt.Header.BeginString, "KMAPv1.0", 8);
+    ItoAf (0, S_Fmt.Header.BodyLength, sizeof (S_Fmt.Header.BodyLength));
+    ItoAf (0, S_Fmt.Header.MsgSeqNum, sizeof (S_Fmt.Header.MsgSeqNum));
+    memcpy (S_Fmt.Header.SenderComp, TCP_COMPANY, strlen (TCP_COMPANY));
+    Get_DateMilliTime (d_time);
+    memcpy (S_Fmt.Header.SendingTime, d_time, sizeof (S_Fmt.Header.SendingTime));
+    ItoAf (0, S_Fmt.Header.DataCnt, sizeof (S_Fmt.Header.DataCnt));
+    SendLen = sizeof (KRX_HEADER);
+
+    switch (tr_code)
+    {
+    	case    TR_LOON:    /* 로그온 요청 */
+            memcpy (S_Fmt.Header.MsgType,   "SCHLIQ00000",  11);
+			memcpy (S_Fmt.Data,     LOGON_ID(D_K,P_K), 10);
+			memcpy (S_Fmt.Data[10], LOGON_PW(D_K,P_K), 30);
+            MsgLen  = strlen(S_Fmt.Data);
+            ItoAf (MsgLen, S_Fmt.Header.BodyLength, sizeof(S_Fmt.Header.BodyLength));
+            SendLen += MsgLen;
+            break;
+        case    RP_LINK:    /* 업무개시 응답 */
+            memcpy (S_Fmt.Header.MsgType,   "SCHOPR00000",  11);
+            memcpy (S_Fmt.Header.MsgSeqNum, StlFmt.Header.MsgSeqNum, 
+					sizeof (S_Fmt.Header.MsgSeqNum));
+            memcpy (S_Fmt.Data, "0000", 4);
+            memcpy (S_Fmt.Data[4], "          ", 11);
+            ItoAf (INT_SEQ, S_Fmt.Data[15], 11);
+            MsgLen  = strlen(S_Fmt.Data);
+            ItoAf (MsgLen, S_Fmt.Header.BodyLength, sizeof(S_Fmt.Header.BodyLength));
+            SendLen += MsgLen;
+            break;
+        case    RP_TEST:    /* 회선시험 응답 */
+            memcpy (S_Fmt.Header.MsgType,       "SCHHEQ00000",  11);
+            memcpy (S_Fmt.Header.MsgSeqNum, StlFmt.Header.MsgSeqNum, 
+					sizeof (S_Fmt.Header.MsgSeqNum));
+            MsgLen  = strlen(S_Fmt.Data);
+            ItoAf (MsgLen, S_Fmt.Header.BodyLength, sizeof(S_Fmt.Header.BodyLength));
+            SendLen += MsgLen;
+            break;
+		case    TR_RESE:    /* 재전송 요청 */
+			memcpy (S_Fmt.Header.MsgType,       "SCHRSR00000",  11);
+			ItoAf (INT_SEQ, S_Fmt.Header.MsgSeqNum,
+					sizeof (S_Fmt.Header.MsgSeqNum));
+			MsgLen  = strlen(S_Fmt.Data);
+			ItoAf (MsgLen, S_Fmt.Header.BodyLength, sizeof(S_Fmt.Header.BodyLength));
+			SendLen += MsgLen;
+			break;
+        case    TR_LOOU:    /* 로그아웃 요청 */
+            memcpy (S_Fmt.Header.MsgType,       "SCHLOQ00000",  11);
+            ItoAf (INT_SEQ, S_Fmt.Header.MsgSeqNum,
+                   sizeof (S_Fmt.Header.MsgSeqNum));
+            MsgLen  = strlen(S_Fmt.Data);
+            ItoAf (MsgLen, S_Fmt.Header.BodyLength, sizeof(S_Fmt.Header.BodyLength));
+            SendLen += MsgLen;
+            break;
+        default:
+            break;
+    }
+
+	return (rt);
+}	/* End of Make_Send_Msg ()	*/
+
+/*************************************************************************
+	Function		: . Analyze_Data
+	Parameters IN	: .
+	Parameters OUT	: .
+	Return Code		: . int TR_TYPE
+	Comment			: . TCP/IP Recv Data Analysis And TR_CODE Return
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+int		Analyze_Data (void)
+/*----------------------------------------------------------------------*/
+{
+    FirstSeq = AtoIf (JangFmt.Header.MsgSeqNum,
+        sizeof (JangFmt.Header.MsgSeqNum));
+
+    if (memcmp(JangFmt.Header.MsgType, "SCHOPQ00000", 11) == 0)
+    {
+        SLog (USR_OK, "업무개시요청(SCHOPQ00000): <%d:%d>",
+            FirstSeq, INT_SEQ);
+        return (TR_LINK);
+    else if (memcmp(JangFmt.Header.MsgType, "SCHHEQ00000", 11) == 0)
+    {
+        SLog (USR_OK, "회선시험요청(SCHHEQ00000): <%d:%d>",
+            FirstSeq, INT_SEQ);
+        return (TR_TEST);
+    }
+	/* 장운영:공개장운영, 장운영구분코드:159(장종료후시간외단일가종료) */
+    else if (memcmp(JangFmt.Header.MsgType, "TCHMIP00000", 11) == 0 &&
+             memcmp(JangFmt.JangData[0].Data[11], "TTRMIP31301", 11) == 0 &&
+    		 memcmp(JangFmt.JangData[0].Data[22], "159", 3) == 0)   
+    {
+        SLog (USR_OK, "장운영종료(장종료후시간외단일가종료): <%d:%d>",
+            FirstSeq, INT_SEQ);
+        return (TR_STOP);
+    }
+    else if (memcmp(JangFmt.Header.MsgType, "TCHMIP00000", 11) == 0)
+    {
+        SLog (USR_OK, "공개장운영,공개정보,기준가결정,임의종료(TTRMIP00000): <%d:%d>",
+            FirstSeq, INT_SEQ);
+        return (TR_DATA);
+    }
+
+}	/* End of Analyze_Data ()	*/
+
+/*************************************************************************
+	Function		: . Write_Data
+	Parameters IN	: .
+	Parameters OUT	: .
+	Return Code		: . 
+	Comment			: . TCPIP Recv Data File Write
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+void	Write_Data (void)
+/*----------------------------------------------------------------------*/
+{
+	int		rt, cnt, d_cnt, i; 
+	char	m_time[24];
+
+	memset (&W_Fmt, ' ', sizeof (FILE_BUFF_FORMAT) * MAX_CNT);
+	memset (&Tcp_Data_Head, ' ', sizeof (TCP_DATA_HEAD));
+	memset (m_time, 0, sizeof (m_time));
+
+	Get_MicroTime (m_time);
+
+	cnt = AtoIf (JangFmt.Header.DataCnt, sizeof (JangFmt.Header.DataCnt));
+
+	d_cnt = rt = 0;
+
+	/* 실제 수신한 데이타 건수만큼 처리 */
+	for (i = 0; i < cnt; i ++)
+	{
+		if (AtoIf (JangFmt.SettleData[i].DataSeq,
+           sizeof (JangFmt.SettleData[i].DataSeq)) != INT_SEQ + i + 1)
+		{
+			Log (USR_ERROR, "TR_DATA recv:데이터건수 오류 <%d:%d>",
+				FirstSeq, INT_SEQ);
+			break;
+		}
+		d_cnt ++;
+	}
+
+	if (d_cnt == 0)
+		return;
+
+	for (i = 0; i < d_cnt; i ++)
+	{
+    	memcpy (W_Fmt[i].If_Seq, JangFmt.JangData[i].DataSeq,
+			sizeof(JangFmt.JangData[i].DataSeq));
+		memcpy (W_Fmt[i].ApType, ApType, sizeof (W_Fmt[i].ApType));
+    	memcpy (W_Fmt[i].ResponseCode, RES_NORMAL, strlen (RES_NORMAL));
+    	memcpy (W_Fmt[i].RecvTime1, m_time, sizeof (W_Fmt[i].RecvTime1));
+    	memcpy (W_Fmt[i].RecvTime2, m_time+10, sizeof (W_Fmt[i].RecvTime2));
+
+    	ItoAf (HEAD_SIZE + DATA_SIZE, Tcp_Data_Head.Length,
+        	sizeof (Tcp_Data_Head.Length));
+    	memcpy (Tcp_Data_Head.DataSeq, JangFmt.SettleData[i].DataSeq,
+			sizeof (Tcp_Data_Head.DataSeq));
+		memcpy (Tcp_Data_Head.ResponseCode, RES_NORMAL, strlen (RES_NORMAL));
+    	memcpy (Tcp_Data_Head.LineFlag, _Exe_Name+4, 3);
+
+    	memcpy (W_Fmt[i].DataHeader, &Tcp_Data_Head, sizeof (TCP_DATA_HEAD));
+    	memcpy (W_Fmt[i].Data, &JangFmt, DATA_SIZE);
+    	W_Fmt[i].LineFeed[0] = '\n';
+	}
+
+   	rt = F_W (TS_W1_1, (void *)&W_Fmt, 1);
+   	if (rt != 1)
+   	{
+       	Log (SAM_FATAL, "file write[%s]", OFN(D_K,P_K,0));
+       	Exit_Process ();
+   	}
+
+   	INT_SEQ += rt;
+
+    Log (USR_OK, "file write[%s:%d:%d]", OFN(D_K,P_K,0), OFW(D_K,P_K,0,0), rt);
+
+	Set_TR_Time ();
+
+	return;
+}	/* End of Write_Data ()	*/
+
+/*************************************************************************
+    Function        : . Log_Out
+    Parameters IN   : .
+    Parameters OUT  : .
+    Return Code     : . void
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+void    Log_Out (void)
+/*----------------------------------------------------------------------*/
+{
+    int     rt, rval;
+
+    rt = Make_Send_Msg (TR_LOOU);
+    memset (DataBuff, 0, sizeof (DataBuff));
+    memcpy (DataBuff, &S_Fmt, SendLen);
+    Device_Write ();
+    SLog (USR_OK, "send LOGOUT request");
+
+    rval = Device_Read ();
+    if (rval < 0)
+    {
+        SLog (USR_ERROR, "LOGOUT response recv error");
+        close (Sockfd);
+        return;
+    }
+
+    if (memcmp(DataBuff[81], "0000", 4) == 0)
+    {
+        SLog (USR_OK, "logout success");
+
+		Device_Close ();
+        TCP2_NET_STA(S_K) = END;
+    }
+    else
+    {
+        ErrCd = AtoIf (DataBuff[81], 4);
+        Err_Msg ();
+	}	
+
+    return;
+}   /* End of Log_Out ()    */
+
+/*************************************************************************
+    Function        : . Err_Msg
+    Parameters IN   : .
+    Parameters OUT  : .
+    Return Code     : . void
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+void    Err_Msg (void)
+/*----------------------------------------------------------------------*/
+{
+    switch (ErrCd)
+    {
+        case    0:  /* 정상 */
+            break;
+        case    1:  /* 사용자검증(ID,PASSWORD)오류 */
+            SLog (USR_ERROR, "사용자검증(ID,PASSWORD)오류[%d] <%d:%d>",
+                ErrCd, FirstSeq, INT_SEQ);
+            sleep (2);
+            break;
+        case    2:  /* 세션메시지전문수순오류 */
+            SLog (USR_ERROR, "세션메시지전문수순오류[%d] <%d:%d>",
+                ErrCd, FirstSeq, INT_SEQ);
+            sleep (2);
+            break;
+        case    3:  /* 헤더회원번호오류 */
+            SLog (USR_ERROR, "헤더회원번호오류[%d] <%d:%d>",
+                ErrCd, FirstSeq, INT_SEQ);
+            sleep (2);
+            break;
+        case    4:  /* 데이터일련번호오류 */
+            SLog (USR_ERROR, "데이터일련번호오류[%d] <%d:%d>",
+                ErrCd, FirstSeq, INT_SEQ);
+            sleep (2);
+            break;
+        case    5:  /* 메시지길이오류 */
+            SLog (USR_ERROR, "메시지길이오류[%d] <%d:%d>",
+                ErrCd, FirstSeq, INT_SEQ);
+            sleep (2);
+            break;
+        case    6:  /* 업무기마감오류 */
+            SLog (USR_ERROR, "업무기마감오류[%d] <%d:%d>",
+                ErrCd, FirstSeq, INT_SEQ);
+            sleep (2);
+            break;
+        case    7:  /* 온라인개시이전 */
+            SLog (USR_ERROR, "온라인개시이전[%d] <%d:%d:%d>",
+                ErrCd, FirstSeq, INT_SEQ, LOAD_CNT);
+            sleep (2);
+            break;
+        case    8:  /* 세션전문메시지타입오류 */
+            SLog (USR_ERROR, "세션전문메시지타입오류[%d] <%d:%d:%d>",
+                ErrCd, FirstSeq, INT_SEQ, LOAD_CNT);
+            sleep (2);
+            break;
+        case    9:  /* 시스템오류 */
+            SLog (USR_ERROR, "시스템오류[%d] <%d:%d>",
+                ErrCd, FirstSeq, INT_SEQ);
+            sleep (2);
+            break;
+        default:
+            SLog (USR_ERROR,
+                "RP_DATA recv:unknown 거부사유코드[%d] <%d:%d>",
+                ErrCd, FirstSeq, INT_SEQ);
+            sleep (2);
+            break;
+    }
+} /* End of Err_Msg ()  */
+ 
+/*************************************************************************
+	End of Program (jc_1600_tr.c)
+*************************************************************************/

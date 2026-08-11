@@ -1,0 +1,25 @@
+# .bash_profile
+
+if [ -s "$MAIL" ];then           # This is at Shell startup.  In normal
+        echo "$MAILMSG"        # operation, the Shell checks
+fi                          # periodically.
+
+# setup the terminal
+stty erase "^H" kill "^U" intr "^C" eof "^D" susp "^Z"
+stty hupcl ixon ixoff -parity -istrip
+stty erase ^?
+set -o vi
+
+export  EDITOR=vi
+export  EXINIT="set ts=4 ht=4 shiftwidth=4 showmatch"
+export  PS1="[\$LOGNAME@`hostname`:\$PWD] "
+export  EXTSHM=ON
+
+umask 003
+
+PATH=$PATH:$HOME/.local/bin:$HOME/st01/bin:$HOME/st01/shl:$HOME/bin:.:
+
+export EDITOR=vi
+export PATH
+
+. $HOME/st01/env/pkg_env.sh

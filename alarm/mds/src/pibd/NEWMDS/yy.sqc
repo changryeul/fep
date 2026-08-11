@@ -1,0 +1,593 @@
+#include "mds2.h"
+
+#include "comdef.h"
+#include "wfaapi.h"    // 실시간전송(Client)
+#include "axsnd.h"
+#include "mymq.h"
+#include "agfix.h"
+#include "agxpi.h"
+#include "agtrc.h"
+#include "comrdb.h"
+#include "comhdr.h"
+#include "comfun.h"
+
+EXEC SQL INCLUDE SQLCA;
+
+AG_FIX	s_afix;
+Ag_Fix	s_xfix;
+TFILE	s_trcf;
+TFile	_trcf_	=  (TFile) &s_trcf;
+char	*pname;
+
+typedef struct {
+	char		excode			[ 1];		// 원천 : 'S'=SMB, 'K'=KMB, 'E'=EBS, 'C'=CMB, 'H'=HAND
+	char		dtype			[ 1];		// 호가:'W', 체결:'X'	
+	char		symb			[ 7];		// 통화코드
+	char		date			[ 8];		// 수신일자 YYYYMMDD (서버시간)
+	char		time			[12];		// 수신시간 HHMMSS.SSSSSS
+	char		quotid			[30];		// Unique identifier of CMBS MarketData (use bid side)
+//	char		reqid			[20];		// MDReqID : Unique identifier of the client’s MarketDataRequest
+	double		bidprc			;			// Price of the MarketData Entry
+	double		bidqty			;			// Quantity of the MarketData Entry. Always “0” For USD/KRW, CNH/KRW
+	char		biddate			[ 8];		// NotUse : Specific date of trade settlement in YYYYMMDD format.
+//	char		bidquoteid		[12];		// NotUse : Unique identifier of this MarketData Snapshot
+	char		bidsettype		[ 4];		// NotUse : Always SP (SPOT) Tenor Code
+	double		bidbestprc		;			// NotUse : Only USD/KRW, CNH/KRW. Not tradeable price, reference only
+	double		bidbestqty		;			// NotUse : Only USD/KRW, CNH/KRW. Not tradeable price, reference only
+	double		offerprc		;			// Price of the MarketData Entry
+	double		offerqty		;			// Quantity of the MarketData Entry. Always “0” For USD/KRW, CNH/KRW
+	char		offerdate		[ 8];		// NotUse : Specific date of trade settlement in YYYYMMDD format.
+//	char		offerquoteid	[12];		// NotUse : Unique identifier of this MarketData Snapshot
+	char		offersettype	[ 4];		// NotUse : Always SP (SPOT) Tenor Code
+	double		offerbestprc	;			// NotUse : Only USD/KRW, CNH/KRW. Not tradeable price, reference only
+	double		offerbestqty	;			// NotUse : Only USD/KRW, CNH/KRW. Not tradeable price, reference only
+} YY;
+#define		SZ_YY		sizeof(YY)
+
+//==============================================================
+void exitproc(int );
+
+int sise2mds(char *excode, char *pbuff, int dlen, YY *psise);
+int	bizfunc(YY *psise);
+static int conv_SMBS(char *pbuff, int dlen, YY *psise);
+
+/*===============================================================
+ * EXITPROC
+===============================================================*/
+void exitproc(int exitval)
+{
+	printf("\nProgram Terminated.. exitval[%d]\n\n", exitval);
+
+	l_db2disconnect();
+	
+	exit(exitval);
+}
+
+void Usage(int exitval)
+{
+	printf("\n\t Usage : %s [-pPORT] [-mIP]\n", pname);
+	printf("\t   -p : 수신포트 \n");
+	printf("\t   -m : 멀티캐스트IP \n");
+	printf(" ex) %s -m227.10.20.20 -p30099\n", pname);
+	
+	exitproc(exitval);
+}
+
+/*===============================================================
+ * MAIN PROCESS
+===============================================================*/
+int main(int argc, char *argv[])
+{
+	int		rc, ii;	
+	int		mport;
+	char	stemp[128], mipad[128];
+
+	memset(mipad, 0x00, sizeof(mipad));
+	memset(stemp, 0x00, sizeof(stemp));
+
+	pname = basename(argv[0]);
+
+	/*===============================================================
+	 * PROCESS 초기화
+	===============================================================*/
+	if (argc < 1)	Usage(-1);
+	
+	for (ii=1; ii < argc; ii++)
+	{
+		memset(stemp, 0x00, sizeof(stemp));
+
+		if (strncmp(argv[ii], "-p", 2) == 0)
+		{
+			strcpy(stemp, &argv[ii][2]);
+			mport = atoi(stemp);
+		}
+		if (strncmp(argv[ii], "-m", 2) == 0)
+		{
+			strcpy(mipad, &argv[ii][2]);
+		}
+	}
+
+	if (mport <= 0)		Usage(-2);
+
+	signal(SIGTERM, exitproc);
+
+	APLog(pname, APLOG_ERR, "Start....!");
+
+	/*===============================================================
+	 * FIX 전문 변환용 로컬메모리 초기화
+	===============================================================*/
+	// init log file
+	rc = agxpi_tfile_vinit (_trcf_, LOG_DIR, AG_NULL, AG_HOME, TRC_DIR, AGINI_GID, AGINI_SGI, AGINI_MYI,TDAT, DALL);
+	agtrc_open (AG_NULL, _trcf_);
+	
+	// start message
+	agtrc_msg (_trcf_, AGINI_GID, AGINI_SGI, AGINI_MYI, 0, 0, TDBG, "fixgetval START\n");
+	mxzinit(s_afix);
+	s_xfix = (Ag_Fix) &s_afix;
+
+	rc = agfix_at (s_xfix, AFIX_MAT_INIT);
+	if (rc)
+	{
+		APLog(pname, APLOG_DEBUG, "agfix_at ERROR-R:%d E:%d ...\n", rc, errno);
+		exitproc(-3);
+	}
+
+	/*===============================================================
+	 * UDP 서버기동 : 수신준비
+	===============================================================*/
+	int		rsock, bsize, options = 1;
+	in_addr_t addr, f, t;
+	struct	sockaddr_in svrsock, clisock;
+	struct	ip_mreq ip_mreq;
+	socklen_t socklen = sizeof(svrsock);
+
+	memset(&svrsock, 0, sizeof(svrsock));
+	memset(&clisock, 0, sizeof(clisock));	
+
+	// use UDP direct
+	f = ntohl(inet_addr(MULTICAST_F));
+	t = ntohl(inet_addr(MULTICAST_T));
+
+	addr = ntohl(inet_addr(mipad));
+	if (addr >= f && addr <= t)		// MULTI
+	{
+		if ((rsock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0)
+		{
+			APLog(pname, APLOG_DEBUG, "Cannot open a socket for %s.%d\n", mipad, mport);
+			exitproc (-4);
+		}
+
+		ip_mreq.imr_multiaddr.s_addr = inet_addr(mipad);
+		ip_mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+		if (setsockopt(rsock, IPPROTO_IP, IP_ADD_MEMBERSHIP, (void *)&ip_mreq, sizeof(ip_mreq)) != 0)
+		{
+			APLog(pname, APLOG_DEBUG, "Cannnot add a multicast member for %s.%d\n", mipad, mport);
+			close(rsock);
+			exitproc (-5);
+		}
+	}
+	else
+	{
+		if ((rsock = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
+		{
+			APLog(pname, APLOG_DEBUG, "Cannot open a socket for a port %d", mport);
+			exitproc(-4);
+		}
+	}
+
+	options = 1;
+	setsockopt(rsock, SOL_SOCKET, SO_REUSEADDR, &options, sizeof(options));
+
+	bsize = 80 * 1024;
+	setsockopt(rsock, SOL_SOCKET, SO_RCVBUF, &bsize, sizeof(int));
+
+	svrsock.sin_family = AF_INET;
+	svrsock.sin_addr.s_addr = INADDR_ANY;
+	svrsock.sin_port = htons(mport);
+
+	if (bind(rsock, (struct sockaddr *)&svrsock, sizeof(svrsock)) != 0)
+	{
+		APLog(pname, APLOG_DEBUG, "Cannot bind a socket for %s.%d\n", mipad, mport);
+		close(rsock);
+		exitproc (-6);
+	}
+	
+	APLog(pname, APLOG_DEBUG, "Start to receive from %s:%d", mipad, mport);
+
+	/*===============================================================
+	 * DB Connection
+	===============================================================*/
+	rc = l_db2connect();
+	if (rc != 0)
+	{
+		APLog(pname, APLOG_DEBUG, "[%s] DB connect failed : %d\n",__func__, rc);
+		exitproc(-7);
+	}
+
+	APLog(pname, APLOG_DEBUG, "[%s] DB connect success !", __func__);
+
+	/*===============================================================
+	 * MAIN PROCESS (시세수신)
+	===============================================================*/
+	int		rtn, dlen;
+	char	rbuff[MAX_PACKET_SIZE+512];	// FIX DATA
+	char	ctime [14], rejmsg[128];
+	struct	timeval rtime;
+	struct tm *lt;
+
+	YY	psise;
+
+	while (1)
+	{
+		/*===============================================================
+		 * UDP 시세 수신
+		===============================================================*/
+		memset(rbuff, 0x00, sizeof(rbuff));
+		
+		dlen = recv(rsock, rbuff, sizeof(rbuff), 0);
+		if (dlen < 0)
+		{
+			if (errno == EINTR || errno == EAGAIN)		continue;
+
+			break;
+		}
+
+		gettimeofday(&rtime, NULL);
+		lt = localtime(&rtime.tv_sec);
+
+//APLog(pname, APLOG_DEBUG, "[%s:%d] RECEIVE DATA (%.*s)", __func__, dlen, dlen, rbuff);
+
+		/*===============================================================
+		 * FIX FORMAT CONVERT
+		===============================================================*/
+		memset(&psise, 0x00, sizeof(psise));
+
+		rtn = sise2mds("S", rbuff, dlen, &psise);
+		if (rtn != 0)
+		{
+			APLog(pname, APLOG_DEBUG, "Receive Data Convert Error (%d)", rtn);
+			continue;
+		}
+
+//-------------------------------------------------------------------------
+// BIZ LOGIC
+//-------------------------------------------------------------------------
+		rtn = bizfunc(&psise);
+		if (rtn != 0)
+		{
+			l_db2rollback();
+			continue;
+		}
+		l_db2commit();
+//-------------------------------------------------------------------------
+// BIZ LOGIC
+//-------------------------------------------------------------------------
+
+	}
+
+	APLog(pname, APLOG_DEBUG, "UDP 시세수신 BREAK. Call Termination function..");
+	
+	close(rsock);
+
+	exitproc(-99);
+}
+
+int	bizfunc(YY *psise)
+{
+
+EXEC SQL BEGIN DECLARE SECTION;
+    char    v_symb	            [ 7+1];
+    char    v_regi_ymd          [ 8+1];
+    char    v_regi_time         [12+1];
+    char    v_wx_dstcd          [ 1+1];
+    double  d_bid_prc         		  ;
+    double  d_best_bid_prc      	  ;
+    double  d_bid_qty		    	  ;
+    double  d_offer_prc        		  ;
+    double  d_best_offer_prc    	  ;
+    double  d_offer_qty		    	  ;
+EXEC SQL END DECLARE SECTION;
+
+	memset(v_symb		,   0x00, sizeof(v_symb			));
+	memset(v_regi_ymd	,   0x00, sizeof(v_regi_ymd		));
+	memset(v_regi_time	,   0x00, sizeof(v_regi_time	));
+	memset(v_wx_dstcd	,   0x00, sizeof(v_wx_dstcd		));
+
+	d_bid_prc			= 0;
+	d_best_bid_prc		= 0;
+	d_bid_qty			= 0;
+	d_offer_prc 		= 0;
+	d_best_offer_prc	= 0;
+	d_offer_qty			= 0;
+	
+	sprintf(v_symb		,     "%.6s",     psise->symb);
+	sprintf(v_regi_ymd	,     "%.8s",     psise->date);
+	sprintf(v_regi_time ,     "%.12s",    psise->time);
+	sprintf(v_wx_dstcd	,       "%c",     psise->quotid[0]);
+	d_bid_prc 			= psise->bidprc;
+	d_best_bid_prc		= psise->bidbestprc;
+	d_bid_qty			= psise->bidqty;
+	d_offer_prc			= psise->offerprc;
+	d_best_offer_prc	= psise->offerbestprc;
+	d_offer_qty			= psise->offerqty;
+			
+//	if (v_wx_dstcd[0] != 'X')
+//		v_wx_dstcd[0] = 'W';
+	v_wx_dstcd[0] = psise->dtype[0];
+		
+	if (memcmp(v_symb, "USDKRW", 6) != 0)
+	{
+		APLog(pname, APLOG_DEBUG, "[%s] USDKRW != [%.6s]",__func__, v_symb);
+		return (-1);
+	}
+	APLog(pname, APLOG_DEBUG, "========================================================");
+	APLog(pname, APLOG_DEBUG, "[%s] excode      =[%.1s]", __func__, psise->excode      );  //    [ 1];       // 원천 : 'S'=SMB, 'K'=KMB, 'E'=EBS, 'C'=CMB, 'H'=HAND
+	APLog(pname, APLOG_DEBUG, "[%s] dtype       =[%.1s]", __func__, psise->dtype       );  //    [ 1];       // 호가:'W', 체결:'X'	
+	APLog(pname, APLOG_DEBUG, "[%s] symb        =[%.7s]", __func__, psise->symb        );  //    [ 7];       // 통화코드
+	APLog(pname, APLOG_DEBUG, "[%s] date        =[%.8s]", __func__, psise->date        );  //    [ 8];       // 수신일자 YYYYMMDD (서버시간)
+	APLog(pname, APLOG_DEBUG, "[%s] time        =[%.12s]", __func__, psise->time       );  //    [12];       // 수신시간 HHMMSS.SSSSSS
+	APLog(pname, APLOG_DEBUG, "[%s] quotid      =[%.30s]",__func__, psise->quotid      );  //    [30];       // Unique identifier of CMBS MarketData (use bid side)
+	APLog(pname, APLOG_DEBUG, "[%s] bidprc      =[%f]",   __func__, psise->bidprc      );  //    ;           // Price of the MarketData Entry
+	APLog(pname, APLOG_DEBUG, "[%s] bidqty      =[%f]",   __func__, psise->bidqty      );  //    ;           // Quantity of the MarketData Entry. Always “0” For USD/KRW, CNH/KRW
+	APLog(pname, APLOG_DEBUG, "[%s] biddate     =[%.8s]", __func__, psise->biddate     );  //    [ 8];       // NotUse : Specific date of trade settlement in YYYYMMDD format.
+	APLog(pname, APLOG_DEBUG, "[%s] bidsettype  =[%.4s]", __func__, psise->bidsettype  );  //    [ 4];       // NotUse : Always SP (SPOT) Tenor Code
+	APLog(pname, APLOG_DEBUG, "[%s] bidbestprc  =[%f]",   __func__, psise->bidbestprc  );  //    ;           // NotUse : Only USD/KRW, CNH/KRW. Not tradeable price, reference only
+	APLog(pname, APLOG_DEBUG, "[%s] bidbestqty  =[%f]",   __func__, psise->bidbestqty  );  //    ;           // NotUse : Only USD/KRW, CNH/KRW. Not tradeable price, reference only
+	APLog(pname, APLOG_DEBUG, "[%s] offerprc    =[%f]",   __func__, psise->offerprc    );  //    ;           // Price of the MarketData Entry
+	APLog(pname, APLOG_DEBUG, "[%s] offerqty    =[%f]",   __func__, psise->offerqty    );  //    ;           // Quantity of the MarketData Entry. Always “0” For USD/KRW, CNH/KRW
+	APLog(pname, APLOG_DEBUG, "[%s] offerdate   =[%.8s]", __func__, psise->offerdate   );  //    [ 8];       // NotUse : Specific date of trade settlement in YYYYMMDD format.
+	APLog(pname, APLOG_DEBUG, "[%s] offersettype=[%.4s]", __func__, psise->offersettype);  //    [ 4];       // NotUse : Always SP (SPOT) Tenor Code
+	APLog(pname, APLOG_DEBUG, "[%s] offerbestprc=[%f]",   __func__, psise->offerbestprc);  //    ;           // NotUse : Only USD/KRW, CNH/KRW. Not tradeable price, reference only
+	APLog(pname, APLOG_DEBUG, "[%s] offerbestqty=[%f]",   __func__, psise->offerbestqty);  //    ;           // NotUse : Only USD/KRW, CNH/KRW. Not tradeable price, reference only
+
+	
+	EXEC SQL
+		INSERT INTO	INST1.TSKEIMU99
+		(
+			GROUP_CO_CD
+		  , REGI_YMD 
+		  , RGST_TIME 
+		  , WX_DSTCD 
+		  , BID_PRC 
+		  , BEST_BID_PRC 
+		  , BID_QTY 
+		  , OFFER_PRC 
+		  , BEST_OFFER_PRC 
+		  , OFFER_QTY 
+		  , SYS_LAST_PRCSS_YMS
+		  , SYS_LAST_UNO
+		)
+		VALUES
+		(
+		    'KB0'
+		  , (SELECT 거래기준년월일 FROM INST1.TSKEIAM00)
+		  , :v_regi_time
+		  , :v_wx_dstcd
+		  , :d_bid_prc
+		  , :d_best_bid_prc
+		  , :d_bid_qty
+		  , :d_offer_prc
+		  , :d_best_offer_prc
+		  , :d_offer_qty
+		  , SUBSTR(HEX(CURRENT TIMESTAMP),1,20)
+		  , 'SYSTEM'
+		)	
+	;
+	
+	if (SQLCODE != 0 && abs(SQLCODE) != 803)
+    {
+        APLog(pname, MLOG_ERROR, "TSKEIMU99 insert error [%.9s][%c] [%s]  \n", v_regi_time, psise->quotid[0], SQLERRM);
+        return(-1);
+    }
+	return 0;
+}
+
+/*===============================================================
+ * 수신한 FIX 데이터를 내부 포맷으로 전환
+===============================================================*/
+static int conv_SMBS(char *pbuff, int dlen, YY *psise)
+{
+	int		ii, rc, nrec;
+	uint32_t	ymd, hms;
+	char    type[DF_2], strval[64], strval2[64];
+	char	symbol[ 7+1];
+
+	memset(symbol, 0x00, sizeof(symbol));
+	psise->excode[0] = 'S';				// 원천 : 'S'=SMB, 'K'=KMB, 'E'=EBS, 'C'=CMB
+
+// ★TODO-08 : 데이터 원천에 따라 FIX패킷 Convert 시 분기로직 추가 : sise_fix2ecm()
+
+	AFIX_TOK_SETVATINT(s_xfix, MsgSeqNum,				AG_ZERO, (double) EOF);
+	AFIX_TOK_SETVATINT(s_xfix, LastMsgSeqNumProcessed,	AG_ZERO, (double) EOF);
+	AFIX_TOK_SETVATINT(s_xfix, BeginSeqNo,				AG_ZERO, (double) EOF);
+	AFIX_TOK_SETVATINT(s_xfix, EndSeqNo,				AG_ZERO, (double) EOF);
+	AFIX_TOK_SETVATINT(s_xfix, NewSeqNo,				AG_ZERO, (double) EOF);
+
+	agfix_token_cls(s_xfix);
+	agfix_set_define_leg (s_xfix, NoMDEntries, AG_ZERO, (int *) AG_NULL, (int *) AG_NULL, (double) EOF);
+	
+	pbuff[dlen] = 0x00;
+	rc = agfix_dec (s_xfix, pbuff, dlen+1, SOH, EQU, AG_ZERO);		
+	if (rc) 
+ 	{
+		APLog(pname, APLOG_DEBUG, "[%s] agfix_dec error (%d) [%d:%s]",__func__, rc, dlen, pbuff);
+		return (-1);
+	}
+
+	rc = AFIX_TOK_GETSTR (s_xfix, Symbol, AG_ZERO, symbol);
+	if (rc != AG_OK)
+	{
+		APLog(pname, APLOG_DEBUG, "[%s] AFIX_TOK_GETSTR error (%d) [%d:%s]",__func__, rc, dlen, pbuff);
+		return (-1);
+	}
+	sprintf(psise->symb, "%.3s%.3s", symbol, &symbol[4]);
+
+	struct tm	*lt;
+	struct timeval	tv;
+
+	gettimeofday(&tv, NULL);
+	lt = localtime(&tv.tv_sec);
+
+	//AFIX_TOK_GETSTR (s_xfix, SendingTime, AG_ZERO, g_time);	
+
+	sprintf(strval, "%04d%02d%02d",    lt->tm_year+1900, lt->tm_mon+1, lt->tm_mday);
+	memcpy(psise->date, strval, sizeof(psise->date));
+
+	sprintf(strval, "%02d%02d%02d%06d",lt->tm_hour, lt->tm_min, lt->tm_sec, tv.tv_usec);
+	memcpy(psise->time, strval, sizeof(psise->time));
+
+	psise->dtype[0] = 'W';
+	
+	nrec = AG_ZERO;
+	rc = AFIX_TOK_GETINT (s_xfix, NoMDEntries, AG_ZERO, nrec);
+	if (rc != AG_OK)	nrec = AG_ONE;
+
+	char	AggSide[8];
+
+	for (ii = 0; ii < nrec; ii++)
+	{
+		MXZINIT (type); 
+		AFIX_TOK_GETSTR (s_xfix, MDEntryType, ii, type);
+
+		switch (type[0])
+		{
+		case '0' :
+// AFIX_TOK_GETDBL에서 잘못된 값이 리턴되어 STR로 처리후 변환
+//			AFIX_TOK_GETDBL (s_xfix, 270, 			ii, psise->bidprc);
+//			memset(strval, 0x00, sizeof(strval));
+			AFIX_TOK_GETSTR (s_xfix, MDEntryPx, 	ii, strval);
+			psise->bidprc = atof(strval);
+//			AFIX_TOK_GETDBL (s_xfix, MDEntrySize, 	ii, psise->bidqty);
+			AFIX_TOK_GETSTR (s_xfix, MDEntrySize, 	ii, strval);
+			psise->bidqty = atof(strval);
+			AFIX_TOK_GETSTR (s_xfix, MDEntryDate, 	ii, psise->biddate);
+			AFIX_TOK_GETSTR (s_xfix, QuoteEntryID, 	ii, strval);		// psise->bidquoteid);
+			sprintf(strval2, "%.1s.%.*s", psise->excode, sizeof(psise->quotid)-2, strval);
+			memcpy(psise->quotid, strval2, strlen(strval2));			// excode + QuoteEntryID 로 채번
+			AFIX_TOK_GETSTR (s_xfix, 9063,			ii, psise->bidsettype);
+//			AFIX_TOK_GETDBL (s_xfix, 9064,			ii, psise->bidbestprc);
+			AFIX_TOK_GETSTR (s_xfix, 9064,			ii, strval);
+			psise->bidbestprc = atof(strval);
+//			AFIX_TOK_GETDBL (s_xfix, 9065,			ii, psise->bidbestqty);
+			AFIX_TOK_GETSTR (s_xfix, 9065,			ii, strval);
+			psise->bidbestqty = atof(strval);
+			//bid시세가 없어서 임시추가 
+
+			if (memcmp(psise->symb, "USDKRW", 6) == 0)
+			{
+//				AFIX_TOK_GETDBL (s_xfix, 9065, ii, psise->bidqty);
+				AFIX_TOK_GETSTR (s_xfix, 9065, ii, strval);
+				psise->bidqty = atof(strval);
+			}
+			break;
+
+		case '1' :
+//			AFIX_TOK_GETDBL (s_xfix, 270, 			ii, psise->offerprc);
+//			memset(strval, 0x00, sizeof(strval));
+			AFIX_TOK_GETSTR (s_xfix, MDEntryPx, 	ii, strval);
+			psise->offerprc = atof(strval);
+//			AFIX_TOK_GETDBL (s_xfix, MDEntrySize, 	ii, psise->offerqty);
+			AFIX_TOK_GETSTR (s_xfix, MDEntrySize, 	ii, strval);
+			psise->offerqty = atof(strval);
+			AFIX_TOK_GETSTR (s_xfix, MDEntryDate, 	ii, psise->offerdate);
+//			AFIX_TOK_GETSTR (s_xfix, QuoteEntryID, 	ii, psise->offerquoteid);
+			AFIX_TOK_GETSTR (s_xfix, 9063,			ii, psise->offersettype);
+//			AFIX_TOK_GETDBL (s_xfix, 9064,			ii, psise->offerbestprc);
+			AFIX_TOK_GETSTR (s_xfix, 9064,			ii, strval);
+			psise->offerbestprc = atof(strval);
+//			AFIX_TOK_GETDBL (s_xfix, 9065,			ii, psise->offerbestqty);
+			AFIX_TOK_GETSTR (s_xfix, 9065,			ii, strval);
+			psise->offerbestqty = atof(strval);
+		 	//offer시세가 없어서 임시추가 
+
+			if (memcmp(psise->symb, "USDKRW", 6) == 0)
+			{
+//				AFIX_TOK_GETDBL (s_xfix, 9065, ii, psise->offerqty);
+				AFIX_TOK_GETSTR (s_xfix, 9065, ii, strval);
+				psise->offerqty = atof(strval);
+			}
+			break;
+
+		case '2' :	// 35=X (MarketData Incremantal Refresh for Trade Summary)
+			// MDEntryDate, MDEntryTime 수신 데이터로 UPDATE
+			// TODO : MDUpdateAction(279) : New,Change,Delete 에 대한 처리 필요한지 확인
+			// TODO : AggressorSide(5797) : 0=No aggressor 에 대한 처리 필요한지 확인
+
+			//AFIX_TOK_GETSTR (s_xfix, MDEntryDate, 	ii, psise->date);
+
+			// GMT시간이므로 GMT+9로 변형해야 국내시간 나오므로 서버시간으로 사용
+			//AFIX_TOK_GETSTR (s_xfix, MDEntryTime, 	ii, strval);		// HHMMSS -> HHMMSSsss
+
+			AFIX_TOK_GETSTR (s_xfix, 5797, 	ii, AggSide);	// 0=No aggressor, 1=Buy, 2=Sell
+			if (AggSide[0] == '1')
+			{
+				AFIX_TOK_GETSTR (s_xfix, MDEntryPx, 	ii, strval);
+				psise->bidprc   = atof(strval);
+				AFIX_TOK_GETSTR (s_xfix, MDEntrySize, 	ii, strval);		// always '0'
+				psise->bidqty   = atof(strval);
+				//MDUpdateAction=279
+				AFIX_TOK_GETSTR (s_xfix, MDEntryDate, 	ii, psise->biddate);
+				//AggressorSide=5797
+				AFIX_TOK_GETSTR (s_xfix, 9063,			ii, psise->bidsettype);
+				AFIX_TOK_GETSTR (s_xfix, 9064,			ii, strval);
+				psise->bidbestprc = atof(strval);
+			}
+			else
+			{
+				AFIX_TOK_GETSTR (s_xfix, MDEntryPx, 	ii, strval);
+				psise->offerprc = atof(strval);
+				AFIX_TOK_GETSTR (s_xfix, MDEntrySize, 	ii, strval);		// always '0'
+				psise->offerqty = atof(strval);
+				//MDUpdateAction=279
+				AFIX_TOK_GETSTR (s_xfix, MDEntryDate, 	ii, psise->offerdate);
+				//AggressorSide=5797
+				AFIX_TOK_GETSTR (s_xfix, 9063,			ii, psise->offersettype);
+				AFIX_TOK_GETSTR (s_xfix, 9064,			ii, strval);
+				psise->offerbestprc = atof(strval);
+			}
+
+			psise->dtype[0] = 'X';
+
+			AFIX_TOK_GETSTR (s_xfix, MDEntryID, 	ii, strval);
+			// quotID[0] 을 'X'로 세팅하여 기존 시세 데이터와 구분 함.
+			sprintf(strval2, "%.1s.%.*s", psise->excode, sizeof(psise->quotid)-2, strval);
+			memcpy(psise->quotid, strval2, strlen(strval2));			// excode + QuoteEntryID 로 채번
+
+			//TradeDate=75
+			//FutSettDate=64
+
+			break;
+		}
+	}
+
+	// 24.08.26) BEST 값이 없으면 AVAIL 값으로 대체함.
+	if (psise->bidbestprc   <= 0.)	psise->bidbestprc   = psise->bidprc;
+	if (psise->offerbestprc <= 0.)	psise->offerbestprc = psise->offerprc;
+
+	return 0;
+}
+
+int sise2mds(char *excode, char *pbuff, int dlen, YY *psise)
+{
+	int		rc;
+
+	switch (excode[0])
+	{
+	case 'S' :
+		rc = conv_SMBS(pbuff, dlen, psise);
+		if (rc < 0)
+		{
+			APLog(pname, APLOG_DEBUG, "[%s] conv_SMBS error ! [%d] [%.*s]", __func__, rc, dlen, pbuff);
+			return (-1);
+		}
+		break;
+
+	default :
+		APLog(pname, APLOG_DEBUG, "[%s] excode error ! [%.1s]", __func__, excode);
+		return (-1);
+	}
+
+	return 0;
+}
+
+

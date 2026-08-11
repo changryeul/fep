@@ -1,0 +1,23 @@
+---
+title: PB - PA/PB 관계 및 전체 데이터 흐름도
+---
+graph LR
+    CLIENT["Client\n(HTS/MTS)"]
+
+    subgraph CURRENT["현재 구성: PA 직접접속 (PB 비활성)"]
+        direction LR
+        PA1["PA\n(간접FEP)"]
+    end
+
+    CLIENT --> PA1
+    PA1 -->|"직접접속"| KRX1["KRX\n(거래소)"]
+
+    subgraph ACTIVE["PB 활성 구성: PA - PB - KRX"]
+        direction LR
+        PA2["PA\n(간접FEP)"]
+        PB["PB\n(시장FEP)"]
+    end
+
+    CLIENT2["Client\n(HTS/MTS)"] --> PA2
+    PA2 -->|":41001~41005\n:32009,:32016,:32019"| PB
+    PB -->|":37221,:57221\n:61725,:61726\n:63724,:63725"| KRX2["KRX\n(거래소)"]

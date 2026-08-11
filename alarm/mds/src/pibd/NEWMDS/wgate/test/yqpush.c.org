@@ -1,0 +1,91 @@
+#include "mds.h"
+#include "wfaapi.h"
+
+int sndcnt=1;
+
+void *qpush(void *);
+
+/*===============================================================
+ * MAIN PROCESS
+===============================================================*/
+int main(int argc, char *argv[])
+{
+	int		ii, iseq;
+	pthread_attr_t attr;
+	pthread_t		tid;
+	
+	if (argc > 1)	sndcnt = atoi(argv[1]);
+
+	pthread_attr_init(&attr);
+
+	for (ii=0; ii<10; ii++)
+	{
+		iseq = ii;
+		pthread_create(&tid, &attr, qpush, (void *)&iseq);
+		printf("pthread_create : %u:%d\n", tid, iseq);
+		usleep(50000);
+	}
+
+	while (1)
+	{
+		sleep (10);
+	}
+
+	exit(0);
+}
+
+void *qpush(void *argv)
+{
+	pthread_t	tid;
+	int		pos;
+	int		rc, seq=0;
+	int		slen;
+	pid_t	pid;
+	char	sbuf[1024];
+
+	char	*dpath  = "/fsfxwin/wfa";
+	char	*ddir	= "dat";
+	char	*dfnam	= "YARIQ";
+	int		semk	= 0x16000351;
+	int		dsiz	= 1024;
+
+	tid = pthread_self();
+	pthread_detach(tid);
+	
+	pos = *((int *)argv);
+
+///////////////////////////
+
+	AG_DQUE dque;
+	AG_DQUECLS(&dque);
+
+	dque.xha |= AQ_XHA_OPN;
+	dque.xha |= AG_XAS_LIV;
+/*
+//int agdque_wrn (Ag_Dque dque, char *dpath, char *ddir, char *dfnam, int semk, int rsiz, char *pbuf, int plen)
+rc = agdque_wrn (&q_rionm, g_dpath, g_ddir, g_rionm, k_rionm, z_irqsz, rbuf, rlen);
+*/
+	while (seq < sndcnt)
+	{
+		seq++;
+		memset(sbuf, 0x00, sizeof(sbuf));
+
+		sprintf(sbuf, "%u.%d", tid, seq);
+		slen = strlen(sbuf);
+
+		rc = agdque_wrn (&dque, dpath, ddir, dfnam, semk, dsiz, sbuf, slen);
+		if (rc <= 0)
+		{
+			printf("agdque_wrn error [%d]\n", rc);
+			break;
+		}
+/*
+		printf("write:%d) [%s]\n", seq, sbuf);
+*/
+		usleep(10000);
+	}
+
+	printf("write:%d) [%s]\n", seq, sbuf);
+	
+	pthread_exit(0);
+}

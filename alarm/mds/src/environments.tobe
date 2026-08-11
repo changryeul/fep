@@ -1,0 +1,97 @@
+# 
+# Building  Environments
+#
+# PLATFORM=Linux | AIX | SunOS | HPUX
+#
+include /fsfxwin/xwaw/env/angel.mak
+PLATFORM=Linux
+PREFIX=/fsfxwin/mds
+SOURCE=/fsfxwin/mds/src
+LOGPATH=/fslog/kei/mds
+WFGPATH=/fsfxwin/wfg
+# for LINUX
+Linux_CC=gcc
+Linux_LD=gcc
+#Linux_CFLAGS=-Wall -DLINUX -D_REENTRANT -D_GNU_SOURCE -D__USE_FILE_OFFSET64 -Wno-unused-variable -Wno-unused-but-set-variable
+Linux_CFLAGS=-w    -DLINUX -D_REENTRANT -D_GNU_SOURCE -D__USE_FILE_OFFSET64 -Wno-unused-variable -Wno-unused-but-set-variable
+Linux_LFLAGS=-lpthread -lrt -ldl
+Linux_SFLAGS=-fPIC
+Linux_AFLAGS=-rv
+Linux_SOOPTS=-shared
+
+# For AIX
+# AIX 64bit mode
+AIX_CC=cc
+AIX_LD=cc
+AIX_CFLAGS=-q64 -DAIX -D_THREAD_SAFE -D_BSD -qcpluscmt -D_LARGE_FILES
+AIX_SFLAGS=
+AIX_LFLAGS=-b64 -lpthread -lbsd
+AIX_AFLAGS=-rv -X64
+AIX_AROPTS=-X64
+AIX_SOOPTS=-bE:export.aix -bM:SRE -bnoentry -lc
+
+# For SunOS
+SunOS_CC=cc
+SunOS_LD=ld
+SunOS_CFLAGS=-xc99=all -DSunOS -D_REENTRANT -w -D_LARGE_FILES
+SunOS_SFLAGS=-Kpic
+SunOS_LFLAGS=-Bdynamic -lpthread -lrt -lnsl -lsocket
+SunOS_AFLAGS=-rv
+SunOS_AROPTS=
+SunOS_SOOPTS=-Kpic -G -Mexport.sun
+
+#
+# Install PATH environments
+#
+INC_DIR=$(PREFIX)/include
+LIB_DIR=$(PREFIX)/lib
+BIN_DIR=$(PREFIX)/bin
+ETC_DIR=$(PREFIX)/etc
+LOG_DIR=$(LOGPATH)
+CFG_DIR=$(ETC_DIR)
+TMP_DIR=$(PREFIX)/tmp
+LIB_SRC=$(SOURCE)/lib
+SHL_DIR=$(PREFIX)/shl
+INC_SRCDIR=$(SRC_HOME)/src/nfts/inc
+WFAAPI_LFLAGS=-L/fsfxwin/wfa/lib -lwfaapi
+# CISAM Environments
+CISAM_CFLAGS=
+# CISAM_LFLAGS=-lifisam -lifisamx
+CISAM_LFLAGS=
+#CISAM_LFLAGS=-lisam
+
+# MyMQ environment
+MYMQ_HOME=/fsfxwin/mymq
+#MYMQ_CFLAGS=-I$(MYMQ_HOME)/inc
+MYMQ_CFLAGS=-I$(MYMQ_HOME)/include
+MYMQ_LFLAGS=-L$(MYMQ_HOME)/lib -lmymq
+
+#DB envirenment
+SRC_HOME=/fsfxwin/win
+DB2_LIB=$(SRC_HOME)/lib
+LFRDB=-L$(DB2_LIB) -lrdb
+LFORA=-L$(DB2_LIB) -lrdb -lcom -lseed
+
+################################################################################
+# RDB environment (Oracle 12 Use)
+################################################################################
+ORACLE_HOME=$(DB2_HOME)
+ORACLE_LIBRARY_PATH=$(DB2_HOME)/lib
+ORACLE_PRECOMPPUBLIC=$(DB2_HOME)/include
+
+P_CFLAGS=-I$(ORACLE_PRECOMPPUBLIC)
+P_LFLAGS=-Bdynamic -L$(ORACLE_LIBRARY_PATH) -ldb2
+PLFLAGS=$(P_LFLAGS)
+
+
+## MDS library options
+L_CFLAGS=$($(PLATFORM)_CFLAGS) $($(PLATFORM)_SFLAGS) $(MYMQ_CFLAGS) $(CISAM_CFLAGS) -DETC_DIR=\"$(ETC_DIR)\" -DLOG_DIR=\"$(LOG_DIR)\" -DBIN_DIR=\"$(BIN_DIR)\" -DTMP_DIR=\"$(TMP_DIR)\" -DSHL_DIR=\"$(SHL_DIR)\"
+L_LFLAGS=$($(PLATFORM)_SOOPTS) $(MYMQ_LFLAGS) 
+#
+## MDS Application environments
+MY_CFLAGS=$($(PLATFORM)_CFLAGS) $(MYMQ_CFLAGS) $(CISAM_CFLAGS)
+MY_LFLAGS=$($(PLATFORM)_LFLAGS) $(MYMQ_LFLAGS) $(CISAM_LFLAGS) -lm
+MY_AFLAGS=$($(PLATFORM)_AFLAGS)
+
+CC=$($(PLATFORM)_CC)
+LD=$($(PLATFORM)_LD)

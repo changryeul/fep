@@ -1,0 +1,475 @@
+#include "mds2.h"
+#include "wfaapi.h"
+#include "wgate.h"
+#include "comrdb.h"
+
+EXEC SQL INCLUDE SQLCA;
+
+char	tbuf[1024];
+char	compid[32];
+AG_DQUE		qin;
+  
+struct _WGVAL {
+	char			useyn[1];
+	int				ordcnt;
+	WGKEY			wgkey;
+	WG_QUOT_REQ		qreq;
+	WG_QUOT			quot;
+} wgval;
+
+EXEC SQL BEGIN DECLARE SECTION;
+	char	v_sendcompid		[50+1];
+	char	v_trsmt_taget_id	[50+1];
+	char	v_trsmt_taget_sub_id[50+1];
+	char	v_recv_taget_id		[50+1];
+	char	c_fcm_acno			[20+1];
+	char	c_fx_prdct_cd		[ 6+1];
+	char	c_tnr_cd			[ 1+1];
+	char	c_spot_ymd			[ 8+1];
+	char	c_expir_ymd			[ 8+1];
+	char	v_telgm_dmnd_dstic	[ 1+1];
+EXEC SQL END DECLARE SECTION;
+
+int sendquotreq();
+int sendorder();
+void *handler_quot(void *argv);
+void _set_pad(char *p, int len);
+
+void exitproc(int signo)
+{
+	int		rc, slen;
+	char	sbuf[1024];
+	WGCOM		*c=sbuf;
+	WG_LOGOUT	*p=c->data;
+
+	memset(sbuf, 0x00, sizeof(sbuf));
+	
+	if (wgval.useyn[0] != '1')	{
+		l_db2disconnect();
+		exit(0);
+	}
+
+	switch (signo)
+	{
+	case SIGINT : // RFS 해제 요청	
+//		if (wgval.useyn[0] == '0')		break;
+
+		memset(sbuf, 0x00, sizeof(sbuf));
+		memcpy(sbuf, tbuf, sizeof(WGCOM));
+		c->msgtp[0] = 'L';
+		strcpy(p->text, "I'm done.");
+		
+		slen=sizeof(WGCOM)+sizeof(WG_LOGOUT);
+		_set_pad(sbuf, slen);
+		rc = agdque_wrn (&qin, WG_DAT_DIR, NULL, WGDQ_RCVRQ, WGSEM_RCVRQ, 1024, sbuf, slen);
+		if (rc < 0)	printf("agdque_wrn error : %d\n", rc);
+		else		printf("\nsend unsubscribe packet ok..!!!! [%d]\n", rc);
+
+		break;
+
+	default : 
+		break;
+	}
+
+	l_db2disconnect();
+
+	exit(0) ;
+}
+
+void _set_pad(char *p, int len)
+{
+	int		ii;
+
+	for (ii=0; ii<len; ii++) {
+		if (*(p+ii) == 0x00)	*(p+ii)=' ';
+	}
+	*(p+len) = 0x00;
+
+	return ;
+}
+
+/*===============================================================
+ * MAIN PROCESS
+===============================================================*/
+int main(int argc, char *argv[])
+{
+	int		pos, idx=1, seq=0;
+	int		rc;
+	int		slen, rwno[2];
+	char	sbuf[1024], rbuf[1024], stemp[32], msg[128];
+	char	dstcd[1+1];
+
+	signal(SIGINT, (void *)exitproc);
+
+	memset(sbuf,  0x00, sizeof(sbuf));
+	memset(rbuf,  0x00, sizeof(rbuf));
+	memset(tbuf,  0x00, sizeof(tbuf));
+	memset(stemp, 0x00, sizeof(stemp));
+	
+	//memset(&wgval,0x00, sizeof(wgval));
+	memset(&wgval.wgkey, ' ', sizeof(WGKEY));
+
+	printf("\n CliTP (2=API,3=FXGO) : ");
+	fgets(stemp, sizeof(stemp), stdin);
+	stemp[strlen(stemp)-1] = 0x00;
+
+	if (stemp[0] == '2')	// API
+	{
+		strcpy(wgval.wgkey.targetcompid, "KBET_API");
+		printf(" Sender (TTESTT-TRD01) : ");
+		fgets(stemp, sizeof(stemp), stdin);
+		stemp[strlen(stemp)-1] = 0x00;
+		if (strlen(stemp) > 0)	strcpy(wgval.wgkey.sendcompid, stemp);
+		else 					strcpy(wgval.wgkey.sendcompid, "TTESTT-TRD01");
+	}
+	else if (stemp[0] == '3')	// FXGO
+	{
+		strcpy(wgval.wgkey.sendcompid, "BLP_RFS_BETA");
+		strcpy(wgval.wgkey.targetcompid, "KBET_RFS_BETA");
+		printf(" Sender (CNSH) : ");
+		fgets(stemp, sizeof(stemp), stdin);
+		stemp[strlen(stemp)-1] = 0x00;
+		if (strlen(stemp) > 0)	strcpy(wgval.wgkey.sendsubid, stemp);
+		else 					strcpy(wgval.wgkey.sendsubid, "CNSH");
+	}
+	else	exitproc(-1);
+
+//	printf("WGKEY [%s:%s:%s:%s]\n", wgval.wgkey.targetcompid, wgval.wgkey.sendcompid, wgval.wgkey.sendsubid, wgval.wgkey.reqID);
+
+	int		bcnt;
+
+	printf("\n bulk count (10) : ");
+	fgets(stemp, sizeof(stemp), stdin);
+	stemp[strlen(stemp)-1] = 0x00;
+	if (strlen(stemp) > 0)	bcnt = atoi(stemp);
+	else					bcnt = 10;
+
+////////////////////////////
+// WRITE DQ init
+
+	AG_DQUECLS(&qin);
+
+	qin.xha |= AQ_XHA_OPN;
+	qin.xha |= AG_XAS_LIV;
+
+////////////////////////////
+// READ DQ seq init
+	int		ii, rtn;
+
+	pthread_t	tid;
+	pthread_attr_t attr;
+
+	pthread_attr_init(&attr);
+	// QUOT RECEIVE THREAD START !!!...................
+	pthread_create(&tid, &attr, handler_quot, (void *)&idx);
+	sleep(1);
+
+	MDFOLD	*pfold=NULL, *p;
+	MDARCH	*arch=NULL;
+
+//////////////////////////////////////////////
+typedef struct {
+	char	symb[6];
+	char	sptymd[8];
+} SYMB;
+SYMB symbs[20];
+
+memset(symbs, 0x00, sizeof(symbs));
+
+int	scnt=0;
+
+l_db2connect();
+
+EXEC SQL BEGIN DECLARE SECTION;
+	char	o_fx_prdcd_cd			[ 6+1];
+	char	o_spt_ymd				[ 8+1];
+EXEC SQL END DECLARE SECTION;
+
+EXEC SQL DECLARE C1 CURSOR FOR
+	SELECT	FX_PRDCT_CD, SPT_YMD
+	  FROM	INST1.TSKEIAM85
+	 WHERE	1 = 1
+	   AND	MSTR_USE_YN = '1'
+	   AND  FX_PRDCT_CD NOT IN ('GBPUSD', 'MARKRW', 'CNHKRW', 'USDCNH')
+--	   AND	FX_PRDCT_CD = 'EURUSD'
+--	   AND	FX_PRDCT_CD LIKE '%KRW'
+	;
+
+EXEC SQL OPEN C1;
+	if (SQLCODE != 0) {
+		printf("[%-15s][%4d] ERROR OPEN NEWMDS_C1 [%s]\n", __FUNCTION__, __LINE__, SQLERRM);
+		EXEC SQL CLOSE C1;
+		return(-1);
+	}
+		
+	while (1)
+	{
+		memset(o_fx_prdcd_cd,			0x00, sizeof(o_fx_prdcd_cd));
+		memset(o_spt_ymd, 				0x00, sizeof(o_spt_ymd));
+
+	EXEC SQL
+		FETCH C1
+		INTO	 :o_fx_prdcd_cd, :o_spt_ymd
+		;
+		if (SQLCODE == SQL_RC_W100)
+		{
+			if (SQL_CNT == 0)
+			{
+				printf("[%s:%d] NOTFOUND FETCH NEWMDS_C1 [%s][%d]\n", __FUNCTION__, __LINE__, SQLERRM, SQL_CNT);
+			}
+			break;
+		}
+		else if (SQLCODE != 0)
+		{
+			printf("[%s:%d] ERROR FETCH NEWMDS_C1 [%s]\n", __FUNCTION__, __LINE__, SQLERRM);
+			EXEC SQL CLOSE C1;
+			return(-2);
+		}
+		l_rtrim(o_fx_prdcd_cd);
+		l_rtrim(o_spt_ymd);
+
+// 재정통화 대상이면 안됨.
+pfold = mds_getfold("CUST", o_fx_prdcd_cd, msg);
+if (pfold == NULL)			continue;
+if (pfold->trdf != DF_ON)	continue;
+
+		memcpy(symbs[scnt].symb, o_fx_prdcd_cd, sizeof(symbs[0].symb));
+		memcpy(symbs[scnt].sptymd, o_spt_ymd, sizeof(symbs[0].sptymd));
+		printf("[%d] [%.6s] [%.8s]\n", scnt, symbs[scnt].symb, symbs[scnt].sptymd);
+		scnt++;
+	}
+EXEC SQL CLOSE C1;
+
+	time_t	tt;
+	struct tm *tm;
+	
+	tt = time(NULL);
+	tm = localtime(&tt);
+	
+	ii=0;
+
+	while (1)
+	{
+		sprintf(wgval.wgkey.reqID, "T_%02d.%02d%02d%02d-%d", tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec, ++seq);
+
+		// SEND QUOTE REQUEST
+		if ((rc=sendquotreq(symbs[ii].symb, symbs[ii].sptymd)) < 0) {
+			printf("setinput error : %d\n", rc);
+			exit(0);
+		}
+		printf("send quote request ok..!!!! [%3d] [%s] [%.6s]\n", seq, wgval.wgkey.reqID, symbs[ii].symb);
+
+		if (++ii >= scnt)	ii=0;
+
+		if (seq%bcnt == 0)	getchar();
+	}
+
+//////////////////////////////////////////////
+/*
+	arch = mds_getarch(0, "CUST", msg);
+	if (arch == NULL) {
+		printf("\n mds_getarch error..(%s)\n", msg);
+		return (-1);
+	}
+	pfold = (MDFOLD *)((char *)arch + sizeof(MDARCH) + (sizeof(INDEX)*arch->xchg.maxcnt));
+
+	p = pfold;
+
+	time_t	tt;
+	struct tm *tm;
+
+	for (ii=0; ii<arch->nrec; ii++, p++)
+	{
+		if (ii == arch->nrec - 1)
+		{
+			p = pfold;
+			ii = 0;
+		}
+		if (ii==4 || ii==8)	continue;
+		if (p->trdf != 1)	continue;
+
+		tt = time(NULL);
+		tm = localtime(&tt);
+    	
+		sprintf(wgval.wgkey.reqID, "T_%02d.%02d%02d%02d", tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec);
+
+		// SEND QUOTE REQUEST
+		if ((rc=sendquotreq(p->symb, p->spotdate)) < 0) {
+			printf("setinput error : %d\n", rc);
+			exit(0);
+		}
+		printf("send quote request ok..!!!! [%.6s]\n", p->symb);
+		getchar();
+	}
+*/
+	pthread_join(tid, NULL);
+
+	exitproc(0);
+}
+
+int sendquotreq(char *i_symb, char *i_spotdate)
+{
+	int		rc, dsiz=1024, slen;
+	char	sbuf[1024], stemp[128];
+	WG_QUOT_REQ *p;
+
+	memset(sbuf, 0x00, sizeof(sbuf));
+
+	WGCOM	*c=&sbuf;
+	WGKEY	*k=&c->wgkey;
+	p = (WG_QUOT_REQ *)c->data;
+
+// Quote 요청/해제 구조체
+	c->msgtp[0] = MSG_QTREQ;
+	memcpy(&c->wgkey, &wgval.wgkey, sizeof(WGKEY));
+
+/*
+char	tag35		[  2];		// 35(MsgType) // (R = QuoteRequest, Z = QuoteCancel, V = MarketDataRequest)
+char	subtp		[  1];		// 1:subscribe,  2:unsubscribe
+char	account		[ 20];		// Dealer ID
+char	stype		[  1];		// 167(SecurityType) // (S:SPOT,F:FWD,W:SWAP,I:바로환전)
+char	symb		[  6];		// PK // WGKEY + SYMBOL
+char	setldate	[  8];		// 64(FutSettDate) // 결제일(YYYYMMDD) (swap 인 경우 near)
+char	setldate2	[  8];		// 193(FutSettDate2) // SWAP 인 경우 far 결제일(YYYYMMDD)
+char	side		[  1];		// 54(Side) // '0'=2way, '1'=buy, '2'=sell
+char	orderqty	[ 16];		// 38(OrderQty) // RFS, RFQ 인 경우 필수
+char	currency	[  3];		// 15(Currency)
+char	echoTags	[128];		// echo tags to send back
+*/
+	if (strcmp(wgval.wgkey.sendcompid, "BLP_RFS_BETA") == 0)	p->tag35[0] = 'R';
+	else														p->tag35[0] = 'V';
+	p->subtp[0] = '1';
+	memcpy(p->account, c_fcm_acno, strlen(c_fcm_acno));
+
+	// 1-TD, 2-TOM, 3-현물환, 4-선물환, 5-스왑, 6-바로환전, 7-NDF
+	p->stype[0] = 'S';
+
+	memcpy(p->symb, i_symb, sizeof(p->symb));
+	memcpy(p->setldate,  i_spotdate,  sizeof(p->setldate));
+
+	p->side[0] = '1';
+	memcpy(p->orderqty, "100", 3);
+	memcpy(p->currency, p->symb, sizeof(p->currency));
+
+	slen = sizeof(WGCOM) + sizeof(WG_QUOT_REQ);
+	// QUOTE REQUEST SEND
+	_set_pad(sbuf, slen);
+	rc = agdque_wrn (&qin, WG_DAT_DIR, NULL, WGDQ_RCVRQ, WGSEM_RCVRQ, dsiz, sbuf, slen);
+	if (rc < 0) {
+		printf("agdque_wrn error : %d\n", rc);
+		exit(0);
+	}
+	memcpy(&wgval.qreq, (char *)p, sizeof(WG_QUOT_REQ));
+	wgval.useyn[0] = '1';
+	
+	memset(tbuf, 0x00, sizeof(tbuf));
+	memcpy(tbuf, sbuf, sizeof(WGCOM)+sizeof(WG_QUOT_REQ));
+
+	return 0;
+}
+
+void *handler_quot(void *argv)
+{
+	int		ii, rtn, dlen, idx, pos;
+	int		rwno[2];
+	char	rbuf[1024], *aphome;
+	WG_ORD_EXC	*p;;
+	pthread_t	tid;
+
+	tid = pthread_self();
+	pthread_detach(tid);
+
+	idx = *((int *)argv);		// 주문 응답 수신처리와 분리하기 위해 idx +1 한다.
+	
+	AG_DQUE		qsise;
+	
+	WGCOM		*rc=rbuf;
+
+	WG_QUOT		*q;
+	WG_QUOT_RES	*r;
+	WG_ORD_EXC	*e;
+
+	memset(&qsise, 0x00, sizeof(qsise));
+	AG_DQUECLS(&qsise);
+
+	rtn = agdque_at (&qsise, WG_DAT_DIR, NULL, WGDQ_SNDRS, WGSEM_SNDRS, sizeof(rbuf));
+	if (rtn < 0)
+	{
+		printf("\n agdque_at error.. [%d]\n", rtn);
+		pthread_exit(NULL);
+	}
+
+	memset(&rwno, 0x00, sizeof(rwno));
+
+	rwno[0] = qsise.hdr.wno;
+	rtn = agdque_rwi_io (&qsise, idx, &rwno);
+	if (rtn < 0)
+	{
+		printf("\n agdque_rwi_io error.. [%d]\n", rtn);
+		pthread_exit(NULL);
+	}
+	printf("set aid[%d] read no [%d -> %d]\n", idx, qsise.hdr.rno[idx], qsise.hdr.wno);
+
+	qsise.xha |= AQ_XHA_OPN;
+	qsise.xha |= AG_XAS_LIV;
+
+printf("(%s) start to wait for data ...(idx=%d)\n", __func__, idx);
+
+	// 시세 수신
+	while (1)
+	{
+		rtn = agdque_rdn(&qsise, WG_DAT_DIR, NULL, WGDQ_SNDRS, WGSEM_SNDRS, rbuf, sizeof(rbuf), idx, 100, &rwno);
+
+		if (rtn == 0)	continue;
+		else if (rtn < 0)	{
+			printf("agdque_rdn error : %d\n", rtn);
+			break;
+		}
+//printf("(%d) tp(%.1s) key (%.32s/%.32s/%.32s/%.6s)\n", rwno[0], rc->msgtp, rc->wgkey.targetcompid, rc->wgkey.sendcompid, rc->wgkey.sendsubid, rc->wgkey.keysymb);
+
+		switch (rc->msgtp[0]) {
+
+		case MSG_ORDEXC :
+			e = (WG_ORD_EXC *)rc->data;
+
+//			if (memcmp(&rc->wgkey, &wgval.wgkey, sizeof(WGKEY)) != 0)		continue;
+
+			if (e->rejtext[0] != ' ')
+				printf("(%d) RECV REJ [%.24s] stat[%s:%s] rej[%.8s:%s]\n", rwno[0], e->clordid, STR_ORDST(e->ordstatus[0]), STR_EXCST(e->exectype[0]), e->rejcd, e->rejtext);
+			else
+				printf("(%d) RECV [%.24s] exc[%.10s:%.16s:%.16s] stat[%s:%s] rej[%.8s:%.50s]\n", rwno[0], e->ordid, e->lastqty, e->execid, e->lastpx, STR_ORDST(e->ordstatus[0]), STR_EXCST(e->exectype[0]), e->rejcd, e->rejtext);
+
+//			wgval.useyn[0] = '9';
+//			pthread_exit(NULL);
+
+			break;
+
+		case MSG_QUOTE :
+			q = (WG_QUOT *)rc->data;
+
+//printf("(%d) Q [%.30s] [%.6s] [%.16s:%.16s] \n", rwno[0], q->quotID, q->symb, q->bid, q->ask);
+//			if (memcmp(&rc->wgkey, &wgval.wgkey, sizeof(WGKEY)) != 0)		continue;
+
+			memcpy(&wgval.quot, (char *)q, sizeof(WG_QUOT));
+
+			break;
+
+		case MSG_QTRES :
+			r = (WG_QUOT_RES *)rc->data;
+
+			printf("(%d) RECV : close request.. [%.8s:%.*s]\n", rwno[0], r->rejcd, sizeof(r->rejtext), r->rejtext);
+//			printf("thread exit ...........\n");
+
+//			wgval.useyn[0] = '9';
+//			pthread_exit(NULL);
+			break;
+
+		default :
+			break;
+		}
+	}
+
+	printf("receive quote done...........\n");
+
+	pthread_exit(NULL);
+}

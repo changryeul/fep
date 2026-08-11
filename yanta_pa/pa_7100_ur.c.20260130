@@ -1,0 +1,769 @@
+#define		_GLOBAL
+/*------------------------------------------------------------------------
+#	Module	: 파생 시세수신 (UDP)
+#	File	: pa_7100_ur.c
+------------------------------------------------------------------------*/
+
+/*------------------------------------------------------------------------
+	Header Files
+------------------------------------------------------------------------*/
+#include    "pa_struct.h"
+#include	"fep_fepp.h"
+
+/* 기본정보 채권KTS 시세 */
+/*
+#    A701K : 68  장운영TS
+#    M401K : 83, 장운영스캐쥴
+#
+#    B601K : 462 일반채권, 국고채권 우선호가
+#    A301K : 223 채권 체결
+#    G701K : 643 일반채권, 국고채권 체결 + 우선호가
+#    A601K : 57  채권 종목마감
+#    I2000 : 10  Polling, Log만 File은 처리안함
+*/
+#if defined A7102
+#define     DATA_SIZE       700
+#elif defined A7103
+#define     DATA_SIZE       100
+/* 파생종목정보 사이즈 1318 (A006F), 7291(재처리) */
+/*
+#	A001F(10301/11301) : 1318, 종목정보
+#	H001F(10301/11301) : 63, 정산가
+*/
+#elif defined A7201 || A7291 || A7301 || A7391
+#define     DATA_SIZE       1400
+/*
+#    A301F : 173, 파생체결
+#    G701F : 431, 파생체결G7 (우선호가  5단계) 04F & 05F(제외)
+#    B601F : 324, 파생우선호가 (우선호가  5단계) 04F & 05F(제외)
+#    A601F : 78, 파생종목마감
+#    A701F : 68,  장운영정보(모든 A7공통.. All)
+#    R101F : 359, 파생 장운영TS + 우선호가 (우선호가  5단계) 단일가 세션, 04F, 05F 제외
+*/
+#elif defined A7202 || A7302
+#define     DATA_SIZE       500
+/*
+#    M401A : 83,  장운영스캐쥴
+*/
+#elif defined A7203 || A7303
+#define     DATA_SIZE       100
+#endif
+
+#include    "buf_struct.h"
+
+/*------------------------------------------------------------------------
+	Constants and Structures
+------------------------------------------------------------------------*/
+#define		SVR_PORT_NO		UDP_PORT(D_K,P_K,0)
+#define		READ_BUF_SIZE	2048
+
+/* 시세 Seq 위치 Size */
+#define		S_H_SIZE		5								/* TR(5)	*/
+/* 기본마스터 Seq 위치 Size */
+#define		M_H_SIZE		27	/* TR(5) + SEQ(8) + JCNT(6) + DATE(8)	*/
+
+/*------------------------------------------------------------------------
+	Global Variables
+------------------------------------------------------------------------*/
+int		Sockfd, FIFO_fd, tot_cq;
+int		Idx, Che_Gbn, W_Flag;
+struct	ip_mreq     mreq;
+char	TrCode[8], ApType[10], Order_St[512];
+struct sockaddr_in	SvrAddr, ClntAddr;
+
+/*------------------------------------------------------------------------
+	Function Prototypes
+------------------------------------------------------------------------*/
+void	PA_7100_UR (void);
+int     Init_Parameters (void);
+int		Socket_Connect (void);
+int		Recv_Data (char *);
+int		Add_Count_UR (void);
+int		Add_Count_DD (char *);
+void	Set_Sise (char *);
+void	Write_Read_Fifo (int);
+
+/*----------------------------------------------------------------------*/
+int		main (int argc, char *argv[])
+/*----------------------------------------------------------------------*/
+{
+	Init_Proc (argc, argv);
+	PA_7100_UR ();
+	Exit_Process ();
+}	/* End of main ()	*/
+
+/*----------------------------------------------------------------------*/
+void	PA_7100_UR (void)
+/*----------------------------------------------------------------------*/
+{
+	char	m_time[24];
+	char	Wdt[30], W2_Fmt[512];
+	char 	r_buf[READ_BUF_SIZE];
+	int		tr_gbn, rt, len, skip_rt;
+
+	BUFF_RW_HEAD		f_head;
+	FILE_BUFF_FORMAT    W_Fmt;
+
+	rt = Init_Parameters ( );
+	if (rt == NOTOK)
+		return;
+
+	rt = Socket_Connect ();
+	if (rt == NOTOK)
+		return;
+
+	SLog (USR_OK, "socket connected:port[%d]", SVR_PORT_NO);
+
+	while (START_S != JOB_END)
+	{
+/* 20211022
+		Stat_Save ();
+*/
+		memset (r_buf, 0, sizeof (r_buf));
+
+		rt = Recv_Data (r_buf);
+
+		if (rt == 0)
+		{
+			SLog (USR_OK, "poll timeout");
+			continue;
+		}
+		else if (rt < 0)
+		{
+			SLog (UDP_ERROR, "receive fail {%d:%s}", SYS_NO, SYS_STR);
+			close (Sockfd);
+
+			rt = Socket_Connect ();
+
+			if (rt == NOTOK)
+				return;
+
+			continue;
+		}
+
+#if	0
+Log (USR_OK, "HONG [%.10s]", r_buf);
+		memset (TrCode, 0, sizeof (TrCode));			/* TRCODE 저장	*/
+		sprintf (TrCode, "%-5.5s", r_buf);
+
+		Che_Gbn = Idx = 0;
+		Set_Sise (r_buf);
+		
+		/* 체결관련시 평가손익 && 자동전략 처리위한 전달 */
+		if (Che_Gbn > 0)
+		{
+#if defined A7102
+			if (Shm_Risk[0].S_Sise[0][Idx].auto_use > 0)			/* 기동중인 자동이 해당종목을 설정했을때 전달 */
+				Write_Read_Fifo (1);
+#elif defined A7202
+			if (Shm_Risk[0].S_Sise[1][Idx].auto_use > 0)			/* 기동중인 자동이 해당종목을 설정했을때 전달 */
+				Write_Read_Fifo (1);
+#endif
+		}
+		else if (Che_Gbn < 0)
+		{
+#if 0
+			/* polling data */
+			if (memcmp (r_buf, "I2", 2) == 0)
+			{
+				SLog (USR_OK, "I2 [%.5s]", r_buf);
+			}
+			else
+				SLog (USR_OK, "Other [%.5s]", r_buf);
+#endif
+			continue;
+		}
+#endif
+
+/* 지금은 필요 없을 듯
+	    len = Add_Count_UR ();
+*/
+
+		/* 운영장비에서는 File Write를 하지않고 개발기나 테스트장비에서 File Write한다.		*/
+		/* 해당 파일은 비상시 또는 장종류후 전략시뮬레이션을 위한 통자료로만 사용을 한다.	*/
+/* 20220222 체결,호가데이터 필요없다하여 저장하는기능 제거
+		if ((memcmp(r_buf, "A0", 2) == 0)	||
+			(Che_Gbn > 0	&& 
+			 (memcmp ((char *)getenv ("_FEP_DIV"), "TEST", 4) == 0)) )
+*/
+		/* polling data */
+		W_Flag = 0;
+		if (memcmp (r_buf, "I2", 2) == 0)
+		{
+#if		1		/* polling data log */
+				SLog (USR_OK, "I2 [%.5s]", r_buf);
+#endif
+				continue;
+		}
+#if defined A7201 || A7291
+		else if ((memcmp(r_buf, "A006F", 5) == 0)		||		// 종목정보,  port 11301
+				(memcmp (r_buf, "H306F",   5) == 0))			// 정산가, port 11301
+		{
+			W_Flag = 1;
+		}
+#elif defined A7301 || A7391
+		else if (memcmp(r_buf, "A006V", 5) == 0)				// 종목정보,  port 11301
+//				(memcmp (r_buf, "H306V",   5) == 0)				// 정산가, port 11301 없음
+		{
+			W_Flag = 1;
+		}
+#endif
+#if defined A7202
+		else if ((memcmp (r_buf, "A306F",   5) == 0)    ||      // 체결, port 11305, size 173
+				 (memcmp (r_buf, "G706F",   5) == 0)    ||      // 체결+우선호가 port 11305, size 431
+				 (memcmp (r_buf, "B606F",   5) == 0)	||		// 우선호가 port 11305, size 324
+				 (memcmp (r_buf, "A606F",   5) == 0)	||		// 종목마감, port 11305
+				 (memcmp (r_buf, "A706F",   5) == 0)	||		// 장운영TS(종목장운영정보) port 11305
+				 (memcmp (r_buf, "R106F",   5) == 0))			// 장운영TS+호가 port 11305
+		{
+			W_Flag = 2;
+		}
+#elif defined A7302
+		else if ((memcmp (r_buf, "A306V",   5) == 0)    ||      // 체결, port 11305, size 173
+				 (memcmp (r_buf, "G706V",   5) == 0)    ||      // 체결+우선호가 port 11305, size 431
+				 (memcmp (r_buf, "B606V",   5) == 0)	||		// 우선호가 port 11305, size 324
+				 (memcmp (r_buf, "A606V",   5) == 0)	||		// 종목마감, port 11305
+				 (memcmp (r_buf, "A706V",   5) == 0)	||		// 장운영TS(종목장운영정보) port 11305
+				 (memcmp (r_buf, "R106V",   5) == 0))			// 장운영TS+호가 port 11305
+		{
+			W_Flag = 2;
+		}
+#endif
+#if defined A7203
+		else if (memcmp (r_buf, "M406F",   5) == 0)				// 장운영스케줄 port 11315
+		{
+			W_Flag = 3;
+		}
+#elif defined A7303
+		else if (memcmp (r_buf, "M406V",   5) == 0)				// 장운영스케줄 port 11315
+		{
+			W_Flag = 3;
+		}
+#endif
+		else
+		{
+//			Log (USR_OK, "Else Case Receive RecvPkt[%5.5s]", r_buf);
+			continue;
+		}
+
+		if (W_Flag > 0)
+		{
+			memset (m_time, 0, sizeof (m_time));
+			Get_MicroTime (m_time);
+
+			/* File Write */
+			memset (&W_Fmt, 0x20, sizeof (FILE_BUFF_FORMAT));
+
+			/* write to DD file	*/
+			ItoAf (O_W_CNT1 + 1, W_Fmt.If_Seq,	sizeof (W_Fmt.If_Seq));
+			memcpy (W_Fmt.ApType, ApType,		sizeof (W_Fmt.ApType));
+			memcpy (W_Fmt.ResponseCode, RES_NORMAL, strlen (RES_NORMAL));
+			memcpy (W_Fmt.RecvTime1, m_time,	sizeof (W_Fmt.RecvTime1));
+			memcpy (W_Fmt.RecvTime2, &m_time[sizeof(W_Fmt.RecvTime1)],
+												sizeof (W_Fmt.RecvTime2));
+
+			memset (W_Fmt.DataHeader, 0x20, 20+DATA_SIZE);
+			memcpy (W_Fmt.Data, r_buf, strlen(r_buf));
+			W_Fmt.LineFeed[0] = '\n';
+
+			if (W_Flag == 1)
+				rt = F_W (TS_W1_1, (void *)&W_Fmt, 1);
+			else if (W_Flag == 2)
+				rt = F_W (TS_W1_2, (void *)&W_Fmt, 1);
+			else if (W_Flag == 3)
+				rt = F_W (TS_W1_3, (void *)&W_Fmt, 1);
+
+			if (rt != 1)
+			{
+				SLog (SAM_FATAL, "file write fail[%s] rt[%d]", OFN(D_K,P_K,W_Flag-1), rt);
+				close (Sockfd);
+				return;
+			}
+
+//			Add_Count_DD (TrCode);
+		}
+
+//		Set_TR_Time ();
+//		INT_SEQ ++;
+	}
+
+	return;
+}	/* End of PA_7100_UR ()	*/
+
+/*************************************************************************
+    Function        : . Init_Parameters
+    Parameters IN   : .
+    Parameters OUT  : .
+    Return Code     : . int
+    Comment         : . All Program Parameters Init
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+int    Init_Parameters ()
+/*----------------------------------------------------------------------*/
+{
+	int         i, j, rt, flag;
+	char        item_code[20], memberitem[10], tmp[128];
+	char        d_time[16], head_size[10], cli_orsnd[21];
+	char		fifo_name[100], bumun[4], m_time[24];
+
+	sprintf (ApType, "%-2.2s%-4.4s%-2.2s", _Exe_Name, _Exe_Name+3, _Exe_Name+8);
+	LtoU (ApType, strlen (ApType));
+#if	0
+/* ************************************************************************ */
+/* 7102/7202 : 전략기동중인 시장+종목을 수신했을때 전략에 전달용(Signal용)	*/
+/* ************************************************************************ */
+#if defined A7102
+	sprintf (fifo_name, "%s/PA/pa_7102_ur1", _FEP_FIFO);
+#elif defined A7202
+	sprintf (fifo_name, "%s/PA/pa_7202_ur1", _FEP_FIFO);
+#endif
+
+#if defined A7102||A7202
+	/* 전략전달용 FIFO */
+	FIFO_fd = open (fifo_name, O_RDWR|O_NDELAY);
+	if (FIFO_fd < 0) 
+		SLog (FIF_FATAL, "cannot open FIFO[%s][%d][%d:%s]",
+			fifo_name, FIFO_fd, SYS_NO, SYS_STR);
+#endif
+#endif
+	/* 누적체결수량 */
+	tot_cq = 0;
+
+	return (OK);
+}   /* End of Init_Parameters ()    */
+
+/*************************************************************************
+	Function		: . Socket_Connect
+	Parameters IN	: .
+	Parameters OUT	: .
+	Return Code		: . int (0:success, -1:failure)
+	Comment			: . connect to a socket
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+int		Socket_Connect (void)
+/*----------------------------------------------------------------------*/
+{
+	int 	rt, val, len;
+
+	char	ip_addr[16];
+	char	if_ip_addr[16];
+
+	sprintf(ip_addr, "%d.%d.%d.%d", UDP_IP1(D_K,P_K,0), UDP_IP2(D_K,P_K,0),
+									UDP_IP3(D_K,P_K,0), UDP_IP4(D_K,P_K,0));
+
+	memset(if_ip_addr, 0x00, sizeof(if_ip_addr));
+	sprintf(if_ip_addr, "%d.%d.%d.%d", UDP_IF_IP1(D_K,P_K), UDP_IF_IP2(D_K,P_K),
+									UDP_IF_IP3(D_K,P_K), UDP_IF_IP4(D_K,P_K));
+
+	SLog(USR_OK, "Ip_Addr[%s] if_ip_addr[%s]", ip_addr, if_ip_addr);
+
+	bzero ((unsigned char *)&SvrAddr, sizeof (SvrAddr));
+	SvrAddr.sin_family         = AF_INET;
+/* 202108
+    SvrAddr.sin_addr.s_addr    = inet_addr (ip_addr);
+*/
+    inet_pton(AF_INET, ip_addr, &SvrAddr.sin_addr.s_addr);
+	SvrAddr.sin_port           = htons (SVR_PORT_NO);
+
+	bzero ((unsigned char *)&mreq, sizeof (mreq));
+	mreq.imr_multiaddr          = SvrAddr.sin_addr;
+//	mreq.imr_interface.s_addr   = htonl(INADDR_ANY);
+	mreq.imr_interface.s_addr   = inet_addr(if_ip_addr);
+
+	Sockfd = socket (AF_INET, SOCK_DGRAM, 0);
+
+	if (Sockfd < 0)
+	{
+		SLog (UDP_FATAL, "socket open fail {%d:%s}", SYS_NO, SYS_STR);
+		return (NOTOK);
+	}
+
+	/* 2011.03 시세수신 증속에 따른 버퍼량 증가 */
+	/* val = 262144; 256K, 524288(512K)	*/
+#if 0
+	val = 524288;												/* 512K	*/
+#endif
+	val = 1228800;												/* 1228800K	*/
+	len = sizeof (val);
+
+	//rt = setsockopt (Sockfd, SOL_SOCKET, SO_RCVBUF, (char *)&val, len);
+	rt = setsockopt (Sockfd, SOL_SOCKET, SO_REUSEADDR, (char *)&val, len);
+	if (rt == -1)
+	{
+		SLog (UDP_WARN, "setsockopt (SO_RCVBUF) fail {%d:%s}", SYS_NO, SYS_STR);
+		return (NOTOK);
+	}
+
+	if (bind (Sockfd, (struct sockaddr *)&SvrAddr, sizeof (SvrAddr)) < 0)
+	{
+		SLog (UDP_FATAL, "bind fail {%d:%s}", SYS_NO, SYS_STR);
+		return (NOTOK);
+	}
+
+	rt = setsockopt(Sockfd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
+	if (rt == -1)
+	{
+		SLog (UDP_WARN, "setsockopt (MULTICAST[%d]) fail {%d:%s}", mreq, SYS_NO, SYS_STR);
+		return (NOTOK);
+	}
+
+	return (OK);
+}	/* End of Socket_Connect ()	*/
+
+/*************************************************************************
+	Function		: . Recv_Data
+	Parameters IN	: .
+	Parameters OUT	: . p_str	: receive buffer
+	Return Code		: . int (0:timeout, -1:failure, >0:number of bytes received)
+	Comment			: . receive data
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+int		Recv_Data (char *p_str)
+/*----------------------------------------------------------------------*/
+{
+	int				rt, len;
+#if defined __linux
+	fd_set	read_set;
+#else
+	struct fd_set	read_set;
+#endif
+	struct timeval	timeout;
+
+	len = sizeof (ClntAddr);
+
+	FD_ZERO (&read_set);
+	FD_SET (Sockfd, &read_set);
+	timeout.tv_sec = 70;
+	timeout.tv_usec = 0;
+
+	rt = select (Sockfd+1, &read_set, NULL, NULL, &timeout);
+
+	if (rt < 0)
+	{
+	SLog (SYS_FATAL, "select fail {%d:%s}", SYS_NO, SYS_STR);
+		return (NOTOK);
+	}
+
+	if (FD_ISSET (Sockfd, &read_set))
+	{
+#if defined __linux
+		rt = recvfrom (Sockfd, p_str, READ_BUF_SIZE, 0,
+			(struct sockaddr *)&ClntAddr, (socklen_t *)&len);
+#else
+		rt = recvfrom (Sockfd, p_str, READ_BUF_SIZE, NULL,
+			(struct sockaddr *)&ClntAddr, (socklen_t *)&len);
+#endif
+		return (rt);
+	}
+
+	return (OK);
+}	/* End of Recv_Data ()	*/
+
+/*************************************************************************
+	Function		: . Add_Count_UR
+	Parameters IN	: .
+	Parameters OUT	: .
+	Return Code		: . int (-1:failure, 0:not used, >0:data length)
+	Comment			: . add receive count
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+int		Add_Count_UR (void)
+/*----------------------------------------------------------------------*/
+{
+	int		rt;
+	int		i;
+
+	rt = NOTOK;
+	T_K = NOTOK;
+
+	for (i = 0; i < DAEMON(D_K).sisetr_count; i ++)
+	{
+		if (SISETR(D_K,i).tr[0] == '\0')
+			break;
+
+		if (memcmp (SISETR(D_K,i).tr, TrCode, 5) == 0)
+		{
+			if (SISETR(D_K,i).queue == 0)					/* not used	*/
+			{
+				rt = 0;
+				break;
+			}
+			else
+			{
+				SISETR(D_K,i).ur_count ++;
+
+				T_K = i;
+				rt = SISETR(D_K,T_K).length;
+				break;
+			}
+		}
+	}
+
+	return (rt);
+}	/* End of Add_Count_UR ()	*/
+
+/*************************************************************************
+	Function		: . Add_Count_DD
+	Parameters IN	: . tr	: TR code
+	Parameters OUT	: .
+	Return Code		: . void
+	Comment			: . add divide count
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+int		Add_Count_DD (char *p_tr)
+/*----------------------------------------------------------------------*/
+{
+    int         rt = NOTOK;
+    register int   i;
+
+    for (i = 0; i < DAEMON(D_K).sisetr_count; i ++)
+    {
+        if (SISETR(D_K,i).tr[0] == '\0')
+            break;
+
+        if (memcmp (SISETR(D_K,i).tr, p_tr, strlen (p_tr)) == 0)
+        {
+            SISETR(D_K,i).dd_count ++;
+
+            rt = SISETR(D_K,i).length;
+            break;
+        }
+    }
+
+    return (rt);
+}	/* End of Add_Count_DD ()	*/
+
+/*************************************************************************
+	Function		: . Set_Sise
+	Parameters IN	: . p_buf	: received data
+	Parameters OUT	: .
+	Return Code		: . void
+	Comment			: . set sise data SHM (기본/호가/체결)
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+void	Set_Sise (char *p_buf)
+/*----------------------------------------------------------------------*/
+{
+	int			s_k, sign;
+
+/* *********************************** */
+/* 시장별, TR별 종목 일련번호 갖고오기 */
+/* *********************************** */
+#if defined A7201
+	if (memcmp (p_buf, "A006F", 5) != 0)
+	{
+		Che_Gbn = 1;
+		return;
+	}
+/* 채권 시세 KTS */
+#elif defined A7102	|| A7103
+	/* 수신시세 => Memory 시세에 Set */
+	if (memcmp (p_buf, "A301K", 5) == 0)
+	{
+		Che_Gbn = 1;
+		/* Idx 만드는 방법 */
+		Idx = AtoIf (&p_buf[S_H_SIZE],					sizeof(Shm_Note[0].A3.seq_no));
+		memcpy (Shm_Note[Idx].A3.tr_gbn, p_buf,			sizeof (CO_A301K));
+
+		/* 공용현재가_체결가, 0:0만(부호) 7.2 */
+		Shm_Risk[0].S_Sise[0][Idx].crprc =
+			(double)AtoDf (Shm_Note[Idx].A3.crprc,		sizeof (Shm_Note[0].A3.crprc));
+	}
+	else if (memcmp (p_buf, "G701K", 5) == 0)
+	{
+		Che_Gbn = 1;
+		Idx = AtoIf (&p_buf[S_H_SIZE],					sizeof(Shm_Note[0].G7.seq_no));
+		Shm_Note[Idx].HogaLastGbn = 0;
+		memcpy (Shm_Note[Idx].G7.tr_gbn, p_buf,			sizeof (CO_G701K));
+
+		/* 공용 현재가 */
+		Shm_Risk[0].S_Sise[0][Idx].crprc =
+			(double)AtoDf (Shm_Note[Idx].G7.crprc,		sizeof (Shm_Note[0].G7.crprc));
+		/* 공용 매도1호가가격 */
+		Shm_Risk[0].S_Sise[0][Idx].sell_1_price =
+			(double)AtoDf (Shm_Note[Idx].G7.ask1_price,	sizeof (Shm_Note[0].G7.ask1_price));
+		/* 공용 매수1호가가격 */
+		Shm_Risk[0].S_Sise[0][Idx].buy_1_price =
+			(double)AtoDf (Shm_Note[Idx].G7.bid1_price,	sizeof (Shm_Note[0].G7.bid1_price));
+	}	
+	else if (memcmp (p_buf, "B601K", 5) == 0)
+	{
+		Che_Gbn = 1;
+		Idx = AtoIf (&p_buf[S_H_SIZE], 					sizeof(Shm_Note[0].B6.seq_no));
+		Shm_Note[Idx].HogaLastGbn = 1;
+		memcpy (Shm_Note[Idx].B6.tr_gbn, p_buf, 		sizeof (CO_B601K));
+
+		/* 공용 매도1호가가격 */
+		Shm_Risk[0].S_Sise[0][Idx].sell_1_price =
+			(double)AtoDf (Shm_Note[Idx].B6.ask1_price,	sizeof (Shm_Note[0].B6.ask1_price));
+		/* 공용 매수1호가가격 */
+		Shm_Risk[0].S_Sise[1][Idx].buy_1_price =
+			(double)AtoDf (Shm_Note[Idx].B6.bid1_price,	sizeof (Shm_Note[0].B6.bid1_price));
+	}
+	else if (memcmp (p_buf, "M401K", 5) == 0)
+	{
+		memcpy (Shm_Note[0].M4.tr_gbn, p_buf,			sizeof (CO_M401K));
+	}
+	else if (memcmp (p_buf, "A701K", 5) == 0)
+	{
+		memcpy (Shm_Note[0].A7.tr_gbn, p_buf,			sizeof (CO_A701A));
+	}
+	else
+	{
+		Log (USR_OK, "Other TrCode[%s][%d]", p_buf, 	sizeof(p_buf));
+		Che_Gbn = -1;
+	}
+#elif defined A7202 || A7203
+	/* 수신시세 => Memory 시세에 Set */
+	if (memcmp (p_buf, "A306F", 5) == 0)
+	{
+		Che_Gbn = 1;
+		Idx = AtoIf (&p_buf[S_H_SIZE], 					sizeof(Shm_FinFut[0].A3.seq_no));
+		memcpy (Shm_FinFut[Idx].A3.tr_gbn, p_buf, 		sizeof (CO_A301F));
+
+		/* 공용 현재가 */
+		if (memcmp (Shm_FinFut[Idx].A3.crprc, "-", 1) == 0)
+			sign = -1;
+		else
+			sign = 1;
+		Shm_Risk[0].S_Sise[1][Idx].crprc =
+			sign *
+			(double)AtoDf (&Shm_FinFut[Idx].A3.crprc[1],sizeof (Shm_FinFut[0].A3.crprc) - 1);
+		/* 공용 실시간상한가가격 */
+		if (memcmp (Shm_FinFut[Idx].A3.dyn_upper_limit, "-", 1) == 0)
+			sign = -1;
+		else
+			sign = 1;
+		Shm_Risk[0].S_Sise[1][Idx].realtime_hprc =
+			(double)AtoDf (&Shm_FinFut[Idx].A3.dyn_upper_limit[1],
+														sizeof (Shm_FinFut[0].A3.dyn_upper_limit) - 1);
+		/* 공용 실시간하한가가격 */
+		if (memcmp (Shm_FinFut[Idx].A3.dyn_lower_limit, "-", 1) == 0)
+			sign = -1;
+		else
+			sign = 1;
+		Shm_Risk[0].S_Sise[1][Idx].realtime_lprc =
+			(double)AtoDf (&Shm_FinFut[Idx].A3.dyn_lower_limit[1],
+														sizeof (Shm_FinFut[0].A3.dyn_lower_limit) - 1);
+	}
+	else if (memcmp (p_buf, "G706F", 5) == 0)
+	{
+		Che_Gbn = 1;
+		Idx = AtoIf (&p_buf[S_H_SIZE],					sizeof(Shm_FinFut[0].A3.seq_no));
+		Shm_FinFut[Idx].HogaLastGbn = 0;
+		memcpy (Shm_FinFut[Idx].G7.tr_gbn, p_buf,		sizeof (CO_G701F));
+
+		/* 공용 현재가 */
+		if (memcmp (Shm_FinFut[Idx].G7.crprc, "-", 1) == 0)
+			sign = -1;
+		else
+			sign = 1;
+		Shm_Risk[0].S_Sise[1][Idx].crprc =
+			sign *
+			(double)AtoDf (&Shm_FinFut[Idx].G7.crprc[1],sizeof (Shm_FinFut[0].G7.crprc) - 1);
+		/* 공용 실시간상한가가격 */
+		if (memcmp (Shm_FinFut[Idx].G7.dyn_upper_limit, "-", 1) == 0)
+			sign = -1;
+		else
+			sign = 1;
+		Shm_Risk[0].S_Sise[1][Idx].realtime_hprc = 
+			(double)AtoDf (&Shm_FinFut[Idx].G7.dyn_upper_limit[1],
+														sizeof(Shm_FinFut[0].G7.dyn_upper_limit) - 1);
+		/* 공용 실시간하한가가격 */
+		if (memcmp (Shm_FinFut[Idx].G7.dyn_lower_limit, "-", 1) == 0)
+			sign = -1;
+		else
+			sign = 1;
+		Shm_Risk[0].S_Sise[1][Idx].realtime_lprc =
+			(double)AtoDf (&Shm_FinFut[Idx].G7.dyn_lower_limit[1],
+														sizeof(Shm_FinFut[0].G7.dyn_lower_limit) - 1);
+		/* 공용 매도1호가가격 */
+		if (memcmp (Shm_FinFut[Idx].G7.ask1_price, "-", 1) == 0)
+			sign = -1;
+		else
+			sign = 1;
+		Shm_Risk[0].S_Sise[1][Idx].sell_1_price =
+			(double)AtoDf (&Shm_FinFut[Idx].G7.ask1_price[1],
+														sizeof(Shm_FinFut[0].G7.ask1_price) - 1);
+		/* 공용 매수1호가가격 */
+		if (memcmp (Shm_FinFut[Idx].G7.bid1_price, "-", 1) == 0)
+			sign = -1;
+		else
+			sign = 1;
+		Shm_Risk[0].S_Sise[1][Idx].buy_1_price =
+			(double)AtoDf (&Shm_FinFut[Idx].G7.bid1_price[1],
+														sizeof(Shm_FinFut[0].G7.bid1_price) - 1);
+	}	
+	else if (memcmp (p_buf, "B606F", 5) == 0)
+	{
+		Che_Gbn = 1;
+		Idx = AtoIf (&p_buf[S_H_SIZE], sizeof(Shm_FinFut[0].A3.seq_no));
+		Shm_FinFut[Idx].HogaLastGbn = 1;
+		memcpy (Shm_FinFut[Idx].B6.tr_gbn, p_buf, sizeof (CO_B601F));
+
+		/* 공용 매도1호가가격 */
+		if (memcmp (Shm_FinFut[Idx].B6.ask1_price, "-", 1) == 0)
+			sign = -1;
+		else
+			sign = 1;
+		Shm_Risk[0].S_Sise[1][Idx].sell_1_price =
+			(double)AtoDf (&Shm_FinFut[Idx].B6.ask1_price[1],
+														sizeof(Shm_FinFut[0].B6.ask1_price) - 1);
+		/* 공용 매수1호가가격 */
+		if (memcmp (Shm_FinFut[Idx].B6.bid1_price, "-", 1) == 0)
+			sign = -1;
+		else
+			sign = 1;
+		Shm_Risk[0].S_Sise[1][Idx].buy_1_price =
+			(double)AtoDf (&Shm_FinFut[Idx].B6.bid1_price[1],
+														sizeof(Shm_FinFut[0].B6.bid1_price) - 1);
+	}
+	else if (memcmp (p_buf, "M406F", 5) == 0)
+	{
+		memcpy (Shm_FinFut[0].M4.tr_gbn, p_buf, sizeof (CO_A701A));
+	}
+	else
+	{
+		Log (USR_OK, "Other TrCode[%s][%d]", p_buf, sizeof(p_buf));
+		Che_Gbn = -1;
+	}
+#endif
+
+	return;
+}	/* End of Set_Sise ()	*/
+
+/*************************************************************************
+	Function		: . Write_Read_Fifo
+	Parameters IN	: . 1 : A3/G7체결, 2 : B6호가
+	Parameters OUT	: . 
+	Comment			: . write to FIFO
+*************************************************************************/
+void		Write_Read_Fifo (int c0h0)
+{
+	int		rt;
+	char	tmp[128];
+
+	rt = write (FIFO_fd, "1", 1);
+
+	if (rt < 0) 
+	SLog (FIF_FATAL, "cannot write FIFO[%d][%d:%s]",
+		FIFO_fd, SYS_NO, SYS_STR);
+
+	while (1)
+	{
+		rt = read (FIFO_fd, tmp, sizeof(tmp));
+#if defined __linux
+        if (rt == 0 || errno == EAGAIN)
+#else
+        if (rt == 0)
+#endif
+			break;
+	}
+
+	return;
+}	/* End of Write_Read_Fifo ()	*/
+
+/*************************************************************************
+	End of program (pa_7100_ur.c)
+*************************************************************************/ 
+

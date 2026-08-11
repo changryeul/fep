@@ -1,0 +1,1744 @@
+/*#####################################################################
+############# TODO ####################################################
+★★★★ 해당 TODO 의 번호로 검색하면 소스 위치에 마킹 있음.
+
+★TODO-01 : 일자변경 쓰레드 scheduler() 은 하루 한번 작동. 배치로 분리 개발 (운영시간 확대 대응)
+	▶TODO-01 : mdsinit 배치프로그램 완료
+★TODO-02 : 모든 원천처리 데몬이 BEST 큐로 시세 PUSH함. 멀티 write 지원하는 DQ API 필요 > KBA_MDS_QUE_PUSH()에 반영
+	▶TODO-02 : BEST 데몬으로 UDP 송신
+★TODO-03 : 초기 기동 시 큐의 readcnt = writecnt로 맞추는 기능 필요 (과거 데이터 전송 방지)
+	▶TODO-03 : 기동 시마다 메시지 큐 삭제 후 재생성
+★TODO-04 : 실행 시 옵션에 따른 동작 구분
+  > "CUST" = UDP 수신 O, SHM업데이트 O, 고객실시간 O, AP송신 O, DB처리 O
+  > "BEST" = UDP 수신 O, SHM업데이트 O, 고객실시간 O, AP송신 O, DB처리 X
+	▶TODO-04 : 처리 완료
+★TODO-05 : 각 쓰레드에서 동일 큐를 각자 Read : 멀티 read 지원하는 DQ API 필요 > KBA_MDS_QUE_POP()에 반영
+	▶TODO-05 : 메시지 큐로 변경
+★TODO-06 : mds_shminit2()에서 실행시 마다 마스터 메모리 재구성하고 있으나, 운영 고려하여 검토 필요
+★TODO-07 : handler_apsend, handler_dbtable 에서도 종목별 시세 변동 시에만 처리하는 방안 강구 (직전 시세 비교 방안 필요)
+  > handler_master 에서는 직전 bidprc(prebid)와 비교하여 판단하고 있으나, 
+  > apsend나 dbtable 쓰레드는 이미 업데이트된 마스터메모리와 비교할 수 없기 떄문에 자체 환율변동여부 판단이 불가함.
+★TODO-08 : 데이터 원천에 따라 FIX패킷 Convert 시 분기로직 추가 : sise_fix2ecm()
+★TODO-09 : 장중에 통화별 거래가능여부 flag (ASIS=folder.mstr.trdf -> TOBE=folder.trdf) 에 대한 동작 기준 확인 후 적용
+  > 기존 소스에서 folder.mstr.trdf 에 대한 부분 분석 필요
+	▶TODO-09 : 처리 완료
+★TODO-10 : handler_apsend()에서 송신 소켓 에러 시 재생성 로직 필요 (상단 소켓생성부분을 함수로 빼고 호출.)
+★TODO-11 : 통화별 시세전송 상태 구분 체크 및 세팅로직 체크 필요 : if (pfold->pricestat == SOURCE_STOP - 1) //시세정지
+	▶TODO-11 : 처리 완료
+★TODO-12 : 쓰레드가 각각의 connect 했을 경우 개별 동작에 문제없는지 테스트
+★TODO-13 : 현재 메시지큐로 되어 있는 KBA_MDS_QUE_PUSH, KBA_MDS_QUE_POP 는 하나의 원천(SMBS)만 처리 가능
+	▶TODO-13 : 메시지 큐로 변경 완료
+★TODO-14 : 초기화 mds_open2() 후 호출되었던 함수 분석 후 필요 시 배치프로그램으로 별도 분리
+  > mds_calendar(market);		// initialize trading day & holiday to shared memory
+  > mds_symbinit(market);
+  > market_push(market, mds_close);
+★TODO-15 : 24시간 가동하게 되면 초기화 시 영업일과 현재일자는 다를 수 있으므로 로직 체크 필요
+★TODO-16 : 장중에 마스터메모리 다시 적재 시 전일대비 세팅 로직 검토
+★TODO-17 : 특정 통화에 대한 기존 로직 분석 및 적용 : CNH에 대한 는 재정을 만들지 않는다. 직접받는 CNHKRW시세 사용 
+  > fetch.c(2164) : SendAndSavePriceData()  
+  > 	if (memcmp(quot->symb, "USDCNH", 6) != 0) 
+	▶TODO-17 : 처리 완료
+★TODO-18 : DB저장 시 수신데이터 원천(S/K/E/C) 이 아닌 excode인 'B'est, 'Z'Cust 사용하는 지 검토
+★TODO-19 : 기존 fetch.c:CheckQuotePrice()에 있던 BadTick 필터링 로직 추가 필요
+★TODO-20 : USDCNH 시세 수신 시 USDCNY에 시세 카피
+//#######################################################################*/
+#define		MDSTEST		1
+
+#include "mds2.h"
+
+#include "eaiinfo.h"
+
+#include "comdef.h"
+#include "wfaapi.h"    // 실시간전송(Client)
+#include "axsnd.h"
+#include "mymq.h"
+#include "agfix.h"
+#include "agxpi.h"
+#include "agtrc.h"
+#include "comrdb.h"
+#include "comhdr.h"
+#include "comfun.h"
+#include "killmon.h"
+
+#define		MDSDQ_IDX_MAST		1		// DQ INDEX FOR handler_master
+#define		MDSDQ_IDX_APSND		2		// DQ INDEX FOR handler_apsend
+#define		MDSDQ_IDX_DBTBL		3		// DQ INDEX FOR handler_dbtable
+
+AG_FIX		s_afix;
+Ag_Fix		s_xfix;
+TFILE		s_trcf;
+TFile	_trcf_	=  (TFile) &s_trcf;
+
+KILLMON_T		*root;
+KILL_SWITCH_T	*pk=NULL;
+
+MARKET	*market=NULL;
+
+void exitproc(int );
+void *handler_master(void *);
+void *handler_apsend(void *);
+void *handler_dbtable(void *);
+//void *handler_sched(void *);
+int sise2mds(char *excode, char *pbuff, int dlen, MDSSISE *psise);
+
+static int conv_CMBS(char *pbuff, int dlen, MDSSISE *psise);
+static int conv_SMBS(char *pbuff, int dlen, MDSSISE *psise);
+static int conv_KMBS(char *pbuff, int dlen, MDSSISE *psise);
+static int conv_EBSC(char *pbuff, int dlen, MDSSISE *psise);
+static int conv_REUT(char *pbuff, int dlen, MDSSISE *psise);
+/*===============================================================
+ * EXITPROC
+===============================================================*/
+void exitproc(int exitval)
+{
+	char		TZ[40];
+	
+	if (market)
+	{
+		//pthread_mutex_lock(&market->ctx.lock);
+		shmdt(market->arch);
+		//pthread_mutex_unlock(&market->ctx.lock);
+		
+		free(market);
+	}
+
+	sprintf(TZ, TZ_KST);
+	putenv(TZ);
+	tzset();
+	
+	printf("\nProgram Terminated.. exitval[%d]\n\n", exitval);
+	
+	exit(exitval);
+}
+
+/*===============================================================
+ * MAIN PROCESS
+===============================================================*/
+int main(int argc, char *argv[])
+{
+	int		rc;	
+	char	exnm[40];
+	char	pdesc[40]; //화면표시명
+	char	procnm[40];
+	MARKET	m;
+	MDARCH	*arch;
+	XCHG	*xchg;
+	
+	memset(exnm,	0x00, sizeof(exnm));
+	memset(pdesc,	0x00, sizeof(pdesc));
+	memset(procnm,	0x00, sizeof(procnm));
+	memset(&m,		0x00, sizeof(MARKET));
+
+	/*===============================================================
+	 * PROCESS 초기화
+	===============================================================*/
+	if (argc < 2)
+	{
+		printf("\n\t Usage : %s [SMBS/KMBS/CMBS/EBS/CUST/BEST] \n", argv[0]);
+		exitproc(-1);
+	}
+
+	strcpy(m.procname, basename(argv[0]));
+	strcpy(m.exnm, argv[1]);
+
+	mds_log(&m, MLOG_MUST, "Start....!");
+
+	root = InitKillMon();
+	if(root == NULL) // 실패
+	{
+		mds_log(&m, MLOG_ERROR, "InitKillMon() Failed!");
+		exitproc(-1);
+	}
+	sprintf(procnm, "%s %s", m.procname, m.exnm);
+	pk = AddKillMon(root, procnm);
+	if(pk == NULL) // 실패
+	{
+		mds_log(&m, MLOG_ERROR, "AddKillMon() %s Failed!", m.procname);
+		exitproc(-1);
+	}
+	mds_log(&m, MLOG_MUST, "AddKillMon() %s Success!", m.procname);
+	sprintf(pk->pdesc, "%s 시세수신", argv[1]);
+
+	pk->priority = 8000;
+
+	signal(SIGINT , exitproc);
+	signal(SIGTERM, exitproc);
+	signal(SIGQUIT, exitproc);
+
+	/*===============================================================
+	 * MARKET SHM 초기화
+	===============================================================*/
+	strcpy(exnm, argv[1]);
+	if ((market = mds_open2(exnm, O_RDWR|O_CREAT)) == NULL)
+	{
+		mds_log(&m, MLOG_ERROR, "Cannot open market '%s'", exnm);
+		exitproc(-1);
+	}
+
+	mds_log(market, MLOG_MUST, "Start to receive market data for '%s'", exnm);
+	
+	arch = (MDARCH *)(market->arch);
+	xchg = (XCHG *)&(arch->xchg);
+
+	/*===============================================================
+	 * FIX 전문 변환용 로컬메모리 초기화
+	===============================================================*/
+	// init log file
+	rc = agxpi_tfile_vinit (_trcf_, LOG_DIR, AG_NULL, AG_HOME, TRC_DIR, AGINI_GID, AGINI_SGI, AGINI_MYI,TDAT, DALL);
+	agtrc_open (AG_NULL, _trcf_);
+	
+	// start message
+	agtrc_msg (_trcf_, AGINI_GID, AGINI_SGI, AGINI_MYI, 0, 0, TDBG, "fixgetval START\n");
+	mxzinit(s_afix);
+	s_xfix = (Ag_Fix) &s_afix;
+
+	rc = agfix_at (s_xfix, AFIX_MAT_INIT);
+	if (rc)
+	{
+		agtrc_msg (_trcf_, AGINI_GID, AGINI_SGI, AGINI_MYI, 0, 0, TERR, "agfix_at ERROR-R:%d E:%d ...\n", rc, errno);
+		exitproc(-1);
+	}
+
+// ★TODO-04 : 실행 시 옵션에 따른 동작 구분
+//  > DB처리는 CUST 만 
+	/*===============================================================
+	 * UDP 서버기동 : 수신준비
+	  > ctx->sock 을 로컬변수로 변경
+	===============================================================*/
+	int		r_sock, bsize, options = 1;
+	struct	sockaddr_in svrsock, clisock;
+	struct	ip_mreq ip_mreq;
+	socklen_t socklen = sizeof(svrsock);
+	
+	size_t	stacksize;
+	in_addr_t addr, f, t;
+	pthread_attr_t attr;
+
+	memset(&svrsock, 0, sizeof(svrsock));
+	memset(&clisock, 0, sizeof(clisock));	
+
+	// use UDP direct
+	f = ntohl(inet_addr(MULTICAST_F));
+	t = ntohl(inet_addr(MULTICAST_T));
+
+	addr = ntohl(inet_addr(xchg->from.ipad));
+	if (addr >= f && addr <= t)
+	{
+		// multicasting
+		if ((r_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0)
+		{
+			mds_log(market, MLOG_ERROR, "Cannot open a socket for %s.%d", xchg->from.ipad, xchg->from.port);
+			exitproc(-1);
+		}
+
+		svrsock.sin_family = AF_INET;
+		//sockin.sin_addr.s_addr = INADDR_ANY;
+		svrsock.sin_addr.s_addr = inet_addr(xchg->from.ipad);
+		svrsock.sin_port = htons(xchg->from.port);
+
+		options = 1;
+		setsockopt(r_sock, SOL_SOCKET, SO_REUSEADDR, &options, sizeof(options));
+		
+		if (bind(r_sock, (struct sockaddr *)&svrsock, sizeof(svrsock)) != 0)
+		{
+			mds_log(market, MLOG_ERROR, "Cannot bind a socket for %s.%d", xchg->from.ipad, xchg->from.port);
+			close(r_sock);
+			exitproc(-1);
+		}
+		ip_mreq.imr_multiaddr.s_addr = inet_addr(xchg->from.ipad);
+		ip_mreq.imr_interface.s_addr = INADDR_ANY;
+		if (setsockopt(r_sock, IPPROTO_IP, IP_ADD_MEMBERSHIP, (void *)&ip_mreq, sizeof(ip_mreq)) != 0)
+		{
+			mds_log(market, MLOG_ERROR, "Cannnot add a multicast member for %s.%d", xchg->from.ipad, xchg->from.port);
+			close(r_sock);
+			exitproc(-1);
+		}
+		mds_log(market, MLOG_MUST, "Start to receive from %s.%d", xchg->from.ipad, xchg->from.port);
+	}
+	else
+	{
+		// broadcasting or unicasting
+		if ((r_sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
+		{
+			mds_log(market, MLOG_ERROR, "Cannot open a socket for a port %d", xchg->from.port);
+			exitproc(-1);
+		}
+
+		svrsock.sin_family = AF_INET;
+		svrsock.sin_addr.s_addr = INADDR_ANY;
+		svrsock.sin_port = htons(xchg->from.port);
+		options = 1;
+		setsockopt(r_sock, SOL_SOCKET, SO_REUSEADDR, &options, sizeof(options));
+
+		if (bind(r_sock, (struct sockaddr *)&svrsock, sizeof(svrsock)) != 0)
+		{
+			mds_log(market, MLOG_ERROR, "Cannot bind a socket for a port %d", xchg->from.port);
+			close(r_sock);
+			exitproc(-1);
+		}
+		mds_log(market, MLOG_MUST, "Start to receive from UDP port %d", xchg->from.port);
+	}
+
+	bsize = 80 * 1024;
+	setsockopt(r_sock, SOL_SOCKET, SO_RCVBUF, &bsize, sizeof(int));
+	
+	/*===============================================================
+	 * UDP 클라이언트 : 송신준비
+	  > CUST, BEST 데이터 송신 용
+	===============================================================*/
+	int		csock, bsock;
+	struct	sockaddr_in	bestsock, custsock;
+
+	if (market->excode[0] != DF_EXCD_BEST && market->excode[0] != DF_EXCD_CUST)
+	{
+		memset(&bestsock, 0x00, sizeof(bestsock));
+		memset(&custsock, 0x00, sizeof(custsock));
+
+		custsock.sin_family       = AF_INET;
+		custsock.sin_addr.s_addr  = inet_addr("127.0.0.1");	// 동일한 서버에 있음.
+		custsock.sin_port         = htons(DF_CUSTPORT);
+		if ((csock = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
+		{
+			mds_log(market, MLOG_ERROR, "Cannot open a socket for a cust (%d) (%d:%s)", xchg->from.port, errno, strerror(errno));
+			exitproc(-1);
+		}
+
+		bestsock.sin_family       = AF_INET;
+		bestsock.sin_addr.s_addr  = inet_addr("127.0.0.1");	// 동일한 서버에 있음.
+		bestsock.sin_port         = htons(DF_BESTPORT);
+		if ((bsock = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
+		{
+			mds_log(market, MLOG_ERROR, "Cannot open a socket for a best (%d) (%d:%s)", xchg->from.port, errno, strerror(errno));
+			exitproc(-1);
+		}
+	}
+	/*===============================================================
+	 * QUEUE READ/WRITE COUNT RESET
+	  > DQ API를 이용하여 카운트 리셋
+	===============================================================*/
+	struct msqid_ds		msg_ds;
+	int		msqid;
+	
+	if ((msqid = msgget(IPCK(market->ipck, DF_SISEQ4MA), 0)) > 0)
+		msgctl(msqid, IPC_RMID, &msg_ds);
+
+	if ((msqid = msgget(IPCK(market->ipck, DF_SISEQ4AP), 0)) > 0)
+		msgctl(msqid, IPC_RMID, &msg_ds);
+
+	if ((msqid = msgget(IPCK(market->ipck, DF_SISEQ4DB), 0)) > 0)
+		msgctl(msqid, IPC_RMID, &msg_ds);
+
+	mds_log(market, MLOG_MUST, "(%s) message queue for (%s) is reset (0x%x/0x%x/0x%x)\n", __func__, market->exnm, 
+		IPCK(market->ipck, DF_SISEQ4MA), IPCK(market->ipck, DF_SISEQ4AP), IPCK(market->ipck, DF_SISEQ4DB));
+
+	/*===============================================================
+// ★ TODO-01 : 일자변경 쓰레드 scheduler() 은 하루 한번 작동. 배치로 분리 개발 (운영시간 확대 대응)
+
+	 * THREAD CREATE
+	  > REMOVE : syncer는 동작내용 없어 삭제.
+	  > REMOVE : notifier에서 수신데이터 재전송할 ctx->posta.sock 는 호출부분 없어서 삭제
+
+	  > handler_master() : MAST SHM 업데이트 및 실시간 패킷전송 전송
+	  > handler_apsend() : AP서버용 실시간 패킷 생성 및 전송
+	  > handler_dbtable() : DB 히스토리데이터 생성
+	
+	 * 핸들러별 시세큐 READ ID는 인자값이 아닌 define으로 정의
+	===============================================================*/
+	pthread_attr_init(&attr);
+	pthread_attr_getstacksize(&attr, &stacksize);
+	pthread_t	tid;
+	int			ii, imod;
+
+	if (stacksize < (2048*1024))
+	{
+		stacksize = 2048 * 1024;
+		pthread_attr_setstacksize(&attr, stacksize);
+	}
+
+	for (ii = 0; ii < xchg->ma_pnum; ii++)
+	{
+		// 쓰레드 실행 후 ii++ 이 먼저 반영되어 쓰레드 안에서는 ++ 이 된 값을 받는 현상으로 인해 별도 변수를 둠.
+		imod = ii;
+		pthread_create(&tid, &attr, handler_master, (void *)&imod);
+//mds_log(market, MLOG_DEBUG, "(%s) pthread_create handler_master (%d/%d/%u)", __func__, ii, imod, tid);
+		usleep(500000);
+	}
+
+	for (ii = 0; ii < xchg->ap_pnum; ii++)
+	{
+		imod = ii;
+		pthread_create(&tid, &attr, handler_apsend, (void *)&imod);
+//mds_log(market, MLOG_DEBUG, "(%s) pthread_create handler_apsend (%d/%d/%u)", __func__, ii, imod, tid);
+		usleep(500000);
+	}
+
+// ★TODO-04 : 실행 시 옵션에 따른 동작 구분
+	if (market->excode[0] == DF_EXCD_CUST)		// CUST 인 경우만 DB처리 함
+	{
+		for (ii = 0; ii < xchg->db_pnum; ii++)
+		{
+			imod = ii;
+			pthread_create(&tid, &attr, handler_dbtable, (void *)&imod);
+//mds_log(market, MLOG_DEBUG, "(%s) pthread_create handler_dbtable (%d/%d/%u)", __func__, ii, imod, tid);
+			usleep(500000);
+		}
+	}
+/* 1801화면에서 변동 발생 시 setcustfeed() api 호출하여 업데이트
+	// 고객시세 제공시간 관리  쓰레드
+	if (market->excode[0] == DF_EXCD_CUST)
+		pthread_create(&tid, &attr, handler_sched, (void *)NULL);
+*/
+	/*===============================================================
+	 * MAIN PROCESS (시세수신)
+	  > UDP 수신 처리는 멀티쓰레드가 아니므로 main() 내에서 처리함
+	===============================================================*/
+	int		rtn, dlen;
+	char	rbuff[MAX_PACKET_SIZE+512];	// FIX DATA
+	char	sbuff[512];				// MDSSISE
+	char	ctime [14];
+	struct	timeval rtime;
+	struct tm *lt;
+	
+	WFA_HDL wfah_sise  = {0,};		// 시세 전송  Queue
+	WFA_HDL wfah_best  = {0,};		// BEST 전송  Queue
+	WFA_HDL wfah_cust  = {0,};		// CUST 전송  Queue
+	MDSSISE	*psise;
+	MDFOLD	*pfold;
+
+	psise = (MDSSISE *)sbuff;
+
+	while (1)
+	{
+		/*===============================================================
+		 * UDP 시세 수신
+		===============================================================*/
+		memset(rbuff, 0x00, sizeof(rbuff));
+		
+		dlen = recvfrom(r_sock, rbuff, sizeof(rbuff), 0, (struct sockaddr *)&clisock, &clisock);
+		if (dlen < 0)
+		{
+			if (errno == EINTR || errno == EAGAIN)
+				continue;
+			break;
+		}
+
+		gettimeofday(&rtime, NULL);
+		arch->rtim = rtime.tv_sec;
+		arch->rsum++;
+
+		// KILL SWITCH UPDATE
+		pk->tot_count = arch->rsum;
+		pk->tot_count_time = rtime.tv_sec;
+
+//mds_log(market, 0, "[%s:%d:%d] RECEIVE DATA (%d:%.*s)", __func__, arch->rsum, lv, dlen, dlen, rbuff);
+
+// TODO : DELETE ################################################################################################
+if ((market->excode[0] == 'S' || market->excode[0] == 'E') && arch->rsum%20 != 0)
+continue;
+// TODO : DELETE ################################################################################################
+		/*===============================================================
+		 * FIX FORMAT CONVERT
+		===============================================================*/
+		memset(sbuff, 0x00, sizeof(sbuff));
+
+		rtn = sise2mds(xchg->excode, rbuff, dlen, psise);
+		if (rtn != 0)
+		{
+			mds_log(market, MLOG_WARNING, "Receive Data Convert Error (%d)", rtn);
+			continue;
+		}
+
+//============================================================
+// USDCNH 수신 시 USDCNY 코드로 한번 더 송신하기 위해 사용 함
+//============================================================
+SendUSDCNY :
+
+		/*===============================================================
+		 * 시세 QUEUE PUSH
+		===============================================================*/
+		// 해당 통화쌍의 SHM(FOLD) GET, symb의 indx 에 따라 쓰레드별 msg.type 분배
+		if ((pfold = mds_getfolder(market, psise->symb)) == NULL)
+		{
+			mds_log(market, MLOG_WARNING, "mds_getfolder error [%.7s]", psise->symb);
+			continue;
+		}
+
+		// 해당 통화에 대한 거래불가 세팅되어 있는 경우, 모든 시세 SKIP
+		// TSKEIAM88.TRNABIL_YN 컬럼 '0'=거래불가 인 경우 trdf=9 로 세팅됨(LoadMaster) trdf=0 은 시세수신여부의 대기 상태이므로 다름.
+		if (pfold->trdf == 9)	continue;
+
+		// ★TODO-19 : 기존 fetch.c:CheckQuotePrice()에 있던 BadTick 필터링 로직 추가 필요
+		rtn = mds_sise_valid(market, pfold, psise);
+		if (rtn != 0)
+		{
+			mds_log(market, MLOG_WARNING, "mds_sise_valid failed.. [%d] (%.1s/%.6s/%.8s/%.9s/%.6f/%.6f//%.6f)", rtn, 
+						psise->excode, psise->symb, psise->date, psise->time, psise->bidprc, psise->offerprc, pfold->baseprc);
+			continue;
+		}
+
+//		imod = pfold->seqn % xchg->ma_pnum;
+
+if (arch->rsum%1000 == 0 || psise->excode[0] == DF_EXCD_HAND)
+mds_log(market, MLOG_DEBUG, "[%s] RCV(%d)=[%d:%.1s/%.6s/%.8s/%.9s/%.6f/%.f/%.6f/%.f]", __func__, arch->rsum, pfold->seqn
+			, psise->excode, psise->symb, psise->date, psise->time, psise->bidprc, psise->bidqty, psise->offerprc, psise->offerqty);
+		/*===============================================================
+		 * CUST시세처리 체크로직
+		 * 각 핸들러로 전달 전에 체크하여 SKIP 처리
+		 * 모든 원천의 시세를 UDP로 수신하기 때문에 시간대별로 대상 원천만 처리해야 함
+		===============================================================*/
+		if (market->excode[0] == DF_EXCD_CUST && psise->excode[0] != DF_EXCD_HAND)
+		{
+			char	ctime[14+1];
+			sprintf(ctime, "%.8s%.6s", psise->date, psise->time);		// YYYYMMDDHHmmSS
+
+			// ★ CHECK : [1801] 화면에서 변경한 내용은 해당 서비스에서 API(mds_updt_custfeed) 호출하여 메모리 업데이트 하므로 
+			//            항상 메모리의 stime,etime 을 기준으로 동작하여도 무관함.
+			// 종료시간이 지난경우 시간 재조회 하여 세팅
+			if (pfold->cust.feedtp[0] == DF_CFEED_STND && memcmp(pfold->cust.etm, ctime, sizeof(pfold->cust.etm)) < 0 &&
+				memcmp(pfold->cust.etm, "00000000000000", sizeof(pfold->cust.etm)) != 0)
+				SetCustFeed(market, pfold);
+
+			switch (pfold->cust.feedtp[0])
+			{
+			case DF_CFEED_STOP :		// 시세처리 안함
+				continue;
+			case DF_CFEED_HAND :		// 시간에 관계없이 수기시세만 처리
+				if (psise->excode[0] != DF_EXCD_HAND)	continue;
+//				if (pfold->trdf == DF_OFF)	pfold->trdf = DF_ON;	// 수기수신 시 trdf 가능으로 변경 (update_master 에서 함)
+				break;
+			case DF_CFEED_PRIO :		// 시간에 관계없이 원천체크 후 처리
+				if (psise->excode[0] != pfold->cust.excode[0])	continue;
+				break;
+			case DF_CFEED_STND :		// 시간과 원천 모두 체크
+				if (psise->excode[0] != pfold->cust.excode[0] ||
+					memcmp(pfold->cust.stm, ctime, sizeof(pfold->cust.stm)) >  0 ||
+					memcmp(pfold->cust.etm, ctime, sizeof(pfold->cust.etm)) <= 0)
+				continue;
+
+				break;
+			default :
+				continue;
+			}
+		}
+
+		// 각 handler로 시세 전달
+		rtn = KBA_MDS_QUE_PUSH(market->ipck, pfold->seqn, sbuff, SZ_MDSSISE);
+		if (rtn <  0)
+		{
+			mds_log(market, MLOG_ERROR, "KBA_MDS_QUE_PUSH : Send Error (%d)", rtn);
+			continue;
+		}
+//mds_log(market, MLOG_DEBUG, "[%s] KBA_MDS_QUE_PUSH OK. (%d) (%d)", __func__, rtn, wfah_sise.rwno[0]);
+
+		// USDCNY는 고객전용 시세 (USDCNH를 USDCNY로 카피하여 재처리)
+		if (market->excode[0] == DF_EXCD_CUST && memcmp(psise->symb, "USDCNH", 6) == 0)
+		{
+			memcpy(psise->symb, "USDCNY", 6);
+			goto SendUSDCNY ;
+		}
+
+		/*===============================================================
+		 * UDP SEND TO CUST/BEST
+		  > BEST호가는 BEST SHM 처리 데몬이 비교 후 처리 함.
+		  > 모든 원천의 시세가 BEST 로 전송
+		  > ★★ 각 원천데몬에서 시간 관리하여 CUST송신하였으나, 
+		  		모든 원천 시세를 송신 한 후 CUST 데몬에서 걸러서 사용하는 것으로 변경 (2024.04.01)
+		===============================================================*/
+		if (market->excode[0] == DF_EXCD_CUST || market->excode[0] == DF_EXCD_BEST)		continue;
+
+		// CUST 전송
+		rtn = sendto(csock, sbuff, SZ_MDSSISE, 0, (struct sockaddr *)&custsock, sizeof(custsock));
+		if (rtn <  0)
+			mds_log(market, MLOG_ERROR, "UDP SEND ERROR for CUST (%d) (%d:%s)", rtn, errno, strerror(errno));
+
+		// BEST 전송
+		rtn = sendto(bsock, sbuff, SZ_MDSSISE, 0, (struct sockaddr *)&bestsock, sizeof(bestsock));
+		if (rtn <  0)
+			mds_log(market, MLOG_ERROR, "UDP SEND ERROR for BEST (%d) (%d:%s)", rtn, errno, strerror(errno));
+
+	}
+
+	mds_log(market, MLOG_ERROR, "UDP 시세수신 BREAK. Call Termination function..");
+	
+	close(r_sock);
+
+	exitproc(-99);
+}
+
+/*===============================================================
+ * 마스터메모리 업데이트하고 실시간 패킷 생성 후 전송
+===============================================================*/
+void *handler_master(void *argv)
+{
+	int			rtn, dlen, idx, imod;
+	key_t		ipck;
+	pthread_t	tid;
+	char		rbuff[1024];
+	struct pushdata		pushdata;
+	WFA_HDL		wfah  = {0,};
+	MDARCH		*arch;
+	XCHG		*xchg;
+	MDFOLD		*pfold;
+	CUSTSISE	*preal;
+	MDSSISE		*psise;
+	
+	tid = pthread_self();
+	pthread_detach(tid);
+	
+	idx   = *((int *)argv);
+	
+	arch  = (MDARCH *)market->arch;
+	xchg  = (XCHG *)&arch->xchg;
+
+	ipck  = IPCK(market->ipck, DF_SISEQ4MA);
+
+mds_log(market, MLOG_MUST, "[%s:%d:%u] [%.1s/%s] thread start !!...(0x%0x)\n", __func__, idx, tid, xchg->excode, xchg->exnm, ipck);
+	/*===============================================================
+	 * SISE DATA RECEIVE LOOP START
+	===============================================================*/
+	psise = (MDSSISE *)rbuff;
+
+// ★TODO-03 : 초기 기동 시 큐의 readcnt = writecnt로 맞추는 기능 필요 (과거 데이터 전송 방지)
+
+	while (1)
+	{
+		memset(rbuff, 0x00, sizeof(rbuff));
+
+		// SISE DATA POP
+		//dlen = KBA_MDS_QUE_POP (&wfah, xchg->quenm, rbuff, SZ_MDSSISE, 0, MDSDQ_IDX_MAST);
+		dlen = KBA_MDS_QUE_POP(ipck, (idx+1), rbuff, SZ_MDSSISE);
+		if (dlen == 0)
+		{
+			mds_log(market, MLOG_WARNING, "[%s] KBA_MDS_QUE_POP timeout [%d]", __func__, dlen);
+			continue;
+		} 
+		else if (dlen <  0)
+		{
+			mds_log(market, MLOG_ERROR, "[%s] KBA_MDS_QUE_POP error [%d]", __func__, dlen);
+			break;
+		}
+
+		// 해당 통화쌍의 SHM(FOLD) GET
+		if ((pfold = mds_getfolder(market, psise->symb)) == NULL)
+		{
+			mds_log(market, MLOG_ERROR, "mds_getfolder error [%.7s]", psise->symb);
+			continue;
+		}
+/*
+struct timeval	tv;
+struct tm *lt;
+
+gettimeofday(&tv, NULL);
+lt = localtime(&tv.tv_sec);
+mds_log(market, MLOG_DEBUG, "[%s:%d:%u] QUE_POP [%6s:%.9s] [%02d:%02d:%02d.%d]", __func__, idx, tid, psise->symb, psise->time, lt->tm_hour, lt->tm_min, lt->tm_sec, tv.tv_usec);
+*/
+// 35=X 체결데이터는 실시간 처리/DB처리 만 하고 CONTINUE
+if (psise->quotid[0] == 'X')
+{
+	// 원천 데몬인 경우만 실시간 처리 (고객쪽은 사용 안함)
+	if (market->excode[0] == DF_EXCD_BEST || market->excode[0] == DF_EXCD_CUST)	continue;
+
+	// PUSH REAL SISE FOR CUSTOMER
+	memset(&pushdata, 0x00, sizeof(struct pushdata));
+	
+	//preal = (CUSTSISE *)(pushdata.pushmsg.msgb);
+	preal = (CUSTXSISE *)(pushdata.pushmsg.msgb);
+	
+	//rtn = make_cust_sise(market, pfold, psise, preal);
+	rtn = make_cust_xsise(market, pfold, psise, preal);
+	if (rtn <0)
+	{
+		mds_log(market, MLOG_WARNING, "mds_getfolder error [%.7s]", psise->symb);
+		//sleep(1);		continue;
+		continue;
+	}
+
+	sprintf(pushdata.pushmsg.symb, "%.7s", preal->rdcode);
+	pushdata.mkid			= market->exid;
+	pushdata.pushmsg.mask	= PUSH_QUOT;
+	pushdata.pushmsg.type	= 'X';
+	pushdata.pushmsg.msgl	= (SZ_CUSTXSISE > MAX_PUSH_LEN ? MAX_PUSH_LEN : SZ_CUSTXSISE);
+	
+	// SEND REAL TO MYMQ
+	myrq_push(&pushdata);
+
+//mds_log(market, MLOG_DEBUG, "[%s] receive X .. myrq_push call..[%.7s]", __func__, preal->rdcode);
+
+	continue;
+}
+		// update_best()
+		// 수신한 시세로 비교하는 것이 아니고, 데이터 발생 시점에 모든 원천의 동일 통화 마스터 비교 후 처리
+		// 수신한 원천에서 마스터 처리전에 송신한 데이터 이므로 해당 원천 마스터에 반영되지 않았을 수 있음.
+		if (market->excode[0] == DF_EXCD_BEST)
+			rtn = update_best(market, pfold, psise);
+		else
+			rtn = update_master(market, pfold, psise);
+/*
+gettimeofday(&tv, NULL);
+lt = localtime(&tv.tv_sec);
+mds_log(market, MLOG_DEBUG, "[%s:%d:%u] update_master done [%6s:%.9s] [%02d:%02d:%02d.%d]", __func__, idx, tid, psise->symb, psise->time, lt->tm_hour, lt->tm_min, lt->tm_sec, tv.tv_usec);
+*/
+		if (rtn == 0)		continue;			// 실시간 대상 아님.
+		else if (rtn <0)
+		{
+			mds_log(market, MLOG_WARNING, "mds_getfolder error [%.7s]", psise->symb);
+			//sleep(1);		continue;
+			continue;
+		}
+
+		// PUSH REAL SISE FOR CUSTOMER
+		memset(&pushdata, 0x00, sizeof(struct pushdata));
+
+		preal = (CUSTSISE *)(pushdata.pushmsg.msgb);
+		
+		rtn = make_cust_sise(market, pfold, psise, preal);
+		if (rtn < 0)
+		{
+			mds_log(market, MLOG_WARNING, "mds_getfolder error [%.7s]", psise->symb);
+			//sleep(1);		continue;
+			continue;
+		}
+
+		sprintf(pushdata.pushmsg.symb, "%.7s", preal->rdcode);
+		pushdata.mkid			= market->exid;
+		pushdata.pushmsg.mask	= PUSH_QUOT;
+		pushdata.pushmsg.type	= 'A';
+		pushdata.pushmsg.msgl	= (SZ_CUSTSISE > MAX_PUSH_LEN ? MAX_PUSH_LEN : SZ_CUSTSISE);
+		
+		// SEND REAL TO MYMQ
+		myrq_push(&pushdata);
+
+if (arch->rsum%1000 == 0)
+mds_log(market, MLOG_DEBUG, "[%s:%d:%u] [%.1s/%s] myrq_push [%.7s] [%s:%s:%s]", __func__, idx, tid,
+			xchg->excode, xchg->exnm, preal->rdcode, preal->symb, preal->pask, preal->pbid);
+
+	} // while
+	
+	mds_log(market, MLOG_MUST, "[%s:%d:%u] handler_master thread is terminated !!!", __func__, idx, tid);
+	
+	pthread_exit(NULL);	
+}
+
+/*===============================================================
+ * AP전송용 패킷 생성 후 전송
+===============================================================*/
+void *handler_apsend(void *argv)
+{
+	int		rtn, dlen, idx, imod;
+	key_t		ipck;
+	pthread_t	tid;
+	char	rbuff[1024], sbuff[1024];
+	WFA_HDL	wfah  = {0,};
+	MDFOLD	*pfold, *pusdkrw;
+	MDARCH	*arch;
+	XCHG	*xchg;
+	APSISE	*preal;
+	MDSSISE	*psise;
+	
+	tid = pthread_self();
+	pthread_detach(tid);
+	
+	idx = *((int *)argv);
+	
+	arch  = (MDARCH *)market->arch;
+	xchg  = (XCHG *)&arch->xchg;
+
+	ipck  = IPCK(market->ipck, DF_SISEQ4AP);
+
+mds_log(market, MLOG_MUST, "[%s:%d:%u] [%.1s/%s] thread start !!...(0x%0x)\n", __func__, idx, tid, xchg->excode, xchg->exnm, ipck);
+
+	/*===============================================================
+	 * AP 데이터 전송을 위한 멀티캐스트 소켓 생성
+	===============================================================*/
+	int		c_sock, options = 1;
+	struct	in_addr		localif;
+	struct	sockaddr_in	multisock;
+	
+	memset(&multisock, 0x00, sizeof(multisock));
+	memset(&localif,   0x00, sizeof(localif));
+
+	if ((c_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0)
+	{
+		mds_log(market, MLOG_ERROR, "[%s:%u] Cannot open a socket for AP %s.%d", __func__, tid, xchg->apsnd.ipad, xchg->apsnd.port);
+		pthread_exit(NULL);
+	}
+	
+	multisock.sin_family		= AF_INET;
+	multisock.sin_addr.s_addr	= inet_addr(xchg->apsnd.ipad);
+	multisock.sin_port			= htons(xchg->apsnd.port);
+	
+	// LOOPBACK OPTION OFF
+	options = 1;
+	if (setsockopt(c_sock, IPPROTO_IP, IP_MULTICAST_LOOP, (void *)&options, sizeof(options)) != 0)
+	{
+		mds_log(market, MLOG_ERROR, "[%s:%u] (%d) Set socketoption Failed. %s.%d (%s)", __func__, tid, __LINE__, xchg->apsnd.ipad, xchg->apsnd.port, strerror(errno));
+		close(c_sock);
+		pthread_exit(NULL);
+	}
+
+	// TTL OPTION = 1
+	options = 1;
+	if (setsockopt(c_sock, IPPROTO_IP, IP_MULTICAST_TTL, (void *)&options, sizeof(options)) != 0)
+	{
+		mds_log(market, MLOG_ERROR, "[%s:%u] (%d) Set socketoption Failed. %s.%d (%s)", __func__, tid, __LINE__, xchg->apsnd.ipad, xchg->apsnd.port, strerror(errno));
+		close(c_sock);
+		pthread_exit(NULL);
+	}
+
+	// MULTICAST INTERFACE
+	/*
+	localif.s_addr = inet_addr(xchg->apsnd.neta);
+	if (setsockopt(c_sock, IPPROTO_IP, IP_MULTICAST_IF, (void *)&localif, sizeof(localif)) != 0)
+	{
+		mds_log(market, MLOG_ERROR, "[%s:%u] (%d) Set socketoption Failed. %s.%d/%s (%d:%s)", __func__, tid, __LINE__,
+						xchg->apsnd.ipad, xchg->apsnd.port, xchg->apsnd.neta, errno, strerror(errno));
+		close(c_sock);
+		pthread_exit(NULL);
+	}
+	*/
+	mds_log(market, MLOG_MUST, "[%s:%u] READY TO SEND DATA TO AP %s.%d", __func__, tid, xchg->apsnd.ipad, xchg->apsnd.port);
+
+	/*===============================================================
+	 * USDKRW FOLDER 메모리 GET
+	 * 모든 통화 패킷의 공통정보이므로 별도로 포인터 생성
+	===============================================================*/
+	if ((pusdkrw = mds_getfolder(market, DF_USDKRW)) == NULL)
+	{
+		mds_log(market, MLOG_ERROR, "[%s:%u] USDKRW : mds_getfolder error [%.7s]", __func__, tid, DF_USDKRW);
+		pthread_exit(NULL);
+	}
+
+	/*===============================================================
+	 * SISE DATA RECEIVE LOOP START
+	===============================================================*/
+	psise = (MDSSISE *)rbuff;
+	preal = (APSISE  *)sbuff;
+
+// ★TODO-03 : 초기 기동 시 큐의 readcnt = writecnt로 맞추는 기능 필요 (과거 데이터 전송 방지)
+
+	while (1)
+	{
+		memset(rbuff, 0x00, sizeof(rbuff));
+		memset(sbuff, 0x00, sizeof(sbuff));
+
+		/*===============================================================
+		 * 시세데이터 QUEUE POP
+		===============================================================*/
+		//dlen = KBA_MDS_QUE_POP (&wfah, xchg->quenm, rbuff, SZ_MDSSISE, 0, MDSDQ_IDX_APSND);
+		dlen = KBA_MDS_QUE_POP(ipck, (idx+1), rbuff, SZ_MDSSISE);
+		if (dlen == 0)
+		{
+			mds_log(market, MLOG_WARNING, "[%s:%u] KBA_MDS_QUE_POP timeout [%d]", __func__, tid, dlen);
+			continue;
+		} 
+		else if (dlen <  0)
+		{
+			mds_log(market, MLOG_ERROR, "[%s:%u] KBA_MDS_QUE_POP error [%d]", __func__, tid, dlen);
+			break;
+		}
+
+// 35=X 체결데이터는 실시간 처리/DB처리 만 하고 CONTINUE
+if (psise->quotid[0] == 'X')	continue;
+
+		// 통화코드별 FOLDER GET
+		if ((pfold = mds_getfolder(market, psise->symb)) == NULL)
+		{
+			mds_log(market, MLOG_WARNING, "[%s:%u] mds_getfolder error [%.7s]", __func__, tid, psise->symb);
+			continue;
+		}
+
+//mds_log(market, MLOG_DEBUG, "[%s:%d:%u] QUE_POP [%6s:%.9s]", __func__, idx, tid, psise->symb, psise->time);
+/* 메세지 큐로 변경되면서 큐type으로 분리해서 전송하기 때문에 읽을 때는 모두 읽으면 됨.
+		// 쓰레드별 할당 대상 통화 체크
+		imod = pfold->seqn % xchg->ap_pnum;
+		if (imod != idx)	continue;
+*/
+// ★TODO-07 : handler_apsend, handler_dbtable 에서도 종목별 시세 변동 시에만 처리하는 방안 강구 (직전 시세 비교 방안 필요)
+
+		/*===============================================================
+		 * 내부 AP 시세용 패킷 생성 후 전송
+		===============================================================*/
+		rtn = make_ap_sise(market, pfold, pusdkrw, psise, preal);
+		if (rtn <0)
+		{
+			mds_log(market, MLOG_WARNING, "[%s:%u] make_ap_sise error [%.7s]", __func__, tid, psise->symb);
+			//sleep(1);		continue;
+			continue;
+		}
+
+		if (sendto(c_sock, sbuff, sizeof(APSISE), 0, (struct sockaddr *)&multisock, sizeof(multisock)) < 0)
+		{
+// ★TODO-10 : handler_apsend()에서 송신 소켓 에러 시 재생성 로직 필요 (상단 소켓생성부분을 함수로 빼고 호출.)
+			mds_log(market, MLOG_WARNING, "[%s:%u] sendto apsise error [%.7s] (%s)", __func__, tid, psise->symb, strerror(errno));
+			//sleep(1);		continue;
+			continue;
+		}
+
+if (arch->rsum%1000 == 0)
+mds_log(market, MLOG_DEBUG, "[%s:%d:%u] [%.1s:%s] make_ap_sise [%.6s]", __func__, idx, tid, xchg->excode, xchg->exnm, pfold->symb);
+
+//////////////////////////////////////////////////////////
+// 체결엔진에서 재정시세 중단 요청하여 이하 내용 SKIP
+continue;
+
+#if 0
+//////////////////////////////////////////////////////////
+		// USDKRW 시세가 아니면 수신통화 처리 후 NEXT CONTINUE
+		if (memcmp(DF_USDKRW, psise->symb, 6) != 0)		continue;
+
+		/*===============================================================
+		 * USDKRW 인 경우 재정통화를 위해 모든 이종통화 시세 전송
+		===============================================================*/
+		while ((pfold = mds_popfolder(market)))
+		{
+			memset(sbuff, 0x00, sizeof(sbuff));
+
+			/*===============================================================
+			 * SKIP 대상 통화 체크
+			  > 수신통화는 기 송신으로 SKIP
+			  > 시세 중지중인 종목 여부
+			===============================================================*/
+			// 대상 통화가 거래중단, 재정중단, 시세중지 상태이면 SKIP
+			if (pfold->trdf == DF_OFF || pfold->cust.feedtp[0] == DF_CFEED_STOP || pfold->cust.finclstop[0] == DF_C_ON)
+				continue;
+
+			if (memcmp(pfold->symb, psise->symb, sizeof(pfold->symb)) == 0)
+				continue;
+
+			/*===============================================================
+		 	 * 내부 AP 시세용 패킷 생성 후 전송
+			===============================================================*/
+			rtn = make_ap_sise(market, pfold, pusdkrw, psise, preal);
+        	if (rtn <0)
+        	{
+				mds_log(market, MLOG_WARNING, "[%s:%u] make_ap_sise error [%.7s:%.7s]", __func__, tid, pfold->symb, psise->symb);
+				//sleep(1);		continue;
+				continue;
+        	}
+        	
+			if (sendto(c_sock, sbuff, sizeof(APSISE), 0, (struct sockaddr *)&multisock, sizeof(multisock)) < 0)
+			{
+				mds_log(market, MLOG_WARNING, "[%s:%u] sendto apsise error [%.7s](%s)", __func__, tid, pfold->symb, strerror(errno));
+				//sleep(1);		continue;
+				continue;
+			}
+			
+//			mds_log(market, MLOG_DEBUG, "[%s:%u] 재정.make_ap_sise OK [%.7s:%.7s]", __func__, tid, pfold->symb, psise->symb);
+			
+		} // while for 재정통화
+#endif
+
+	} // while (KBA_MDS_QUE_POP)
+	
+	close(c_sock);
+	
+	mds_log(market, MLOG_MUST, "[%s:%d:%u] handler_apsend thread is terminated !!!", __func__, idx, tid);
+	
+	pthread_exit(NULL);
+}
+
+/*===============================================================
+ * DB 데이터 생성
+===============================================================*/
+void *handler_dbtable(void *argv)
+{
+	int		rtn, dlen, idx, imod;
+	key_t		ipck;
+	pthread_t	tid;
+	char	rbuff[1024];
+	WFA_HDL	wfah  = {0,};
+	MDFOLD	*pfold, *pusdkrw;
+	MDARCH	*arch;
+	XCHG	*xchg;
+	MDSSISE	*psise;
+
+	tid = pthread_self();
+	pthread_detach(tid);
+	
+	idx = *((int *)argv);
+
+	arch  = (MDARCH *)market->arch;
+	xchg  = (XCHG *)&arch->xchg;
+
+	ipck  = IPCK(market->ipck, DF_SISEQ4DB);
+
+mds_log(market, MLOG_MUST, "[%s:%d:%u] [%.1s/%s] thread start !!...(0x%0x)\n", __func__, idx, tid, xchg->excode, xchg->exnm, ipck);
+	/*===============================================================
+	 * DATABASE CONNET
+// ★TODO-12 : 쓰레드가 각각의 connect 했을 경우 개별 동작에 문제없는지 테스트
+	===============================================================*/
+	rtn = l_db2connect();
+	if (rtn != 0)
+	{
+		mds_log(market, MLOG_ERROR, "[%s] DB connect failed : %d\n",__func__, rtn);
+		pthread_exit(NULL);
+	}
+	mds_log(market, MLOG_MUST, "[%s] DB connect success!", __func__);
+
+	/*===============================================================
+	 * USDKRW FOLDER 메모리 GET
+	 * 모든 통화의 재정TICK을 위해 고정으로 필요함. 별도로 포인터 생성
+	===============================================================*/
+	if ((pusdkrw = mds_getfolder(market, DF_USDKRW)) == NULL)
+	{
+		mds_log(market, MLOG_ERROR, "USDKRW : mds_getfolder error [%.7s]", DF_USDKRW);
+		pthread_exit(NULL);
+	}
+
+	/*===============================================================
+	 * SISE DATA RECEIVE LOOP START
+	===============================================================*/
+	psise = (MDSSISE *)rbuff;
+	
+// ★TODO-03 : 초기 기동 시 큐의 readcnt = writecnt로 맞추는 기능 필요 (과거 데이터 전송 방지)
+	while (1)
+	{
+		memset(rbuff, 0x00, sizeof(rbuff));
+
+		/*===============================================================
+		 * 시세데이터 QUEUE POP
+		===============================================================*/
+		//dlen = KBA_MDS_QUE_POP (&wfah, xchg->quenm, rbuff, SZ_MDSSISE, 0, MDSDQ_IDX_DBTBL);
+		dlen = KBA_MDS_QUE_POP(ipck, (idx+1), rbuff, SZ_MDSSISE);
+		if (dlen == 0)
+		{
+			mds_log(market, MLOG_WARNING, "KBA_MDS_QUE_POP timeout [%d]", dlen);
+			continue;
+		}
+		else if (dlen <  0)
+		{
+			mds_log(market, MLOG_ERROR, "KBA_MDS_QUE_POP error [%d]", dlen);
+			break;
+		}
+
+		// 통화코드별 FOLDER GET
+		if ((pfold = mds_getfolder(market, psise->symb)) == NULL)
+		{
+			mds_log(market, MLOG_WARNING, "mds_getfolder error [%.7s]", psise->symb);
+			continue;
+		}
+
+//mds_log(market, MLOG_DEBUG, "[%s:%d:%u] QUE_POP [%6s:%.9s]", __func__, idx, tid, psise->symb, psise->time);
+/* 메세지 큐로 변경되면서 큐type으로 분리해서 전송하기 때문에 읽을 때는 모두 읽으면 됨.
+		// 쓰레드별 할당 대상 통화 체크
+		imod = pfold->seqn % xchg->db_pnum;
+		if (imod != idx)	continue;
+*/
+// ★TODO-07 : handler_apsend, handler_dbtable 에서도 종목별 시세 변동 시에만 처리하는 방안 강구 (직전 시세 비교 방안 필요)
+
+		// 고객용인 경우만 DB 처리 (쓰레드 기동시 체크하므로 주석처리)
+		//if (xchg->excode[0] != DF_EXCD_CUST)	continue;
+
+// 35=X 체결데이터는 해당 테이블 INSERT 하고 CONTINUE
+if (psise->quotid[0] == 'X')
+{
+//mds_log(market, MLOG_DEBUG, "[%s] receive X.. InsertTrdTick call..[%.7s]", __func__, psise->symb);
+	rtn = InsertTrdTick(psise);
+	if (rtn < 0)	l_db2rollback();
+	
+	l_db2commit();
+	continue;
+}
+
+		/*===============================================================
+		 * DATABASE
+		===============================================================*/
+		rtn = InsertTick(psise);
+		if (rtn < 0)	l_db2rollback();
+
+		rtn = UpsertMin(psise);
+		if (rtn < 0)	l_db2rollback();
+		
+		rtn = UpsertDay(pfold, psise);
+		if (rtn < 0)	l_db2rollback();
+
+		/*===============================================================
+		 * 재정통화 생성 대상이면 재정 TICK DATA 생성
+		 * 고객용인 경우만 재정통화 DB처리
+		===============================================================*/
+		if (iscrosstarget(psise->symb) == 0 && pusdkrw->trdf == DF_ON)
+		{
+			rtn = InsertTick_Fincl(psise, pfold, pusdkrw);
+			if (rtn < 0)	l_db2rollback();
+
+			rtn = UpsertMin_Fincl(psise, pfold, pusdkrw);
+			if (rtn < 0)	l_db2rollback();
+
+			rtn = UpsertDay_Fincl(psise, pfold, pusdkrw);
+			if (rtn < 0)	l_db2rollback();
+		}
+
+		l_db2commit();
+
+if (arch->rsum%1000 == 0)
+mds_log(market, MLOG_DEBUG, "[%s:%d:%u] [%.1s:%s] insert/update DB [%.6s]", __func__, idx, tid, xchg->excode, xchg->exnm, pfold->symb);
+
+		if (memcmp(DF_USDKRW, psise->symb, 6) != 0)		continue;
+
+		/*===============================================================
+		 * USDKRW 시세인 경우에는 전체 재정통화 처리
+		===============================================================*/		
+		while ((pfold = mds_popfolder(market)))
+		{
+			/*===============================================================
+			 * SKIP 대상 통화 체크
+			  > 수신통화는 SKIP
+			  > 시세 중지중인 종목 여부
+			===============================================================*/
+			// 대상 통화가 거래중단, 재정중단, 시세중지 상태이면 SKIP
+			if (pfold->trdf == DF_OFF || pfold->cust.feedtp[0] == DF_CFEED_STOP || pfold->cust.finclstop[0] == DF_C_ON)
+				continue;
+
+			if (memcmp(pfold->symb, psise->symb, sizeof(pfold->symb)) == 0)
+				continue;
+
+			if (iscrosstarget(pfold->symb) != 0)
+				continue;
+
+			/*===============================================================
+			 * 재정통화용 TICKDATA
+			===============================================================*/
+			rtn = InsertTick_Fincl(psise, pfold, pusdkrw);
+			if (rtn < 0)	l_db2rollback();
+
+			rtn = UpsertMin_Fincl(psise, pfold, pusdkrw);
+			if (rtn < 0)	l_db2rollback();
+
+			rtn = UpsertDay_Fincl(psise, pfold, pusdkrw);
+			if (rtn < 0)	l_db2rollback();
+
+		} // while for 재정통화
+
+		l_db2commit();
+
+	} // while (KBA_MDS_QUE_POP)
+	
+	mds_log(market, MLOG_MUST, "[%s:%d:%u] handler_dbtable thread is terminated !!!", __func__, idx, tid);
+	
+	l_db2disconnect();
+	
+	pthread_exit(NULL);
+}
+
+/*===============================================================
+ * 고객용 시세 제공 스케쥴 체크 쓰레드
+===============================================================*/
+/*
+void *handler_sched(void *argv)
+{
+	int		rtn;
+	pthread_t	tid;
+
+	tid = pthread_self();
+	pthread_detach(tid);
+
+mds_log(market, MLOG_MUST, "[%s:%u] [%.1s/%s] thread start !!...\n", __func__, tid, market->excode, market->exnm);
+	//===============================================================
+	// DATABASE CONNET
+	//===============================================================
+	rtn = l_db2connect();
+	if (rtn != 0)
+	{
+		mds_log(market, MLOG_ERROR, "[%s] DB connect failed : %d\n",__func__, rtn);
+		pthread_exit(NULL);
+	}
+	mds_log(market, MLOG_MUST, "[%s] DB connect success!", __func__);
+
+	while (1)
+	{
+		SetCustFeed(market);
+
+		sleep(60);
+	}
+
+	l_db2disconnect();
+
+	pthread_exit(NULL);
+}
+*/
+
+/*===============================================================
+ * 수신한 FIX 데이터를 내부 포맷으로 전환
+===============================================================*/
+static int conv_SMBS(char *pbuff, int dlen, MDSSISE *psise)
+{
+	int		ii, rc, nrec;
+	uint32_t	ymd, hms;
+	char    type[DF_2], strval[64], strval2[64];
+	char	symbol[ 7+1];
+	struct tm *lt;
+
+	memset(symbol, 0x00, sizeof(symbol));
+	psise->excode[0] = 'S';				// 원천 : 'S'=SMB, 'K'=KMB, 'E'=EBS, 'C'=CMB
+
+// ★TODO-08 : 데이터 원천에 따라 FIX패킷 Convert 시 분기로직 추가 : sise_fix2ecm()
+
+	AFIX_TOK_SETVATINT(s_xfix, MsgSeqNum,				AG_ZERO, (double) EOF);
+	AFIX_TOK_SETVATINT(s_xfix, LastMsgSeqNumProcessed,	AG_ZERO, (double) EOF);
+	AFIX_TOK_SETVATINT(s_xfix, BeginSeqNo,				AG_ZERO, (double) EOF);
+	AFIX_TOK_SETVATINT(s_xfix, EndSeqNo,				AG_ZERO, (double) EOF);
+	AFIX_TOK_SETVATINT(s_xfix, NewSeqNo,				AG_ZERO, (double) EOF);
+
+	agfix_token_cls(s_xfix);
+	agfix_set_define_leg (s_xfix, NoMDEntries, AG_ZERO, (int *) AG_NULL, (int *) AG_NULL, (double) EOF);
+	
+	pbuff[dlen] = 0x00;
+	rc = agfix_dec (s_xfix, pbuff, dlen+1, SOH, EQU, AG_ZERO);		
+	if (rc) 
+ 	{
+		mds_log(market, MLOG_WARNING, "[%s] agfix_dec error (%d) [%d:%s]",__func__, rc, dlen, pbuff);
+		return (0);
+	}
+
+	rc = AFIX_TOK_GETSTR (s_xfix, Symbol, AG_ZERO, symbol);
+	if (rc != AG_OK)
+	{
+		mds_log(market, MLOG_WARNING, "[%s] AFIX_TOK_GETSTR error (%d) [%d:%s]",__func__, rc, dlen, pbuff);
+		return (0);
+	}
+	//mds_time(market, 0, &market->xymd, &market->xhms, &market->kymd, &market->khms);
+	sprintf(psise->symb, "%.3s%.3s", symbol, &symbol[4]);
+
+	mds_time(market, 0, &ymd, &hms, NULL, NULL);	// get local date & time
+	sprintf (psise->date, "%08d", ymd);
+
+	struct timeb itb;
+	ftime(&itb);
+
+	lt = localtime(&itb.time);
+	sprintf (psise->time, "%02d%02d%02d%03d",lt->tm_hour,lt->tm_min,lt->tm_sec,itb.millitm);
+	//AFIX_TOK_GETSTR (s_xfix, SendingTime, AG_ZERO, g_time);	
+
+	nrec = AG_ZERO;
+	rc = AFIX_TOK_GETINT (s_xfix, NoMDEntries, AG_ZERO, nrec);
+	if (rc != AG_OK)	nrec = AG_ONE;
+
+	for (ii = 0; ii < nrec; ii++)
+	{
+		MXZINIT (type); 
+		AFIX_TOK_GETSTR (s_xfix, MDEntryType, ii, type);
+
+		switch (type[0])
+		{
+		case '0' :
+// AFIX_TOK_GETDBL에서 잘못된 값이 리턴되어 STR로 처리후 변환
+//			AFIX_TOK_GETDBL (s_xfix, 270, 			ii, psise->bidprc);
+//			memset(strval, 0x00, sizeof(strval));
+			AFIX_TOK_GETSTR (s_xfix, MDEntryPx, 	ii, strval);
+			psise->bidprc = atof(strval);
+//			AFIX_TOK_GETDBL (s_xfix, MDEntrySize, 	ii, psise->bidqty);
+			AFIX_TOK_GETSTR (s_xfix, MDEntrySize, 	ii, strval);
+			psise->bidqty = atof(strval);
+			AFIX_TOK_GETSTR (s_xfix, MDEntryDate, 	ii, psise->biddate);
+			AFIX_TOK_GETSTR (s_xfix, QuoteEntryID, 	ii, strval);		// psise->bidquoteid);
+			sprintf(strval2, "%.1s.%.*s", psise->excode, sizeof(psise->quotid)-2, strval);
+			memcpy(psise->quotid, strval2, strlen(strval2));			// excode + QuoteEntryID 로 채번
+			AFIX_TOK_GETSTR (s_xfix, 9063,			ii, psise->bidsettype);
+//			AFIX_TOK_GETDBL (s_xfix, 9064,			ii, psise->bidbestprc);
+			AFIX_TOK_GETSTR (s_xfix, 9064,			ii, strval);
+			psise->bidbestprc = atof(strval);
+//			AFIX_TOK_GETDBL (s_xfix, 9065,			ii, psise->bidbestqty);
+			AFIX_TOK_GETSTR (s_xfix, 9065,			ii, strval);
+			psise->bidbestqty = atof(strval);
+			//bid시세가 없어서 임시추가 
+
+			if (memcmp(psise->symb, "USDKRW", 6) == 0)
+			{
+//				AFIX_TOK_GETDBL (s_xfix, 9065, ii, psise->bidqty);
+				AFIX_TOK_GETSTR (s_xfix, 9065, ii, strval);
+				psise->bidqty = atof(strval);
+			}
+			break;
+
+		case '1' :
+//			AFIX_TOK_GETDBL (s_xfix, 270, 			ii, psise->offerprc);
+//			memset(strval, 0x00, sizeof(strval));
+			AFIX_TOK_GETSTR (s_xfix, MDEntryPx, 	ii, strval);
+			psise->offerprc = atof(strval);
+//			AFIX_TOK_GETDBL (s_xfix, MDEntrySize, 	ii, psise->offerqty);
+			AFIX_TOK_GETSTR (s_xfix, MDEntrySize, 	ii, strval);
+			psise->offerqty = atof(strval);
+			AFIX_TOK_GETSTR (s_xfix, MDEntryDate, 	ii, psise->offerdate);
+//			AFIX_TOK_GETSTR (s_xfix, QuoteEntryID, 	ii, psise->offerquoteid);
+			AFIX_TOK_GETSTR (s_xfix, 9063,			ii, psise->offersettype);
+//			AFIX_TOK_GETDBL (s_xfix, 9064,			ii, psise->offerbestprc);
+			AFIX_TOK_GETSTR (s_xfix, 9064,			ii, strval);
+			psise->offerbestprc = atof(strval);
+//			AFIX_TOK_GETDBL (s_xfix, 9065,			ii, psise->offerbestqty);
+			AFIX_TOK_GETSTR (s_xfix, 9065,			ii, strval);
+			psise->offerbestqty = atof(strval);
+		 	//offer시세가 없어서 임시추가 
+
+			if (memcmp(psise->symb, "USDKRW", 6) == 0)
+			{
+//				AFIX_TOK_GETDBL (s_xfix, 9065, ii, psise->offerqty);
+				AFIX_TOK_GETSTR (s_xfix, 9065, ii, strval);
+				psise->offerqty = atof(strval);
+			}
+			break;
+
+		case '2' :	// 35=X (MarketData Incremantal Refresh for Trade Summary)
+//mds_log(market, MLOG_DEBUG, "[%s] receive X=[%.*s]", __func__, dlen, pbuff);
+			// MDEntryDate, MDEntryTime 수신 데이터로 UPDATE
+			// TODO : MDUpdateAction(279) : New,Change,Delete 에 대한 처리 필요한지 확인
+			// TODO : AggressorSide(5797) : 0=No aggressor 에 대한 처리 필요한지 확인
+			AFIX_TOK_GETSTR (s_xfix, MDEntryDate, 	ii, psise->date);
+			// GMT시간이므로 GMT+9로 변형해야 국내시간 나오므로 서버시간으로 사용
+			//AFIX_TOK_GETSTR (s_xfix, MDEntryTime, 	ii, strval);		// HHMMSS -> HHMMSSsss
+			//sprintf(strval2, "%.6s000", strval);
+			sprintf (strval2, "%02d%02d%02d%03d",lt->tm_hour,lt->tm_min,lt->tm_sec,itb.millitm);
+			memcpy(psise->time, strval2, sizeof(psise->time));
+
+			char	AggSide[8];
+
+			AFIX_TOK_GETSTR (s_xfix, 5797, 	ii, AggSide);	// 0=No aggressor, 1=Buy, 2=Sell
+			if (AggSide[0] == '1')
+			{
+				AFIX_TOK_GETSTR (s_xfix, MDEntryPx, 	ii, strval);
+				psise->bidprc   = atof(strval);
+				AFIX_TOK_GETSTR (s_xfix, MDEntrySize, 	ii, strval);		// always '0'
+				psise->bidqty   = atof(strval);
+				//MDUpdateAction=279
+				AFIX_TOK_GETSTR (s_xfix, MDEntryDate, 	ii, psise->biddate);
+				//AggressorSide=5797
+				AFIX_TOK_GETSTR (s_xfix, 9063,			ii, psise->bidsettype);
+			}
+			else
+			{
+				AFIX_TOK_GETSTR (s_xfix, MDEntryPx, 	ii, strval);
+				psise->offerprc = atof(strval);
+				AFIX_TOK_GETSTR (s_xfix, MDEntrySize, 	ii, strval);		// always '0'
+				psise->offerqty = atof(strval);
+				//MDUpdateAction=279
+				AFIX_TOK_GETSTR (s_xfix, MDEntryDate, 	ii, psise->offerdate);
+				//AggressorSide=5797
+				AFIX_TOK_GETSTR (s_xfix, 9063,			ii, psise->offersettype);
+			}
+
+			AFIX_TOK_GETSTR (s_xfix, MDEntryID, 	ii, strval);
+			// quotID[0] 을 'X'로 세팅하여 기존 시세 데이터와 구분 함.
+			sprintf(strval2, "X%.1s.%.*s", psise->excode, sizeof(psise->quotid)-3, strval);
+			memcpy(psise->quotid, strval2, strlen(strval2));			// excode + QuoteEntryID 로 채번
+
+			//TradeDate=75
+			//FutSettDate=64
+
+			break;
+		}
+	}
+
+	return 0;
+}
+
+static int conv_CMBS(char *pbuff, int dlen, MDSSISE *psise)
+{
+	char	strtmp[64], scode[7];
+	struct tm *lt;
+	struct timeb itb;
+	Eai_keiif0020_olist		*peai;
+
+	peai = (Eai_keiif0020_olist *)pbuff;
+
+	psise->excode[0]	= 'C';
+
+	memset(strtmp, 0x00, sizeof(strtmp));
+	memset(scode,  0x00, sizeof(scode));
+	memcpy(scode, peai->cncycd, sizeof(peai->cncycd));
+
+	if (memcmp(scode, "GBP" ,3) == 0 ||memcmp(scode, "EUR" ,3) == 0 ||memcmp(scode, "AUD" ,3) == 0 ||memcmp(scode, "NZD" ,3) == 0 )
+		sprintf(strtmp, "%.3s%.3s",scode, "USD");
+	else if (memcmp(scode, "JPY" ,3) == 0 || memcmp(scode, "CHF" ,3) == 0 || memcmp(scode, "CAD" ,3) == 0 ||
+			 memcmp(scode, "HKD" ,3) == 0 || memcmp(scode, "SEK" ,3) == 0 || memcmp(scode, "DKK" ,3) == 0 ||
+			 memcmp(scode, "THB" ,3) == 0 || memcmp(scode, "SGD" ,3) == 0 )
+		sprintf(strtmp, "%.3s%.3s", "USD", scode);
+	else if (memcmp(scode, "CNY" ,3) ==0)
+		sprintf(strtmp, "%.3s%.3s", "USD", scode);
+	else if (memcmp(scode, "USD" ,3) ==0)
+		sprintf(strtmp, "%.6s", "USDKRW");
+	else
+	{
+		mds_log(market, MLOG_WARNING, "[%s] receive code error [%d:%s]",__func__, dlen, pbuff);
+		return (-1);
+	}
+
+	memcpy(psise->symb, strtmp, sizeof(psise->symb));
+
+	ftime(&itb);
+	lt =localtime(&itb.time);
+	sprintf (strtmp, "%02d%02d%02d%03d",lt->tm_hour,lt->tm_min,lt->tm_sec,itb.millitm);
+
+	memcpy(psise->date, peai->baseYmd, sizeof(psise->date));
+	memcpy(psise->time, strtmp, sizeof(psise->time));			// 수신시간 HHMMssSSS
+
+	memcpy(psise->quotid, peai->anounNth, sizeof(peai->anounNth));
+	psise->bidprc		= str2d(peai->buyPcstExrt, sizeof(peai->buyPcstExrt));
+	psise->bidqty		= 0.;
+	memcpy(psise->biddate, peai->baseYmd, sizeof(psise->date));
+//	psise->bidsettype	
+	psise->bidbestprc	= 0.;
+	psise->bidbestqty	= 0.;
+	psise->offerprc		= str2d(peai->sellPcstExrt, sizeof(peai->sellPcstExrt));
+	psise->offerqty		= 0.;
+	memcpy(psise->offerdate, peai->baseYmd, sizeof(psise->date));
+//	psise->offersettype
+	psise->offerbestprc	= 0.;
+	psise->offerbestqty	= 0.;
+
+	return 0;
+}
+
+// EAI로 수신하는 CMBS 시세 패킷 안에 로이터 환율이 있음.
+static int conv_REUT(char *pbuff, int dlen, MDSSISE *psise)
+{
+	char	strtmp[64], scode[7];
+	struct tm *lt;
+	struct timeb itb;
+	Eai_keiif0020_olist		*peai;
+
+	peai = (Eai_keiif0020_olist *)pbuff;
+
+	psise->excode[0]	= 'R';
+
+	memset(strtmp, 0x00, sizeof(strtmp));
+	memset(scode,  0x00, sizeof(scode));
+	memcpy(scode, peai->cncycd, sizeof(peai->cncycd));
+
+	if (memcmp(scode, "GBP" ,3) == 0 ||memcmp(scode, "EUR" ,3) == 0 ||memcmp(scode, "AUD" ,3) == 0 ||memcmp(scode, "NZD" ,3) == 0 )
+		sprintf(strtmp, "%.3s%.3s",scode, "USD");
+	else if (memcmp(scode, "JPY" ,3) == 0 || memcmp(scode, "CHF" ,3) == 0 || memcmp(scode, "CAD" ,3) == 0 ||
+			 memcmp(scode, "HKD" ,3) == 0 || memcmp(scode, "SEK" ,3) == 0 || memcmp(scode, "DKK" ,3) == 0 ||
+			 memcmp(scode, "THB" ,3) == 0 || memcmp(scode, "SGD" ,3) == 0 )
+		sprintf(strtmp, "%.3s%.3s", "USD", scode);
+	else if (memcmp(scode, "CNY" ,3) ==0)
+		sprintf(strtmp, "%.3s%.3s", "USD", scode);
+	else if (memcmp(scode, "USD" ,3) ==0)
+		sprintf(strtmp, "%.6s", "USDKRW");
+	else
+	{
+		mds_log(market, MLOG_WARNING, "[%s] receive code error [%d:%s]",__func__, dlen, pbuff);
+		return (-1);
+	}
+
+	memcpy(psise->symb, strtmp, sizeof(psise->symb));
+
+	ftime(&itb);
+	lt =localtime(&itb.time);
+	sprintf (strtmp, "%02d%02d%02d%03d",lt->tm_hour,lt->tm_min,lt->tm_sec,itb.millitm);
+
+	memcpy(psise->date, peai->baseYmd, sizeof(psise->date));
+	memcpy(psise->time, strtmp, sizeof(psise->time));			// 수신시간 HHMMssSSS
+
+	memcpy(psise->quotid, peai->anounNth, sizeof(peai->anounNth));
+	psise->bidprc		= str2d(peai->bnrt, sizeof(peai->bnrt));		// 로이터환율
+	psise->bidqty		= 0.;
+	memcpy(psise->biddate, peai->baseYmd, sizeof(psise->date));
+//	psise->bidsettype	
+	psise->bidbestprc	= 0.;
+	psise->bidbestqty	= 0.;
+	psise->offerprc		= str2d(peai->sellrt, sizeof(peai->sellrt));	// 로이터환율
+	psise->offerqty		= 0.;
+	memcpy(psise->offerdate, peai->baseYmd, sizeof(psise->date));
+//	psise->offersettype
+	psise->offerbestprc	= 0.;
+	psise->offerbestqty	= 0.;
+
+	return 0;
+}
+
+static int conv_EBSC(char *pbuff, int dlen, MDSSISE *psise)
+{
+	int		ii, rc, nrec;
+	uint32_t	ymd, hms;
+	char    type[DF_2], strval[64], strval2[64];
+	char	symbol[ 7+1];
+	struct tm *lt;
+
+	memset(symbol, 0x00, sizeof(symbol));
+	psise->excode[0] = 'E';				// 원천 : 'S'=SMB, 'K'=KMB, 'E'=EBS, 'C'=CMB
+
+// ★TODO-08 : 데이터 원천에 따라 FIX패킷 Convert 시 분기로직 추가 : sise_fix2ecm()
+
+	AFIX_TOK_SETVATINT(s_xfix, MsgSeqNum,				AG_ZERO, (double) EOF);
+	AFIX_TOK_SETVATINT(s_xfix, LastMsgSeqNumProcessed,	AG_ZERO, (double) EOF);
+	AFIX_TOK_SETVATINT(s_xfix, BeginSeqNo,				AG_ZERO, (double) EOF);
+	AFIX_TOK_SETVATINT(s_xfix, EndSeqNo,				AG_ZERO, (double) EOF);
+	AFIX_TOK_SETVATINT(s_xfix, NewSeqNo,				AG_ZERO, (double) EOF);
+
+	agfix_token_cls(s_xfix);
+	agfix_set_define_leg (s_xfix, NoMDEntries, AG_ZERO, (int *) AG_NULL, (int *) AG_NULL, (double) EOF);
+	
+	pbuff[dlen] = 0x00;
+	rc = agfix_dec (s_xfix, pbuff, dlen+1, SOH, EQU, AG_ZERO);		
+	if (rc) 
+ 	{      
+		mds_log(market, MLOG_WARNING, "[%s] agfix_dec error (%d) [%d:%s]",__func__, rc, dlen, pbuff);
+		return (0);
+	}
+
+	rc = AFIX_TOK_GETSTR (s_xfix, Symbol, AG_ZERO, symbol);
+	if (rc != AG_OK)
+	{
+		mds_log(market, MLOG_WARNING, "[%s] AFIX_TOK_GETSTR error (%d) [%d:%s]",__func__, rc, dlen, pbuff);
+		return (0);
+	}
+	//mds_time(market, 0, &market->xymd, &market->xhms, &market->kymd, &market->khms);
+	sprintf(psise->symb, "%.3s%.3s", symbol, &symbol[4]);
+
+	AFIX_TOK_GETSTR (s_xfix, MDReqID, AG_ZERO, strval);
+	sprintf(strval2, "%.1s.%.*s", psise->excode, sizeof(psise->quotid)-2, strval);
+//	sprintf(strval2, "%.1s.%.12s", psise->excode, psise->time);
+//	memcpy(psise->quotid, strval2, strlen(strval2));			// excode + HHMMssSSS 로 채번
+
+	mds_time(market, 0, &ymd, &hms, NULL, NULL);	// get local date & time
+	sprintf (psise->date, "%08d", ymd);
+
+	struct timeb itb;
+	ftime(&itb);
+
+	lt = localtime(&itb.time);
+	sprintf (psise->time, "%02d%02d%02d%03d",lt->tm_hour,lt->tm_min,lt->tm_sec,itb.millitm);
+	//AFIX_TOK_GETSTR (s_xfix, SendingTime, AG_ZERO, g_time);	
+
+	nrec = AG_ZERO;
+	rc = AFIX_TOK_GETINT (s_xfix, NoMDEntries, AG_ZERO, nrec);
+	if (rc != AG_OK)	nrec = AG_ONE;
+
+	for (ii = 0; ii < nrec; ii++)
+	{
+		MXZINIT (type); 
+		AFIX_TOK_GETSTR (s_xfix, MDEntryType, ii, type);
+
+		switch (type[0])
+		{
+		case    '0' :
+			AFIX_TOK_GETSTR (s_xfix, MDEntryPx, 	ii, strval);
+			psise->bidprc = atof(strval);										// AFIX_TOK_GETDBL에서 잘못된 값이 리턴되어 STR로 처리후 변환
+//			AFIX_TOK_GETDBL (s_xfix, MDEntrySize, 	ii, psise->bidqty);
+			AFIX_TOK_GETSTR (s_xfix, MDEntrySize, 	ii, strval);
+			psise->bidqty = atof(strval);
+//			AFIX_TOK_GETSTR (s_xfix, MDEntryDate, 	ii, psise->biddate);		// 안들어옴 FutSettDate로 대체
+			AFIX_TOK_GETSTR (s_xfix, FutSettDate, AG_ZERO, psise->biddate);		// FutSettDate (64)
+//			AFIX_TOK_GETSTR (s_xfix, MDEntryID, 	ii, strval);				// 안들어옴
+
+			AFIX_TOK_GETSTR (s_xfix, SettlmntTyp, AG_ZERO, psise->bidsettype);		// Instrument tenor.(63=0)
+			psise->bidbestprc = 0.;		// 안들어옴.
+			psise->bidbestqty = 0.;		// 안들어옴.
+
+			break;
+
+		case    '1' :
+			AFIX_TOK_GETSTR (s_xfix, MDEntryPx, 	ii, strval);
+			psise->offerprc = atof(strval);										// AFIX_TOK_GETDBL에서 잘못된 값이 리턴되어 STR로 처리후 변환
+//			AFIX_TOK_GETDBL (s_xfix, MDEntrySize, 	ii, psise->bidqty);
+			AFIX_TOK_GETSTR (s_xfix, MDEntrySize, 	ii, strval);
+			psise->offerqty = atof(strval);
+//			AFIX_TOK_GETSTR (s_xfix, MDEntryDate, 	ii, psise->biddate);		// 안들어옴 FutSettDate로 대체
+			AFIX_TOK_GETSTR (s_xfix, FutSettDate, AG_ZERO, psise->offerdate);	// FutSettDate (64)
+//			AFIX_TOK_GETSTR (s_xfix, MDEntryID, 	ii, strval);				// 안들어옴
+
+			AFIX_TOK_GETSTR (s_xfix, SettlmntTyp, AG_ZERO, psise->offersettype);	// Instrument tenor.(63=0)
+			psise->offerbestprc = 0.;		// 안들어옴.
+			psise->offerbestqty = 0.;		// 안들어옴.
+		}
+	}
+
+	return 0;
+}
+
+static int conv_KMBS(char *pbuff, int dlen, MDSSISE *psise)
+{
+	int		ii, rc, nrec;
+	uint32_t	ymd, hms;
+	char    type[DF_2], strval[64], strval2[64];
+	char	symbol[ 7+1];
+	struct tm *lt;
+
+	memset(symbol, 0x00, sizeof(symbol));
+	psise->excode[0] = 'K';				// 원천 : 'S'=SMB, 'K'=KMB, 'E'=EBS, 'C'=CMB
+
+// ★TODO-08 : 데이터 원천에 따라 FIX패킷 Convert 시 분기로직 추가 : sise_fix2ecm()
+
+	AFIX_TOK_SETVATINT(s_xfix, MsgSeqNum,				AG_ZERO, (double) EOF);
+	AFIX_TOK_SETVATINT(s_xfix, LastMsgSeqNumProcessed,	AG_ZERO, (double) EOF);
+	AFIX_TOK_SETVATINT(s_xfix, BeginSeqNo,				AG_ZERO, (double) EOF);
+	AFIX_TOK_SETVATINT(s_xfix, EndSeqNo,				AG_ZERO, (double) EOF);
+	AFIX_TOK_SETVATINT(s_xfix, NewSeqNo,				AG_ZERO, (double) EOF);
+
+	agfix_token_cls(s_xfix);
+	agfix_set_define_leg (s_xfix, NoMDEntries, AG_ZERO, (int *) AG_NULL, (int *) AG_NULL, (double) EOF);
+	
+	pbuff[dlen] = 0x00;
+	rc = agfix_dec (s_xfix, pbuff, dlen+1, SOH, EQU, AG_ZERO);		
+	if (rc) 
+ 	{
+		mds_log(market, MLOG_WARNING, "[%s] agfix_dec error (%d) [%d:%s]",__func__, rc, dlen, pbuff);
+		return (0);
+	}
+
+	rc = AFIX_TOK_GETSTR (s_xfix, Symbol, AG_ZERO, symbol);
+	if (rc != AG_OK)
+	{
+		mds_log(market, MLOG_WARNING, "[%s] AFIX_TOK_GETSTR error (%d) [%d:%s]",__func__, rc, dlen, pbuff);
+		return (0);
+	}
+	//mds_time(market, 0, &market->xymd, &market->xhms, &market->kymd, &market->khms);
+	sprintf(psise->symb, "%.3s%.3s", symbol, &symbol[4]);
+
+/* bid의 QuoteEntryID 를 Unique QuoteID로 사용 (USDKRWYYYYMMDDHHmmSS)
+	rc = AFIX_TOK_GETSTR (s_xfix, MDReqID, AG_ZERO, psise->reqid);
+	if (rc != AG_OK)
+	{
+		mds_log(market, MLOG_WARNING, "[%s] Fix Get Fail!", __func__);  
+		return (0);
+	}
+*/
+	mds_time(market, 0, &ymd, &hms, NULL, NULL);	// get local date & time
+	sprintf (psise->date, "%08d", ymd);
+
+	struct timeb itb;
+	ftime(&itb);
+
+	lt = localtime(&itb.time);
+	sprintf (psise->time, "%02d%02d%02d%03d",lt->tm_hour,lt->tm_min,lt->tm_sec,itb.millitm);
+	//AFIX_TOK_GETSTR (s_xfix, SendingTime, AG_ZERO, g_time);	
+
+	nrec = AG_ZERO;
+	rc = AFIX_TOK_GETINT (s_xfix, NoMDEntries, AG_ZERO, nrec);
+	if (rc != AG_OK)	nrec = AG_ONE;
+
+	for (ii = 0; ii < nrec; ii++)
+	{
+		MXZINIT (type); 
+		AFIX_TOK_GETSTR (s_xfix, MDEntryType, ii, type);
+
+		switch (type[0])
+		{
+		case    '0' :
+// AFIX_TOK_GETDBL에서 잘못된 값이 리턴되어 STR로 처리후 변환
+//			AFIX_TOK_GETDBL (s_xfix, 270, 			ii, psise->bidprc);
+//			memset(strval, 0x00, sizeof(strval));
+			AFIX_TOK_GETSTR (s_xfix, 270, 			ii, strval);		// MDEntryPx
+			psise->bidprc = atof(strval);
+//			AFIX_TOK_GETDBL (s_xfix, MDEntrySize, 	ii, psise->bidqty);
+			AFIX_TOK_GETSTR (s_xfix, MDEntrySize, 	ii, strval);
+			psise->bidqty = atof(strval);
+			AFIX_TOK_GETSTR (s_xfix, MDEntryDate, 	ii, psise->biddate);
+			AFIX_TOK_GETSTR (s_xfix, QuoteEntryID, 	ii, strval);		// psise->bidquoteid);
+			sprintf(strval2, "%.1s.%.*s", psise->excode, sizeof(psise->quotid)-2, strval);
+			memcpy(psise->quotid, strval2, strlen(strval2));			// excode + QuoteEntryID 로 채번
+			AFIX_TOK_GETSTR (s_xfix, 9063,			ii, psise->bidsettype);		// SettType
+//			AFIX_TOK_GETDBL (s_xfix, 9064,			ii, psise->bidbestprc);
+			AFIX_TOK_GETSTR (s_xfix, 9064,			ii, strval);		// MDBestPx
+			psise->bidbestprc = atof(strval);
+//			AFIX_TOK_GETDBL (s_xfix, 9065,			ii, psise->bidbestqty);
+			AFIX_TOK_GETSTR (s_xfix, 9065,			ii, strval);		// MDBestSize
+			psise->bidbestqty = atof(strval);
+			//bid시세가 없어서 임시추가 
+
+			if (memcmp(psise->symb, "USDKRW", 6) == 0)
+			{
+//				AFIX_TOK_GETDBL (s_xfix, 9065, ii, psise->bidqty);
+				AFIX_TOK_GETSTR (s_xfix, 9065, ii, strval);
+				psise->bidqty = atof(strval);
+			}
+			break;
+
+		case    '1' :
+//			AFIX_TOK_GETDBL (s_xfix, 270, 			ii, psise->offerprc);
+//			memset(strval, 0x00, sizeof(strval));
+			AFIX_TOK_GETSTR (s_xfix, 270, 			ii, strval);
+			psise->offerprc = atof(strval);
+//			AFIX_TOK_GETDBL (s_xfix, MDEntrySize, 	ii, psise->offerqty);
+			AFIX_TOK_GETSTR (s_xfix, MDEntrySize, 	ii, strval);
+			psise->offerqty = atof(strval);
+			AFIX_TOK_GETSTR (s_xfix, MDEntryDate, 	ii, psise->offerdate);
+//			AFIX_TOK_GETSTR (s_xfix, QuoteEntryID, 	ii, psise->offerquoteid);
+			AFIX_TOK_GETSTR (s_xfix, 9063,			ii, psise->offersettype);
+//			AFIX_TOK_GETDBL (s_xfix, 9064,			ii, psise->offerbestprc);
+			AFIX_TOK_GETSTR (s_xfix, 9064,			ii, strval);
+			psise->offerbestprc = atof(strval);
+//			AFIX_TOK_GETDBL (s_xfix, 9065,			ii, psise->offerbestqty);
+			AFIX_TOK_GETSTR (s_xfix, 9065,			ii, strval);
+			psise->offerbestqty = atof(strval);
+		 	//offer시세가 없어서 임시추가 
+
+			if (memcmp(psise->symb, "USDKRW", 6) == 0)
+			{
+//				AFIX_TOK_GETDBL (s_xfix, 9065, ii, psise->offerqty);
+				AFIX_TOK_GETSTR (s_xfix, 9065, ii, strval);
+				psise->offerqty = atof(strval);
+			}
+		}
+	}
+
+	return 0;
+}
+
+int sise2mds(char *excode, char *pbuff, int dlen, MDSSISE *psise)
+{
+	uint32_t	ymd, hms;
+	int		ii, rc, nrec;
+	char    type[DF_2], strval[64], strval2[64];
+	char	symbol[ 7+1];
+
+	// 고객용, 베스트 데몬은 MDSSISE 내부 포맷으로 수신함.
+	if (market->excode[0] == DF_EXCD_BEST || market->excode[0] == DF_EXCD_CUST)
+	{
+		memcpy((void *)psise, pbuff, dlen);
+		return (0);
+	}
+
+	switch (excode[0])
+	{
+	case 'C' :
+		rc = conv_CMBS(pbuff, dlen, psise);
+		if (rc < 0)
+		{
+			mds_log(market, MLOG_WARNING, "[%s] conv_CMBS error ! [%d] [%.*s]", __func__, rc, dlen, pbuff);
+			return (-1);
+		}
+		break;
+
+	case 'S' :
+		rc = conv_SMBS(pbuff, dlen, psise);
+		if (rc < 0)
+		{
+			mds_log(market, MLOG_WARNING, "[%s] conv_SMBS error ! [%d] [%.*s]", __func__, rc, dlen, pbuff);
+			return (-1);
+		}
+		break;
+
+	case 'K' :
+		rc = conv_KMBS(pbuff, dlen, psise);
+		if (rc < 0)
+		{
+			mds_log(market, MLOG_WARNING, "[%s] conv_CMBS error ! [%d] [%.*s]", __func__, rc, dlen, pbuff);
+			return (-1);
+		}
+		break;
+
+	case 'E' :
+		rc = conv_EBSC(pbuff, dlen, psise);
+		if (rc < 0)
+		{
+			mds_log(market, MLOG_WARNING, "[%s] conv_EBSC error ! [%d] [%.*s]", __func__, rc, dlen, pbuff);
+			return (-1);
+		}
+		break;
+
+	case 'R' :
+		rc = conv_REUT(pbuff, dlen, psise);
+		if (rc < 0)
+		{
+			mds_log(market, MLOG_WARNING, "[%s] conv_SMBS error ! [%d] [%.*s]", __func__, rc, dlen, pbuff);
+			return (-1);
+		}
+		break;
+
+	default :
+		mds_log(market, MLOG_WARNING, "[%s] excode error ! [%.1s]", __func__, excode);
+		return (-1);
+	}
+
+	return 0;
+}

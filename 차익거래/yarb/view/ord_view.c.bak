@@ -1,0 +1,64 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <errno.h>
+#include <string.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#include "/fsfxwin/fep/yarb/include/arb.h"
+
+#define SHM_KEY 0xaa001001
+
+int main(void)
+{
+	int shmid = shmget((key_t)SHM_KEY, 0, 0);
+	if (shmid < 0)
+	{
+		fprintf(stderr, "shmget failed (key=0x%x) : %s\n", SHM_KEY, strerror(errno));
+		return 1;
+	}
+
+	SharedRoot *root = shmat(shmid, NULL, SHM_RDONLY);
+	if (root == (void *)-1)
+	{
+		fprintf(stderr, "shmat failed : %s\n", SHM_KEY, strerror(errno));
+		return 1;
+	}
+	
+	printf("=============== SHM SetOrdLog Dump     ==============\n");
+	int ii = 0, tt = 0;
+
+	for (ii = 0; ii < MAX_STRATS ; ii++) {
+		StrategySlot *slot = &root->slots[ii];
+		
+		for (tt = 0; tt < MAX_SETS_PER_STRAT; tt++) {
+			SetState *st = &slot->sets[tt];	
+			if (st->valid == 0)
+				continue;
+			
+			int n = st->ordlog.n;
+			if (n <= 0 || n > MAX_SET_ORD_LOG)
+				continue;
+			
+			int s = 0;
+			for (s = 0; s < n; s++) {
+				SetOrdLogEnt *e = &st->ordlog.ent[s];
+				
+				printf("STRAT=%02d SET=%04d ENT=%02d "
+					   "ord_id=%ld leg=%d side=%d "
+					   "px=%.8f filled_px = %.8f filled_qty=%d\n",
+					   ii, tt, s,
+					   e->ord_id,
+					   e->leg,
+					   e->side,
+					   e->px,
+					   e->filled_px,
+					   e->filled_qty
+				);
+			}		
+		}
+	}
+	printf("=============== SHM SetOrdLog Dump END ==============\n");
+	shmdt(root);
+	return 0;
+
+}

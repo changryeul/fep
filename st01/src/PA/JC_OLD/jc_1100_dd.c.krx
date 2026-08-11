@@ -1,0 +1,330 @@
+#define		_GLOBAL
+/*------------------------------------------------------------------------
+#	System	: HANWHA FEP 
+#	Author	: Y.P.K
+#	Module	: 선물옵션 주문 분배
+#	File	: jc_1100_dd.c
+------------------------------------------------------------------------*/
+
+/*------------------------------------------------------------------------
+	Header Files
+------------------------------------------------------------------------*/
+#include	"fep_fepj.h"
+#include	"jc_struct.h"
+#include	"krx_struct.h"
+
+#define		DATA_SIZE	381					  /* Header(81) + Data(300) */
+#include	"buf_struct.h"
+
+/*------------------------------------------------------------------------
+	Constants and Structures
+------------------------------------------------------------------------*/
+/* 읽어올수 있는 최대 건수는 ( (8*1024)/(84+381+1) ) = 17 */
+#define		READ_MAX	(FILE_BUF_LEN/(sizeof(FILE_RW_HEAD)+DATA_SIZE+1))
+#define		DATA_TIME	60 * 1000
+#define		PATTERN_CNT	TIME_OUT
+#define		LINE_CNT	DELAY_TIME
+
+#define     MAX_CNT		6
+#define     PLAY_TIME	"0759"
+
+/*------------------------------------------------------------------------
+	Global Variables
+------------------------------------------------------------------------*/
+short				Fk;
+int					R_Cnt, W_Cnt, R_Pos, Disp_Flag, DelayFlag;
+FILE_BUFF_FORMAT	R_Fmt[READ_MAX], W_Fmt[READ_MAX];
+
+/*------------------------------------------------------------------------
+	Function Prototypes
+------------------------------------------------------------------------*/
+void	JC_1100_DD (void);
+void	Analyze_Data (void);
+void	Write_Data (int);
+void	Millisec_Sleep (int);
+
+/*----------------------------------------------------------------------*/
+int		main (int argc, char *argv[])
+/*----------------------------------------------------------------------*/
+{
+	Init_Proc (argc, argv);
+	JC_1100_DD ();
+	Exit_Process ();
+}	/* End of main ()	*/
+
+/*----------------------------------------------------------------------*/
+void	JC_1100_DD (void)
+/*----------------------------------------------------------------------*/
+{
+	int		rt, stat_chk;
+	char    m_time[24], tmp[128];
+    struct 	pollfd   Poll;
+
+	Fk = LINE_CNT - 1;
+	Disp_Flag = 0;
+	stat_chk = 0;
+	DelayFlag = OFF;
+
+    Poll.fd = INPUT_FD;
+    Poll.events = POLLIN;
+
+	Log (USR_OK, "READ_MAX[%d] PATTERN_CNT[%d] DELAY_TIME[%d]",
+		READ_MAX, PATTERN_CNT, DELAY_TIME);
+
+	while (START_S != JOB_END)
+	{
+		while (START_S != JOB_END)
+		{
+			Stat_Save ();
+
+		    if (DelayFlag == OFF)
+    		{
+		        memset (m_time, 0, sizeof (m_time));
+		        Get_Time (m_time);
+
+       		 	if (memcmp (m_time, PLAY_TIME, 4) > 0)
+           			DelayFlag = ON;
+		        else
+				{
+		            sleep (10);
+					continue;
+				}
+    		}
+
+			memset (R_Fmt, 0, sizeof (FILE_BUFF_FORMAT) * READ_MAX);
+
+            for (stat_chk = 0; stat_chk < LINE_CNT; stat_chk ++)
+            {
+
+				if ((ODW_CNT(stat_chk,0) - ODR_CNT(stat_chk,0)) == 0)
+                    break;
+                else if (stat_chk >= (LINE_CNT - 1))
+                {
+                    Millisec_Sleep (1);
+                    stat_chk = -1;
+                }
+            }
+
+			R_Cnt = DSHM_R (PS_R_1, (void *)R_Fmt, READ_MAX);
+
+			if (R_Cnt < 0)
+			{
+				SLog (DSH_FATAL, "cannot read data[%s,%d:%s]",
+					IDN(D_K,P_K,0), SYS_NO, SYS_STR);
+				sleep (1);
+				Exit_Process ();
+			}
+			else if (R_Cnt == 0)
+				break;
+
+			Analyze_Data ();
+
+#if (1)
+			if (Disp_Flag == 0)
+			{
+				SLog (DSH_OK, "SHM RD [%s:%d][%d]",
+					IDN(D_K,P_K,0), R_Cnt, IDR(D_K,P_K,0,0));
+			}
+#endif
+
+            if (IDW(D_K,P_K,0,0) == IDR(D_K,P_K,0,0))
+            {
+                while (1)
+                {
+                    rt = read (Poll.fd, tmp, sizeof (tmp));
+
+                    if (rt == 0)
+                        break;
+                    else if (rt == -1)
+                    {
+                        if (SYS_NO == EINTR)
+                            continue;
+
+            			SLog (FIF_ERROR, "Poll:cannot read FIFO {%d:%s}", 
+							SYS_NO, SYS_STR);
+                        break;
+                    }
+                }
+            }
+		}
+
+        rt = poll (&Poll, 1, DATA_TIME);
+
+		if (rt > 0)
+		{
+        	if (Poll.revents & POLLIN)
+        	{
+            	Poll.revents = 0;
+        		continue;
+        	}
+
+        	if (Poll.revents & POLLHUP)
+        	{
+				SLog (SYS_FATAL, "Poll:poll hangup");
+        		continue;
+        	}
+		}
+        else if (rt == 0)
+        {
+			Log (USR_OK, "poll timeout <%d>", INT_SEQ);
+            continue;
+        }
+        else
+		{
+            if (SYS_NO == EINTR)
+                continue;
+
+            Log (SYS_ERROR, "Poll:poll failure {%d:%s}", SYS_NO, SYS_STR);
+            continue;
+		}
+
+	}
+}	/* End of JC_1100_DD ()	*/
+
+/*************************************************************************
+	Function		: . Analyze_Data
+	Parameters IN	: .
+	Parameters OUT	: .
+	Return Code		: . void
+	Comment			: . analyze and divide data
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+void	Analyze_Data (void)
+/*----------------------------------------------------------------------*/
+{
+	int		gap, nleft, avg, rests, chk_loop, chk_emp, loop_cnt;
+
+	chk_emp = loop_cnt = chk_loop = 0;
+	nleft = R_Cnt;
+	Disp_Flag = 1;
+
+	gap = IDW(D_K,P_K,0,0) - IDR(D_K,P_K,0,0);
+
+	for (chk_loop = 0; chk_loop < LINE_CNT; chk_loop ++)
+	{
+        if ((ODW_CNT(chk_loop,0) - ODR_CNT(chk_loop,0)) == 0)
+			chk_emp += 1;
+	}
+
+	if (chk_emp > 0)
+	{
+		avg = gap / chk_emp;
+		rests = gap % chk_emp;	
+
+        if ( (avg < 1) || ((avg == 1) && (rests == 0) && (gap != LINE_CNT)) )
+        {
+            W_Cnt = 1;
+            rests = 0;
+
+        }
+        else if ( (avg >= PATTERN_CNT) && (PATTERN_CNT != 0) )
+        {
+            W_Cnt = PATTERN_CNT;
+            rests = 0;
+        }
+        else
+        {
+            W_Cnt = avg;
+
+            if (avg >= MAX_CNT)
+            {
+                W_Cnt = MAX_CNT;
+                rests = 0;
+            }
+        }
+	}
+	else
+		return;
+
+	while (1)
+	{
+		if (nleft == 0 || chk_emp == 0 || loop_cnt == LINE_CNT)
+            break;
+
+        Fk = (Fk == LINE_CNT - 1 ? 0 : Fk + 1);
+
+		if ((ODW_CNT(Fk,0) - ODR_CNT(Fk,0)) == 0)
+		{
+			if (chk_emp == rests)
+				W_Cnt += 1;
+
+			if (W_Cnt > nleft) 
+			{
+				if (gap == R_Cnt)
+					W_Cnt = nleft;
+				else if (gap > R_Cnt)
+					break;
+			}
+
+    		R_Pos = R_Cnt - nleft;
+    		Write_Data (Fk + 1);
+    		nleft -= W_Cnt;
+			chk_emp -= 1;
+		}
+
+		loop_cnt ++;
+	}
+
+	return;
+}	/* End of Analyze_Data ()	*/
+
+/**************************************************************************
+	Function		: . Write_Data
+	Parameters IN	: . w_type	: write flag
+	Parameters OUT	: .
+	Return Code		: . void
+	Comment			: . write data to file
+**************************************************************************/
+/*-----------------------------------------------------------------------*/
+void	Write_Data (int w_type)
+/*-----------------------------------------------------------------------*/
+{
+	int		rt;
+
+	memset (W_Fmt, 0, sizeof (FILE_BUFF_FORMAT) * READ_MAX);
+	memcpy (W_Fmt, &R_Fmt[R_Pos], sizeof (FILE_BUFF_FORMAT) * W_Cnt);
+
+	rt = DSHM_W (w_type * 10, (void *)W_Fmt, W_Cnt);
+
+	if (rt != W_Cnt)
+	{
+		SLog (DSH_FATAL, "DSHM write OD%d[%s:%d][%10.10s]", w_type, 
+             ODN(D_K,P_K,w_type-1), rt, &W_Fmt->Data[121]);
+		Exit_Process ();
+	}
+
+	Dshm_Add_Count (PS_R_1, rt);
+	INT_SEQ += rt;
+
+#if 1
+	SLog (USR_OK, "DSHM write OD%d[%s:%d][%d] dd read[%d][%10.10s]",
+		w_type, ODN(D_K,P_K,w_type-1), rt, ODW(D_K,P_K,w_type-1,0), R_Cnt,
+		&W_Fmt->Data[121]);
+#endif
+
+	Set_TR_Time ();
+	Disp_Flag = 0;
+
+	return;
+}	/* End of Write_Data ()	*/
+
+/*-----------------------------------------------------------------------*/
+void	Millisec_Sleep (int msec)
+/*-----------------------------------------------------------------------*/
+{
+	int				rt;
+	struct timespec	ts;
+	struct timeval	tv;
+
+	gettimeofday (&tv, NULL);
+	ts.tv_sec = 0;
+	ts.tv_nsec = msec * 1000000;
+
+	rt = nanosleep (&ts, NULL);
+
+	return;
+}   /* End of Millisec_Sleep ()	*/
+
+/*************************************************************************
+	End of Program (jc_1100_dd.c)
+*************************************************************************/

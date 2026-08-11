@@ -1,0 +1,537 @@
+#define		_GLOBAL
+/*------------------------------------------------------------------------
+#	Module	: 현물시세수신 DD
+#	File	: pa_7100_dd.c
+------------------------------------------------------------------------*/
+
+/*------------------------------------------------------------------------
+	Header Files
+------------------------------------------------------------------------*/
+#include	"fep_fepp.h"
+#include	"pa_struct.h"
+
+/* 기본정보 A0014 A0015 A0034 A0025 */
+#if defined A7101||A7201||A7301||A7401
+#define     DATA_SIZE       1300
+/* 지수선물, 옵션시세 A3014/G7014/B6014/M4014 A3034/G7034/B6034/M4034 */
+#elif defined A7111||A7211||A7212 || A7161||A7261||A7262
+#define     DATA_SIZE       300
+/* 주식선물, 옵션시세 A3015/G7015/B6015/M4015 A3025/G7025/B6025/M4025 */
+#elif defined A7311||A7411||A7412 || A7361||A7461||A7462
+#define     DATA_SIZE       550
+#endif
+#include    "buf_struct.h"
+/*------------------------------------------------------------------------
+	Constants and Structures
+------------------------------------------------------------------------*/
+#define            DATA_TIME       60 * 1000
+/* 시세 Seq 위치 Size */
+#define		S_H_SIZE		17						/* TR(5) + Code(12) */
+/* 기본마스터 Seq 위치 Size */
+#define		M_H_SIZE		30	/* TR(5) + JCNT(5) + DATE(8) + Code(12)	*/
+KS_EXPCODE	Key;
+
+int			Che_Gbn;
+char		ApType[10];
+FILE_BUFF_FORMAT		W_Fmt;
+BUFF_RW_HEAD        	f_head;
+
+/*------------------------------------------------------------------------
+	Global Variables
+------------------------------------------------------------------------*/
+
+/*------------------------------------------------------------------------
+	Function Prototypes
+------------------------------------------------------------------------*/
+void	PA_7100_DD (void);
+void	Set_Sise (char *);
+void	Microsec_Sleep (int);
+
+/*----------------------------------------------------------------------*/
+int		main (int argc, char *argv[])
+/*----------------------------------------------------------------------*/
+{
+	Init_Proc (argc, argv);
+	PA_7100_DD ();
+	Exit_Process ();
+}	/* End of main ()	*/
+
+/*----------------------------------------------------------------------*/
+void	PA_7100_DD (void)
+/*----------------------------------------------------------------------*/
+{
+	int				i, rt, len, R_Cnt;
+	char 			m_time[24];
+	char			fifo_name[100], bumun[4];
+	char			W2_Fmt[2048];
+	FILE_BUFF_FORMAT    R_Fmt[1];
+
+/* 기초정보 재기동시 초기화 작업 */
+#if defined A7101
+Log (USR_OK, "OK01");
+	Shm_Futures[0].total_item_cnt = 0;
+
+	/* A0 초기화 */
+	for (i = 0; i < SHM_MAX_FUTURES; i++)
+	{
+		memset (Shm_Futures[i].A0.tr_gbn, 0, sizeof (SIF_A0014));
+		Shm_Futures[i].CURR_Arry_Key = 29;
+		Shm_Futures[i].Befor_CURR_Arry_Key = 29;
+
+		Shm_Risk[0].S_Sise[1][i].crprc = (double)AtoIf(&Shm_Futures[i].A0.stprc[3], 9)/100;
+	}
+
+	/* Key 초기화 */
+	memset (Shm_Item[0].F_Key,	0,	sizeof (KS_EXPCODE) * SHM_MAX_FUTURES);
+Log (USR_OK, "OK02");
+#elif defined A7201
+	Shm_Options[0].total_item_cnt = 0;
+
+	/* A0 초기화 */
+	for (i = 0; i < SHM_MAX_OPTIONS; i++)
+	{
+		memset (Shm_Options[i].A0.tr_gbn, 0, sizeof (SIF_A0014));
+		Shm_Options[i].CURR_Arry_Key = 29;
+		Shm_Options[i].Befor_CURR_Arry_Key = 29;
+		Shm_Risk[0].S_Sise[2][i].crprc = (double)AtoIf(&Shm_Options[i].A0.stprc[3], 9)/100;
+	}
+
+	/* Key 초기화 */
+	memset (Shm_Item[0].O_Key,	0,	sizeof (KS_EXPCODE) * SHM_MAX_OPTIONS);
+#elif defined A7301
+	Shm_SFutures[0].total_item_cnt = 0;
+
+	/* A0 초기화 */
+	for (i = 0; i < SHM_MAX_S_FUTURES; i++)
+	{
+		memset (Shm_SFutures[i].A0.tr_gbn, 0, sizeof (SIF_A0014));
+		Shm_SFutures[i].CURR_Arry_Key = 29;
+		Shm_SFutures[i].Befor_CURR_Arry_Key = 29;
+		Shm_Risk[0].S_Sise[3][i].crprc = (double)AtoIf(&Shm_SFutures[i].A0.stprc[3], 9)/100;
+	}
+
+	/* Key 초기화 */
+	memset (Shm_Item[0].SF_Key,	0,	sizeof (KS_EXPCODE) * SHM_MAX_S_FUTURES);
+#elif defined A7401
+	Shm_SOptions[0].total_item_cnt = 0;
+
+	/* A0 초기화 */
+	for (i = 0; i < SHM_MAX_S_OPTIONS; i++)
+	{
+		memset (Shm_SOptions[i].A0.tr_gbn, 0, sizeof (SIF_A0014));
+		Shm_SOptions[i].CURR_Arry_Key = 29;
+		Shm_SOptions[i].Befor_CURR_Arry_Key = 29;
+		Shm_Risk[0].S_Sise[4][i].crprc = (double)AtoIf(&Shm_SOptions[i].A0.stprc[3], 9)/100;
+	}
+
+	/* Key 초기화 */
+	memset (Shm_Item[0].SO_Key,	0,	sizeof (KS_EXPCODE) * SHM_MAX_S_OPTIONS);
+#else
+	sprintf (ApType, "%-2.2s%-4.4s%-2.2s", _Exe_Name, _Exe_Name+3, _Exe_Name+8);
+	LtoU (ApType, strlen (ApType));
+#endif
+
+	while (START_S != JOB_END)
+	{
+		Stat_Save ();
+
+		while (START_S != JOB_END)
+		{
+			Stat_Save ();
+			memset (R_Fmt, 0, sizeof (FILE_BUFF_FORMAT));
+
+#if defined A7161||A7261||A7262||A7361||A7461||A7462
+			R_Cnt = F_R(PS_R_2, (void *)R_Fmt, 1);
+#else
+			R_Cnt = F_R(PS_R_1, (void *)R_Fmt, 1);
+#endif
+			if (R_Cnt < 0)
+        	{
+            	Log (SAM_FATAL, "cannot read file[%s,%d:%s]",
+                	IFN(D_K,P_K,0), SYS_NO, SYS_STR);
+            	sleep (1);
+            	Exit_Process ();
+        	}
+        	else if (R_Cnt == 0)
+            	break;
+
+			Set_Sise (R_Fmt[0].Data);
+
+			Set_TR_Time ();
+			INT_SEQ ++;
+#if defined A7161||A7261||A7262||A7361||A7461||A7462
+			Add_Count(PS_R_2, 1);
+
+			/* ********************************** */
+			/* pa_7001_mp 통시세에 Write 해야한다 */
+			memset (m_time, 0, sizeof (m_time));
+            Get_MicroTime (m_time);
+
+            /* File Write */
+            memset (W2_Fmt, 0x20, sizeof (W2_Fmt));
+
+            /* write to DD file */
+            ItoAf (OFW_CNT(2,0) + 1, f_head.If_Seq, sizeof (f_head.If_Seq));
+
+            memcpy (f_head.ApType, ApType, sizeof (f_head.ApType));
+            memcpy (f_head.ResponseCode, RES_NORMAL, strlen (RES_NORMAL));
+            memcpy (f_head.RecvTime1, m_time, sizeof (f_head.RecvTime1));
+            memcpy (f_head.RecvTime2, m_time+10, sizeof (f_head.RecvTime2));
+
+			memcpy (f_head.DataHeader, "                    ",  20);
+            memcpy (&W2_Fmt, &f_head, sizeof (BUFF_RW_HEAD));
+
+            /* Data Write */
+            memcpy (&W2_Fmt[sizeof (BUFF_RW_HEAD)], R_Fmt[0].Data,
+                                                    strlen (R_Fmt[0].Data));
+
+            W2_Fmt[sizeof(BUFF_RW_HEAD)+OFS(D_K,P_K,0)] = '\n';
+
+            rt = F_W (TS_W1_1, (void *)&W2_Fmt, 1);
+            if (rt != 1)
+            {
+                Log (SAM_FATAL, "file write fail[%s]", OFN(D_K,P_K,0));
+                return;
+            }
+			/* ********************************** */
+#else
+			Add_Count(PS_R_1, 1);
+#endif
+		}
+
+        rt = Poll_File (DATA_TIME);
+
+        if (rt == 1)
+            Log (USR_OK, "poll timeout <%d>", INT_SEQ);
+        else if (rt == -1)
+            continue;
+	}
+
+	return;
+}	/* End of PA_7100_DD ()	*/
+
+/*************************************************************************
+	Function		: . Set_Sise
+	Parameters IN	: . p_buf	: received data
+	Parameters OUT	: .
+	Return Code		: . void
+	Comment			: . set sise data SHM (현재가)
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+void	Set_Sise (char *p_buf)
+/*----------------------------------------------------------------------*/
+{
+	int			ii, s_k, idx, rt;
+	char		m_time[24], TrCode[10];
+
+    memset (m_time, 0, sizeof (m_time));
+    Get_MicroTime (m_time);
+
+#if defined A7101
+	if (memcmp (p_buf, "A0014", 5) == 0)
+	{
+		idx = AtoIf (&p_buf[M_H_SIZE], sizeof (Shm_Futures[0].A0.seq_no));
+		memcpy (Shm_Futures[idx].A0.tr_gbn, p_buf, sizeof (SIF_A0014));
+
+		if (Shm_Futures[0].total_item_cnt < idx)
+			Shm_Futures[0].total_item_cnt = idx;
+
+		/* 시세마지막을 수신하면 종목코드 q sort처리하여 Key보관 */
+		if (memcmp (&p_buf[5], "999999999999", sizeof (Shm_Futures[0].A0.item_code)) == 0)
+		{
+			for (ii = 1; ii < Shm_Futures[0].total_item_cnt; ii++)
+			{
+				Shm_Item[0].F_Key[ii].idx = ii;
+				memcpy (Shm_Item[0].F_Key[ii].expcode, Shm_Futures[ii].A0.item_code,
+													sizeof (Shm_Futures[0].A0.item_code));
+			}
+			qsort (Shm_Item[0].F_Key, Shm_Futures[0].total_item_cnt, sizeof (KS_EXPCODE), CmpExpcode);
+		}
+	}
+	else
+	{
+		Che_Gbn = -1;
+		return;
+	}
+#elif defined A7201
+	if (memcmp (p_buf, "A0034", 5) == 0)
+	{
+		idx = AtoIf (&p_buf[M_H_SIZE], sizeof (Shm_Options[0].A0.seq_no));
+		memcpy (Shm_Options[idx].A0.tr_gbn, p_buf, sizeof (SIF_A0014));
+
+		if (Shm_Options[0].total_item_cnt < idx)
+			Shm_Options[0].total_item_cnt = idx;
+
+		/* 시세마지막을 수신하면 종목코드 q sort처리하여 Key보관 */
+		if (memcmp (&p_buf[5], "999999999999", sizeof (Shm_Options[0].A0.item_code)) == 0)
+		{
+			for (ii = 1; ii < Shm_Options[0].total_item_cnt; ii++)
+			{
+				Shm_Item[0].O_Key[ii].idx = ii;
+				memcpy (Shm_Item[0].O_Key[ii].expcode, Shm_Options[ii].A0.item_code,
+													sizeof (Shm_Options[0].A0.item_code));
+			}
+			qsort (Shm_Item[0].O_Key, Shm_Options[0].total_item_cnt, sizeof (KS_EXPCODE), CmpExpcode);
+		}
+	}
+	else
+	{
+		Che_Gbn = -1;
+		return;
+	}
+#elif defined A7301
+	if (memcmp (p_buf, "A0015", 5) == 0)
+	{
+		idx = AtoIf (&p_buf[M_H_SIZE], sizeof (Shm_SFutures[0].A0.seq_no));
+		memcpy (Shm_SFutures[idx].A0.tr_gbn, p_buf, sizeof (SIF_A0014));
+
+		if (Shm_SFutures[0].total_item_cnt < idx)
+			Shm_SFutures[0].total_item_cnt = idx;
+
+		/* 시세마지막을 수신하면 종목코드 q sort처리하여 Key보관 */
+		if (memcmp (&p_buf[5], "999999999999", sizeof (Shm_SFutures[0].A0.item_code)) == 0)
+		{
+			for (ii = 1; ii < Shm_SFutures[0].total_item_cnt; ii++)
+			{
+				Shm_Item[0].SF_Key[ii].idx = ii;
+				memcpy (Shm_Item[0].SF_Key[ii].expcode, Shm_SFutures[ii].A0.item_code,
+													sizeof (Shm_SFutures[0].A0.item_code));
+			}
+			qsort (Shm_Item[0].SF_Key, Shm_SFutures[0].total_item_cnt, sizeof (KS_EXPCODE), CmpExpcode);
+		}
+	}
+	else
+	{
+		Che_Gbn = -1;
+		return;
+	}
+#elif defined A7401
+	if (memcmp (p_buf, "A0025", 5) == 0)
+	{
+		idx = AtoIf (&p_buf[M_H_SIZE], sizeof (Shm_SOptions[0].A0.seq_no));
+		memcpy (Shm_SOptions[idx].A0.tr_gbn, p_buf, sizeof (SIF_A0014));
+
+		if (Shm_SOptions[0].total_item_cnt < idx)
+			Shm_SOptions[0].total_item_cnt = idx;
+
+		/* 시세마지막을 수신하면 종목코드 q sort처리하여 Key보관 */
+		if (memcmp (&p_buf[5], "999999999999", sizeof (Shm_SOptions[0].A0.item_code)) == 0)
+		{
+			for (ii = 1; ii < Shm_SOptions[0].total_item_cnt; ii++)
+			{
+				Shm_Item[0].SO_Key[ii].idx = ii;
+				memcpy (Shm_Item[0].SO_Key[ii].expcode, Shm_SOptions[ii].A0.item_code,
+													sizeof (Shm_SOptions[0].A0.item_code));
+			}
+			qsort (Shm_Item[0].SO_Key, Shm_SOptions[0].total_item_cnt, sizeof (KS_EXPCODE), CmpExpcode);
+		}
+	}
+	else
+	{
+		Che_Gbn = -1;
+		return;
+	}
+#elif defined A7111
+	idx = AtoIf (&p_buf[S_H_SIZE], sizeof(Shm_Futures[0].A3.seq_no));
+
+	/* CURR Data 처리(체결만) */
+	if ((memcmp (p_buf, "A3014", 5) == 0)	||
+		(memcmp (p_buf, "G7014", 5) == 0))
+	{
+		Che_Gbn = 1;
+		Shm_Futures[idx].Befor_CURR_Arry_Key = Shm_Futures[idx].CURR_Arry_Key;
+		if (Shm_Futures[idx].CURR_Arry_Key <   0	||
+			Shm_Futures[idx].CURR_Arry_Key >= 29)
+			Shm_Futures[idx].CURR_Arry_Key = 0;
+		else
+			Shm_Futures[idx].CURR_Arry_Key++;
+	}
+
+	/* 수신시세 => Memory 시세에 Set */
+	if (memcmp (p_buf, "A3014", 5) == 0)
+	{
+		memcpy (Shm_Futures[idx].A3.tr_gbn, p_buf, sizeof (SIF_A3014));
+		memcpy (Shm_Futures[idx].CURR_Arry[Shm_Futures[idx].CURR_Arry_Key].tr_gbn,
+			Shm_Futures[idx].A3.tr_gbn, 104);			/* trgbn ~ 최종매도매수구분코드 */
+		memcpy (Shm_Futures[idx].CURR_Arry[Shm_Futures[idx].CURR_Arry_Key].realtime_hprc_sign,
+			Shm_Futures[idx].A3.realtime_hprc_sign, 12);			/* 실시간상한가부호 ~ 실시간하한가 */
+	}
+	else if (memcmp (p_buf, "G7014", 5) == 0)
+	{
+		memcpy (Shm_Futures[idx].G7.tr_gbn, p_buf, sizeof (SIF_G7014));
+		memcpy (Shm_Futures[idx].CURR_Arry[Shm_Futures[idx].CURR_Arry_Key].tr_gbn,
+			Shm_Futures[idx].A3.tr_gbn, sizeof (SIF_G7014));
+	}	
+	else if (memcmp (p_buf, "B6014", 5) == 0)
+	{
+		memcpy (Shm_Futures[idx].B6.tr_gbn, p_buf, sizeof (SIF_B6014));
+	}
+	else if (memcmp (p_buf, "M4014", 5) == 0)
+	{
+		memcpy (Shm_Futures[0].M4.tr_gbn, p_buf, sizeof (M4014));
+	}
+	else
+	{
+		Che_Gbn = -1;
+	}
+#elif defined A7211||A7212
+	idx = AtoIf (&p_buf[S_H_SIZE], sizeof(Shm_Options[0].A3.seq_no));
+
+	/* CURR Data 처리(체결만) */
+	if ((memcmp (p_buf, "A3034", 5) == 0)	||
+		(memcmp (p_buf, "G7034", 5) == 0))
+	{
+		Che_Gbn = 1;
+		memcpy (Shm_Options[idx].A3.tr_gbn, p_buf, sizeof (SIO_A3034));
+		Shm_Options[idx].Befor_CURR_Arry_Key = Shm_Options[idx].CURR_Arry_Key;
+		if (Shm_Options[idx].CURR_Arry_Key <   0	||
+			Shm_Options[idx].CURR_Arry_Key >= 29)
+			Shm_Options[idx].CURR_Arry_Key = 0;
+		else
+			Shm_Options[idx].CURR_Arry_Key++;
+	}
+
+	/* 수신시세 => Memory 시세에 Set */
+	if (memcmp (p_buf, "A3034", 5) == 0)
+	{
+		memcpy (Shm_Options[idx].A3.tr_gbn, p_buf, sizeof (SIO_A3034));
+		memcpy (Shm_Options[idx].CURR_Arry[Shm_Options[idx].CURR_Arry_Key].tr_gbn,
+			Shm_Options[idx].A3.tr_gbn, 93);			/* trgbn ~ 최종매도매수구분코드 */
+		memcpy (Shm_Options[idx].CURR_Arry[Shm_Options[idx].CURR_Arry_Key].realtime_hprc,
+			Shm_Options[idx].A3.realtime_hprc, 10);			/* 실시간상한가부호 ~ 실시간하한가 */
+	}
+	else if (memcmp (p_buf, "G7034", 5) == 0)
+	{
+		memcpy (Shm_Options[idx].G7.tr_gbn, p_buf, sizeof (SIO_G7034));
+		memcpy (Shm_Options[idx].CURR_Arry[Shm_Options[idx].CURR_Arry_Key].tr_gbn,
+			Shm_Options[idx].A3.tr_gbn, sizeof (SIO_G7034));
+	}	
+	else if (memcmp (p_buf, "B6034", 5) == 0)
+	{
+		memcpy (Shm_Options[idx].B6.tr_gbn, p_buf, sizeof (SIO_B6034));
+	}
+	else if (memcmp (p_buf, "M4034", 5) == 0)
+	{
+		memcpy (Shm_Options[0].M4.tr_gbn, p_buf, sizeof (M4034));
+	}
+	else
+	{
+		Che_Gbn = -1;
+	}
+#elif defined A7311		// 개별선물 
+	idx = AtoIf (&p_buf[S_H_SIZE], sizeof(Shm_SFutures[0].A3.seq_no));
+
+	/* CURR Data 처리(체결만) */
+	if ((memcmp (p_buf, "A3015", 5) == 0)	||
+		(memcmp (p_buf, "G7015", 5) == 0))
+	{
+		Che_Gbn = 1;
+		Shm_SFutures[idx].Befor_CURR_Arry_Key = Shm_SFutures[idx].CURR_Arry_Key;
+		if (Shm_SFutures[idx].CURR_Arry_Key <   0	||
+			Shm_SFutures[idx].CURR_Arry_Key >= 29)
+			Shm_SFutures[idx].CURR_Arry_Key = 0;
+		else
+			Shm_SFutures[idx].CURR_Arry_Key++;
+	}
+
+	/* 수신시세 => Memory 시세에 Set */
+	if (memcmp (p_buf, "A3015", 5) == 0)
+	{
+		memcpy (Shm_SFutures[idx].A3.tr_gbn, p_buf, sizeof (SSF_A3015));
+		memcpy (Shm_SFutures[idx].CURR_Arry[Shm_SFutures[idx].CURR_Arry_Key].tr_gbn,
+			Shm_SFutures[idx].A3.tr_gbn, 116);			/* trgbn ~ 최종매도매수구분코드 */
+		memcpy (Shm_SFutures[idx].CURR_Arry[Shm_SFutures[idx].CURR_Arry_Key].realtime_hprc_sign,
+			Shm_SFutures[idx].A3.realtime_hprc_sign, 16);			/* 실시간상한가부호 ~ 실시간하한가 */
+	}
+	else if (memcmp (p_buf, "G7015", 5) == 0)
+	{
+		memcpy (Shm_SFutures[idx].G7.tr_gbn, p_buf, sizeof (SSF_G7015));
+		memcpy (Shm_SFutures[idx].CURR_Arry[Shm_SFutures[idx].CURR_Arry_Key].tr_gbn,
+			Shm_SFutures[idx].A3.tr_gbn, sizeof (SSF_G7015));
+	}	
+	else if (memcmp (p_buf, "B6015", 5) == 0)
+	{
+		memcpy (Shm_SFutures[idx].B6.tr_gbn, p_buf, sizeof (SSF_B6015));
+	}
+	else if (memcmp (p_buf, "M4015", 5) == 0)
+	{
+		memcpy (Shm_SFutures[0].M4.tr_gbn, p_buf, sizeof (M4025));	// 015,025공통사용
+	}
+	else
+	{
+		Che_Gbn = -1;
+	}
+#elif defined A7411||A7412
+	idx = AtoIf (&p_buf[S_H_SIZE], sizeof(Shm_SOptions[0].A3.seq_no));
+
+	/* CURR Data 처리(체결만) */
+	if ((memcmp (p_buf, "A3025", 5) == 0)	||
+		(memcmp (p_buf, "G7025", 5) == 0))
+	{
+		Che_Gbn = 1;
+		Shm_SOptions[idx].Befor_CURR_Arry_Key = Shm_SOptions[idx].CURR_Arry_Key;
+		if (Shm_SOptions[idx].CURR_Arry_Key <   0	||
+			Shm_SOptions[idx].CURR_Arry_Key >= 29)
+			Shm_SOptions[idx].CURR_Arry_Key = 0;
+		else
+			Shm_SOptions[idx].CURR_Arry_Key++;
+	}
+
+	/* 수신시세 => Memory 시세에 Set */
+	if (memcmp (p_buf, "A3025", 5) == 0)
+	{
+		memcpy (Shm_SOptions[idx].A3.tr_gbn, p_buf, sizeof (SSO_A3025));
+		memcpy (Shm_SOptions[idx].CURR_Arry[Shm_SOptions[idx].CURR_Arry_Key].tr_gbn,
+			Shm_SOptions[idx].A3.tr_gbn, 99);			/* trgbn ~ 최종매도매수구분코드 */
+		memcpy (Shm_SOptions[idx].CURR_Arry[Shm_SOptions[idx].CURR_Arry_Key].realtime_hprc,
+			Shm_SOptions[idx].A3.realtime_hprc, 14);			/* 실시간상한가부호 ~ 실시간하한가 */
+	}
+	else if (memcmp (p_buf, "G7025", 5) == 0)
+	{
+		memcpy (Shm_SOptions[idx].G7.tr_gbn, p_buf, sizeof (SSO_G7025));
+		memcpy (Shm_SOptions[idx].CURR_Arry[Shm_SOptions[idx].CURR_Arry_Key].tr_gbn,
+			Shm_SOptions[idx].A3.tr_gbn, sizeof (SSO_G7025));
+	}	
+	else if (memcmp (p_buf, "B6025", 5) == 0)
+	{
+		memcpy (Shm_SOptions[idx].B6.tr_gbn, p_buf, sizeof (SSO_B6025));
+	}
+	else if (memcmp (p_buf, "M4025", 5) == 0)
+	{
+		memcpy (Shm_SOptions[0].M4.tr_gbn, p_buf, sizeof (M4025));
+	}
+	else
+	{
+		Che_Gbn = -1;
+	}
+#endif
+
+	return;
+}	/* End of Set_Sise ()	*/
+
+/*************************************************************************
+	Function		: . Microsec_Sleep
+	Parameters IN	: . msec	: sleep time (in microsec)
+	Parameters OUT	: .
+	Return Code		: . void
+	Comment			: . sleep for microsec
+*************************************************************************/
+void	Microsec_Sleep (int msec)
+{
+	int				rt;
+	struct timespec	ts;
+
+	ts.tv_sec = 0;
+	ts.tv_nsec = msec * 1000;
+
+	rt = nanosleep (&ts, NULL);
+
+	if (rt == -1)
+		Log (SYS_ERROR, "nanosleep fail {%d:%s}", SYS_NO, SYS_STR);
+
+	return;
+}	/* End of Microsec_Sleep ()	*/
+
+/*************************************************************************
+	End of program (pa_7100_dd.c)
+*************************************************************************/ 

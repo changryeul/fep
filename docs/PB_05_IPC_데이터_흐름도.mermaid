@@ -1,0 +1,36 @@
+---
+title: PB IPC(FIFO) 전체 데이터 경로
+---
+graph LR
+    subgraph ORDER["주문 경로"]
+        PA1["PA/Client\n(:41001)"] -->|"TCP"| R1["pb_1301_tr"] -->|"FIFO"| S1["pb_1101_ts"] -->|"TCP"| KRX1["KRX\n(:37221)"]
+    end
+
+    subgraph ERROR["에러 경로"]
+        S1b["pb_1101_ts"] -->|"FIFO"| E1["pb_1401_ts"] -->|"TCP"| PA2["PA/Client\n(:41002)"]
+    end
+
+    subgraph RESPONSE["응답/체결 경로"]
+        KRX2["KRX\n(:57221)"] -->|"TCP"| R2["pb_1201_tr"] -->|"FIFO"| S2["pb_1402_ts"] -->|"TCP"| PA3["PA/Client\n(:41003)"]
+    end
+
+    subgraph DROPCOPY["DP 경로"]
+        KRX3["KRX\n(:61726)"] -->|"TCP"| R3["pb_1211_tr"] -->|"FIFO"| S3["pb_8111_ts"] -->|"TCP"| PA4["PA/Client\n(:32009)"]
+    end
+
+    subgraph MARKET["시세 경로"]
+        KRX4["KRX\n(:61725)"] -->|"TCP"| R4["pb_1601_tr"] -->|"FIFO"| S4["pb_1403_ts"] -->|"TCP"| PA5["PA/Client\n(:41004)"]
+    end
+
+    subgraph RDS["RDS 수신 경로"]
+        KRX5["KRX\n(:63725)"] -->|"TCP"| R5["pb_7801_tr"] -->|"FIFO"| S5["pb_1411_ts"] -->|"TCP"| PA6["PA/Client\n(:41005)"]
+    end
+
+    subgraph BATCH["일괄 송신 경로"]
+        PA7["PA/Client\n(:32019)"] -->|"TCP"| R6["pb_8211_tr"] -->|"FIFO"| S6["pb_1801_ts"] -->|"TCP"| KRX6["KRX\n(:63724)"]
+        S6 -->|"FIFO"| S7["pb_8116_ts"] -->|"TCP"| PA8["PA/Client\n(:32016)"]
+    end
+
+    subgraph UDP_SISE["시세 경로 (UDP)"]
+        KRX7["KRX"] -->|"UDP"| R7["pb_7102/7103_ur"] -->|"FIFO/SHM"| D7["pb_7102/7103_dd"] --> SHM["SHM"]
+    end

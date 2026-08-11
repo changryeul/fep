@@ -1,0 +1,1844 @@
+/*------------------------------------------------------------------------
+#	Module	: *.ini -> *.ini.tmp
+#	File	: px_cfgback.c
+------------------------------------------------------------------------*/
+
+/*------------------------------------------------------------------------
+	Header Files
+------------------------------------------------------------------------*/
+#include    "fep_fepp.h"
+
+/*------------------------------------------------------------------------
+	Global Variables
+------------------------------------------------------------------------*/
+char	*_FEP_CFG;
+FILE	*r_fp, *w_fp;
+
+/*------------------------------------------------------------------------
+	Function Prototypes
+------------------------------------------------------------------------*/
+void	File_Config_Read (void);
+void	Dshm_Config_Read (void);
+#if defined ISAM_INCL
+void	Cisam_Config_Read (void);
+#endif
+void	Tcp1_Config_Read (void);
+void	Tcp2_Config_Read (void);
+void	Udpip_Config_Read (void);
+void	SiseTr_Config_Read (void);
+void	Accno_Config_Read (void);
+void	Proc_Config_Read (void);
+
+/*----------------------------------------------------------------------*/
+int		main (int argc, char *argv[])
+/*----------------------------------------------------------------------*/
+{
+	char		ini[12], buf[256];
+	struct stat	f_info;
+
+	if (argc == 1 || argc > 2)
+	{
+		printf ("==========================================================\n");
+		printf ("[ini -> ini.tmp (to edit configuration file)]\n\n");
+		printf ("Usage: %s <ini name|\"all\">\n\n", argv[0]);
+		printf ("  e.g. 1) %s tcp1\n", argv[0]);
+		printf ("       2) %s all\n", argv[0]);
+		printf ("==========================================================\n");
+		exit (FAIL);
+	}
+
+	printf ("start ...:%s %s\n", argv[0], argv[1]);
+
+	if ((_FEP_CFG = (char *)getenv ("_P_CFG")) == NULL)
+	{
+		printf ("ERROR:getenv (_P_CFG)\n");
+		exit (FAIL);
+	}
+
+	sprintf (ini, "%s", argv[1]);
+	UtoL (ini, strlen (ini));
+
+	if (memcmp (ini, "all", 3) == 0)
+		sprintf (buf, "%s/proc.ini.tmp", _FEP_CFG);
+	else
+		sprintf (buf, "%s/%s.ini.tmp", _FEP_CFG, ini);
+
+	f_info.st_size = 0;
+
+	stat (buf, &f_info);
+	if (f_info.st_size > 0)
+	{
+		printf ("already present. cannot make %s\n", buf);
+		exit (FAIL);
+	}
+
+	if (memcmp (ini, "sisetr", 6) == 0)
+		SiseTr_Config_Read ();
+	else if (memcmp (ini, "accno", 5) == 0)
+		Accno_Config_Read ();
+	else if (memcmp (ini, "udpip", 5) == 0)
+		Udpip_Config_Read ();
+#if defined ISAM_INCL
+	else if (memcmp (ini, "cisam", 5) == 0)
+		Cisam_Config_Read ();
+#endif
+	else if (memcmp (ini, "proc", 4) == 0)
+		Proc_Config_Read ();
+	else if (memcmp (ini, "file", 4) == 0)
+		File_Config_Read ();
+	else if (memcmp (ini, "dshm", 4) == 0)
+		Dshm_Config_Read ();
+	else if (memcmp (ini, "tcp1", 4) == 0)
+		Tcp1_Config_Read ();
+	else if (memcmp (ini, "tcp2", 4) == 0)
+		Tcp2_Config_Read ();
+	else if (memcmp (ini, "all", 3) == 0)
+	{
+		File_Config_Read ();
+		Dshm_Config_Read ();
+#if defined ISAM_INCL
+		Cisam_Config_Read ();
+#endif
+		Tcp1_Config_Read ();
+		Tcp2_Config_Read ();
+		Udpip_Config_Read ();
+		SiseTr_Config_Read ();
+		Accno_Config_Read ();
+		Proc_Config_Read ();
+	}
+	else
+	{
+		printf ("ERROR:invalid argument [%s]\n", ini);
+		exit (FAIL);
+	}
+
+	printf ("... end:%s %s\n", argv[0], argv[1]);
+
+	exit (OK);
+}	/* End of main ()	*/
+
+/*----------------------------------------------------------------------*/
+void	File_Config_Read (void)
+/*----------------------------------------------------------------------*/
+{
+	int		cnt;
+	int		c1 = '=';
+	int		c2 = ' ';
+	int		c3 = '\t';
+	char	buf[128], ebuf[128], tmp1[40], tmp2[40], tmp3[40];
+	char	*sp, *sp1, *sp2, *sp3;
+
+	sprintf (buf, "%s/file.ini", _FEP_CFG);
+	if ((r_fp = fopen (buf, "r")) == 0)
+	{
+		printf ("ERROR:cannot open read file[%s] {%d:%s}\n",
+			buf, SYS_NO, SYS_STR);
+		return;
+	}
+
+	sprintf (buf, "%s/file.ini.tmp", _FEP_CFG);
+	if ((w_fp = fopen (buf, "w")) == 0)
+	{
+		printf ("ERROR:cannot open write file[%s] {%d:%s}\n",
+			buf, SYS_NO, SYS_STR);
+		return;
+	}
+	chmod (buf, 0660);
+
+	while (1)
+	{
+		memset (buf, 0, sizeof (buf));
+		memset (ebuf, 0, sizeof (ebuf));
+
+		sp = fgets (buf, sizeof (buf), r_fp);
+		if (sp == NULL)
+			break;
+
+		buf[strlen(buf)-1] = 0;
+		if (*buf == '#')
+		{
+			fprintf (w_fp, "%s\n", buf);
+			continue;
+		}
+		else if (*buf == '\0' || *buf == '\t' || *buf == ' ')
+		{
+			fprintf (w_fp, "\n", buf);
+			continue;
+		}
+
+		sprintf (tmp3, "%s", "File_End");
+		if (memcmp (buf, tmp3, Max(strlen(buf),strlen(tmp3))) == 0)
+		{
+			fprintf (w_fp, "%s\n", tmp3);
+			cnt ++;
+			continue;
+		}
+
+		sprintf (tmp3, "%s", "_CONF_START");
+		if (memcmp (buf+2, tmp3, strlen (tmp3)) == 0)
+		{
+			fprintf (w_fp, "%s\n", buf);
+			cnt = 1;
+			continue;
+		}
+
+		sprintf (tmp3, "%s", "_CONF_END");
+		if (memcmp (buf+2, tmp3, strlen (tmp3)) == 0)
+		{
+			fprintf (w_fp, "%s\n", buf);
+			continue;
+		}
+
+		memset (tmp1, 0, sizeof (tmp1));
+		memset (tmp2, 0, sizeof (tmp2));
+
+		sp1 = strchr (buf, c1);
+		if (sp1 == NULL)
+		{
+			printf ("ERROR:file[%s]", buf);
+			fclose (r_fp);
+			fclose (w_fp);
+			exit (FAIL);
+		}
+		memcpy (tmp1, buf, sp1 - buf);
+		LtoU (tmp1, sp1 - buf);
+		sp2 = strchr (sp1+1, c2);
+		sp3 = strchr (sp1+1, c3);
+
+		if (sp3 && sp2 > sp3)	sp2 = sp3;
+
+		if (sp2 == NULL)	strcpy (tmp2, sp1+1);
+		else				memcpy (tmp2, sp1+1, sp2 - sp1 - 1);
+
+		sprintf (tmp3, "%s", "FILE_COUNT");
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "File_Count=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "FILE_%d_COMMENT", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "File_0000_Comment=%s", sp1 + 1);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "FILE_%d_NAME", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "File_0000_Name=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "FILE_%d_FIFO", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "File_0000_Fifo=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "FILE_%d_SIZE", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "File_0000_Size=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		printf ("ERROR:file(%d):%s[%s]\n", cnt, tmp1, tmp2);
+	}
+
+	fclose (r_fp);
+	fclose (w_fp);
+
+	return;
+}	/* End of File_Config_Read ()	*/
+
+/*----------------------------------------------------------------------*/
+void	Dshm_Config_Read (void)
+/*----------------------------------------------------------------------*/
+{
+	int		cnt;
+	int		c1 = '=';
+	int		c2 = ' ';
+	int		c3 = '\t';
+	char	buf[128], ebuf[128], tmp1[40], tmp2[40], tmp3[40];
+	char	*sp, *sp1, *sp2, *sp3;
+
+	sprintf (buf, "%s/dshm.ini", _FEP_CFG);
+	if ((r_fp = fopen (buf, "r")) == 0)
+	{
+		printf ("ERROR:cannot open read file[%s] {%d:%s}\n",
+			buf, SYS_NO, SYS_STR);
+		return;
+	}
+
+	sprintf (buf, "%s/dshm.ini.tmp", _FEP_CFG);
+	if ((w_fp = fopen (buf, "w")) == 0)
+	{
+		printf ("ERROR:cannot open write file[%s] {%d:%s}\n",
+			buf, SYS_NO, SYS_STR);
+		return;
+	}
+	chmod (buf, 0660);
+
+	while (1)
+	{
+		memset (buf, 0, sizeof (buf));
+		memset (ebuf, 0, sizeof (ebuf));
+
+		sp = fgets (buf, sizeof (buf), r_fp);
+		if (sp == NULL)
+			break;
+
+		buf[strlen(buf)-1] = 0;
+		if (*buf == '#')
+		{
+			fprintf (w_fp, "%s\n", buf);
+			continue;
+		}
+		else if (*buf == '\0' || *buf == '\t' || *buf == ' ')
+		{
+			fprintf (w_fp, "\n", buf);
+			continue;
+		}
+
+		sprintf (tmp3, "%s", "Dshm_End");
+		if (memcmp (buf, tmp3, Max(strlen(buf),strlen(tmp3))) == 0)
+		{
+			fprintf (w_fp, "%s\n", tmp3);
+			cnt ++;
+			continue;
+		}
+
+		sprintf (tmp3, "%s", "_CONF_START");
+		if (memcmp (buf+2, tmp3, strlen (tmp3)) == 0)
+		{
+			fprintf (w_fp, "%s\n", buf);
+			cnt = 1;
+			continue;
+		}
+
+		sprintf (tmp3, "%s", "_CONF_END");
+		if (memcmp (buf+2, tmp3, strlen (tmp3)) == 0)
+		{
+			fprintf (w_fp, "%s\n", buf);
+			continue;
+		}
+
+		memset (tmp1, 0, sizeof (tmp1));
+		memset (tmp2, 0, sizeof (tmp2));
+
+		sp1 = strchr (buf, c1);
+		if (sp1 == NULL)
+		{
+			printf ("ERROR:dshm[%s]", buf);
+			fclose (r_fp);
+			fclose (w_fp);
+			exit (FAIL);
+		}
+		memcpy (tmp1, buf, sp1 - buf);
+		LtoU (tmp1, sp1 - buf);
+		sp2 = strchr (sp1+1, c2);
+		sp3 = strchr (sp1+1, c3);
+
+		if (sp3 && sp2 > sp3)	sp2 = sp3;
+
+		if (sp2 == NULL)	strcpy (tmp2, sp1+1);
+		else				memcpy (tmp2, sp1+1, sp2 - sp1 - 1);
+
+		sprintf (tmp3, "%s", "DSHM_COUNT");
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Dshm_Count=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "DSHM_%d_COMMENT", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Dshm_0000_Comment=%s", sp1 + 1);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "DSHM_%d_NAME", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Dshm_0000_Name=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "DSHM_%d_KEY", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Dshm_0000_Key=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "DSHM_%d_FIFO", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Dshm_0000_Fifo=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "DSHM_%d_SIZE", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Dshm_0000_Size=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "DSHM_%d_MAX", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Dshm_0000_Max=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		printf ("ERROR:dshm(%d):%s[%s]\n", cnt, tmp1, tmp2);
+	}
+
+	fclose (r_fp);
+	fclose (w_fp);
+
+	return;
+}	/* End of Dshm_Config_Read ()	*/
+
+#if defined ISAM_INCL
+/*----------------------------------------------------------------------*/
+void	Cisam_Config_Read (void)
+/*----------------------------------------------------------------------*/
+{
+	int		cnt;
+	int		c1 = '=';
+	int		c2 = ' ';
+	int		c3 = '\t';
+	char	buf[128], ebuf[128], tmp1[40], tmp2[40], tmp3[40];
+	char	*sp, *sp1, *sp2, *sp3;
+
+	sprintf (buf, "%s/cisam.ini", _FEP_CFG);
+	if ((r_fp = fopen (buf, "r")) == 0)
+	{
+		printf ("ERROR:cannot open read file[%s] {%d:%s}\n",
+			buf, SYS_NO, SYS_STR);
+		return;
+	}
+
+	sprintf (buf, "%s/cisam.ini.tmp", _FEP_CFG);
+	if ((w_fp = fopen (buf, "w")) == 0)
+	{
+		printf ("ERROR:cannot open write file[%s] {%d:%s}\n",
+			buf, SYS_NO, SYS_STR);
+		return;
+	}
+	chmod (buf, 0660);
+
+	while (1)
+	{
+		memset (buf, 0, sizeof (buf));
+		memset (ebuf, 0, sizeof (ebuf));
+
+		sp = fgets (buf, sizeof (buf), r_fp);
+		if (sp == NULL)
+			break;
+
+		buf[strlen(buf)-1] = 0;
+		if (*buf == '#')
+		{
+			fprintf (w_fp, "%s\n", buf);
+			continue;
+		}
+		else if (*buf == NULL || *buf == '\t' || *buf == ' ')
+		{
+			fprintf (w_fp, "\n", buf);
+			continue;
+		}
+
+		sprintf (tmp3, "%s", "Cisam_End");
+		if (memcmp (buf, tmp3, Max(strlen(buf),strlen(tmp3))) == 0)
+		{
+			fprintf (w_fp, "%s\n", tmp3);
+			cnt ++;
+			continue;
+		}
+
+		sprintf (tmp3, "%s", "_CONF_START");
+		if (memcmp (buf+2, tmp3, strlen (tmp3)) == 0)
+		{
+			fprintf (w_fp, "%s\n", buf);
+			cnt = 1;
+			continue;
+		}
+
+		sprintf (tmp3, "%s", "_CONF_END");
+		if (memcmp (buf+2, tmp3, strlen (tmp3)) == 0)
+		{
+			fprintf (w_fp, "%s\n", buf);
+			continue;
+		}
+
+		memset (tmp1, 0, sizeof (tmp1));
+		memset (tmp2, 0, sizeof (tmp2));
+
+		sp1 = strchr (buf, c1);
+		if (sp1 == NULL)
+		{
+			printf ("ERROR:cisam[%s]", buf);
+			fclose (r_fp);
+			fclose (w_fp);
+			exit (FAIL);
+		}
+		memcpy (tmp1, buf, sp1 - buf);
+		LtoU (tmp1, sp1 - buf);
+		sp2 = strchr (sp1+1, c2);
+		sp3 = strchr (sp1+1, c3);
+
+		if (sp3 && sp2 > sp3)	sp2 = sp3;
+
+		if (sp2 == NULL)	strcpy (tmp2, sp1+1);
+		else				memcpy (tmp2, sp1+1, sp2 - sp1 - 1);
+
+		sprintf (tmp3, "%s", "CISAM_COUNT");
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Cisam_Count=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "CISAM_%d_COMMENT", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Cisam_0000_Comment=%s", sp1 + 1);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "CISAM_%d_NAME", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Cisam_0000_Name=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "CISAM_%d_KEY_SIZE", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Cisam_0000_Key_Size=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "CISAM_%d_RECORD_SIZE", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Cisam_0000_Record_Size=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		printf ("ERROR:cisam(%d):%s[%s]\n", cnt, tmp1, tmp2);
+	}
+
+	fclose (r_fp);
+	fclose (w_fp);
+
+	return;
+}	/* End of Cisam_Config_Read ()	*/
+#endif
+
+/*----------------------------------------------------------------------*/
+void	Tcp1_Config_Read (void)
+/*----------------------------------------------------------------------*/
+{
+	int		cnt;
+	int		c1 = '=';
+	int		c2 = ' ';
+	int		c3 = '\t';
+	char	buf[128], ebuf[128], tmp1[40], tmp2[40], tmp3[40];
+	char	*sp, *sp1, *sp2, *sp3;
+
+	sprintf (buf, "%s/tcp1.ini", _FEP_CFG);
+	if ((r_fp = fopen (buf, "r")) == 0)
+	{
+		printf ("ERROR:cannot open read file[%s] {%d:%s}\n",
+			buf, SYS_NO, SYS_STR);
+		return;
+	}
+
+	sprintf (buf, "%s/tcp1.ini.tmp", _FEP_CFG);
+	if ((w_fp = fopen (buf, "w")) == 0)
+	{
+		printf ("ERROR:cannot open write file[%s] {%d:%s}\n",
+			buf, SYS_NO, SYS_STR);
+		return;
+	}
+	chmod (buf, 0660);
+
+	while (1)
+	{
+		memset (buf, 0, sizeof (buf));
+		memset (ebuf, 0, sizeof (ebuf));
+
+		sp = fgets (buf, sizeof (buf), r_fp);
+		if (sp == NULL)
+			break;
+
+		buf[strlen(buf)-1] = 0;
+		if (*buf == '#')
+		{
+			fprintf (w_fp, "%s\n", buf);
+			continue;
+		}
+		else if (*buf == '\0' || *buf == '\t' || *buf == ' ')
+		{
+			fprintf (w_fp, "\n", buf);
+			continue;
+		}
+
+		sprintf (tmp3, "%s", "Tcp1_End");
+		if (memcmp (buf, tmp3, Max(strlen(buf),strlen(tmp3))) == 0)
+		{
+			fprintf (w_fp, "%s\n", tmp3);
+			cnt ++;
+			continue;
+		}
+
+		sprintf (tmp3, "%s", "_CONF_START");
+		if (memcmp (buf+2, tmp3, strlen (tmp3)) == 0)
+		{
+			fprintf (w_fp, "%s\n", buf);
+			cnt = 1;
+			continue;
+		}
+
+		sprintf (tmp3, "%s", "_CONF_END");
+		if (memcmp (buf+2, tmp3, strlen (tmp3)) == 0)
+		{
+			fprintf (w_fp, "%s\n", buf);
+			continue;
+		}
+
+		memset (tmp1, 0, sizeof (tmp1));
+		memset (tmp2, 0, sizeof (tmp2));
+
+		sp1 = strchr (buf, c1);
+		if (sp1 == NULL)
+		{
+			printf ("ERROR:tcp1[%s]", buf);
+			fclose (r_fp);
+			fclose (w_fp);
+			exit (FAIL);
+		}
+		memcpy (tmp1, buf, sp1 - buf);
+		LtoU (tmp1, sp1 - buf);
+		sp2 = strchr (sp1+1, c2);
+		sp3 = strchr (sp1+1, c3);
+
+		if (sp3 && sp2 > sp3)	sp2 = sp3;
+
+		if (sp2 == NULL)	strcpy (tmp2, sp1+1);
+		else				memcpy (tmp2, sp1+1, sp2 - sp1 - 1);
+
+		sprintf (tmp3, "%s", "TCP1_COUNT");
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Tcp1_Count=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "TCP1_%d_COMMENT", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Tcp1_0000_Comment=%s", sp1 + 1);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "TCP1_%d_IP", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Tcp1_0000_Ip=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "TCP1_%d_PORT", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Tcp1_0000_Port=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "TCP1_%d_SPORT01", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Tcp1_0000_SPort01=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "TCP1_%d_SPORT02", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Tcp1_0000_SPort02=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "TCP1_%d_SPORT03", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Tcp1_0000_SPort03=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "TCP1_%d_SPORT04", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Tcp1_0000_SPort04=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "TCP1_%d_SPORT05", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Tcp1_0000_SPort05=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "TCP1_%d_SPORT06", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Tcp1_0000_SPort06=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "TCP1_%d_SPORT07", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Tcp1_0000_SPort07=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "TCP1_%d_SPORT08", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Tcp1_0000_SPort08=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "TCP1_%d_SPORT09", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Tcp1_0000_SPort09=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		printf ("ERROR:tcp1(%d):%s[%s]\n", cnt, tmp1, tmp2);
+	}
+
+	fclose (r_fp);
+	fclose (w_fp);
+
+	return;
+}	/* End of Tcp1_Config_Read ()	*/
+
+/*----------------------------------------------------------------------*/
+void	Tcp2_Config_Read (void)
+/*----------------------------------------------------------------------*/
+{
+	int		cnt;
+	int		c1 = '=';
+	int		c2 = ' ';
+	int		c3 = '\t';
+	char	buf[128], ebuf[128], tmp1[40], tmp2[40], tmp3[40];
+	char	*sp, *sp1, *sp2, *sp3;
+
+	sprintf (buf, "%s/tcp2.ini", _FEP_CFG);
+	if ((r_fp = fopen (buf, "r")) == 0)
+	{
+		printf ("ERROR:cannot open read file[%s] {%d:%s}\n",
+			buf, SYS_NO, SYS_STR);
+		return;
+	}
+
+	sprintf (buf, "%s/tcp2.ini.tmp", _FEP_CFG);
+	if ((w_fp = fopen (buf, "w")) == 0)
+	{
+		printf ("ERROR:cannot open write file[%s] {%d:%s}\n",
+			buf, SYS_NO, SYS_STR);
+		return;
+	}
+	chmod (buf, 0660);
+
+	while (1)
+	{
+		memset (buf, 0, sizeof (buf));
+		memset (ebuf, 0, sizeof (ebuf));
+
+		sp = fgets (buf, sizeof (buf), r_fp);
+		if (sp == NULL)
+			break;
+
+		buf[strlen(buf)-1] = 0;
+		if (*buf == '#')
+		{
+			fprintf (w_fp, "%s\n", buf);
+			continue;
+		}
+		else if (*buf == '\0' || *buf == '\t' || *buf == ' ')
+		{
+			fprintf (w_fp, "\n", buf);
+			continue;
+		}
+
+		sprintf (tmp3, "%s", "Tcp2_End");
+		if (memcmp (buf, tmp3, Max(strlen(buf),strlen(tmp3))) == 0)
+		{
+			fprintf (w_fp, "%s\n", tmp3);
+			cnt ++;
+			continue;
+		}
+
+		sprintf (tmp3, "%s", "_CONF_START");
+		if (memcmp (buf+2, tmp3, strlen (tmp3)) == 0)
+		{
+			fprintf (w_fp, "%s\n", buf);
+			cnt = 1;
+			continue;
+		}
+
+		sprintf (tmp3, "%s", "_CONF_END");
+		if (memcmp (buf+2, tmp3, strlen (tmp3)) == 0)
+		{
+			fprintf (w_fp, "%s\n", buf);
+			continue;
+		}
+
+		memset (tmp1, 0, sizeof (tmp1));
+		memset (tmp2, 0, sizeof (tmp2));
+
+		sp1 = strchr (buf, c1);
+		if (sp1 == NULL)
+		{
+			printf ("ERROR:tcp2[%s]", buf);
+			fclose (r_fp);
+			fclose (w_fp);
+			exit (FAIL);
+		}
+		memcpy (tmp1, buf, sp1 - buf);
+		LtoU (tmp1, sp1 - buf);
+		sp2 = strchr (sp1+1, c2);
+		sp3 = strchr (sp1+1, c3);
+
+		if (sp3 && sp2 > sp3)	sp2 = sp3;
+
+		if (sp2 == NULL)	strcpy (tmp2, sp1+1);
+		else				memcpy (tmp2, sp1+1, sp2 - sp1 - 1);
+
+		sprintf (tmp3, "%s", "TCP2_COUNT");
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Tcp2_Count=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "TCP2_%d_COMMENT", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Tcp2_0000_Comment=%s", sp1 + 1);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "TCP2_%d_IP", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Tcp2_0000_Ip=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "TCP2_%d_DUP_ID", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Tcp2_0000_Dup_Id=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "TCP2_%d_PORT", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Tcp2_0000_Port=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		printf ("ERROR:tcp2(%d):%s[%s]\n", cnt, tmp1, tmp2);
+	}
+
+	fclose (r_fp);
+	fclose (w_fp);
+
+	return;
+}	/* End of Tcp2_Config_Read ()	*/
+
+/*----------------------------------------------------------------------*/
+void	Udpip_Config_Read (void)
+/*----------------------------------------------------------------------*/
+{
+	int		cnt, j, flag;
+	int		c1 = '=';
+	int		c2 = ' ';
+	int		c3 = '\t';
+	char	buf[128], ebuf[128], tmp1[40], tmp2[40], tmp3[40];
+	char	*sp, *sp1, *sp2, *sp3;
+
+	sprintf (buf, "%s/udpip.ini", _FEP_CFG);
+	if ((r_fp = fopen (buf, "r")) == 0)
+	{
+		printf ("ERROR:cannot open read file[%s] {%d:%s}\n",
+			buf, SYS_NO, SYS_STR);
+		return;
+	}
+
+	sprintf (buf, "%s/udpip.ini.tmp", _FEP_CFG);
+	if ((w_fp = fopen (buf, "w")) == 0)
+	{
+		printf ("ERROR:cannot open write file[%s] {%d:%s}\n",
+			buf, SYS_NO, SYS_STR);
+		return;
+	}
+	chmod (buf, 0660);
+
+	while (1)
+	{
+		memset (buf, 0, sizeof (buf));
+		memset (ebuf, 0, sizeof (ebuf));
+
+		sp = fgets (buf, sizeof (buf), r_fp);
+		if (sp == NULL)
+			break;
+
+		buf[strlen(buf)-1] = 0;
+		if (*buf == '#')
+		{
+			fprintf (w_fp, "%s\n", buf);
+			continue;
+		}
+		else if (*buf == '\0' || *buf == '\t' || *buf == ' ')
+		{
+			fprintf (w_fp, "\n", buf);
+			continue;
+		}
+
+		sprintf (tmp3, "%s", "Udpip_End");
+		if (memcmp (buf, tmp3, Max(strlen(buf),strlen(tmp3))) == 0)
+		{
+			fprintf (w_fp, "%s\n", tmp3);
+			cnt ++;
+			continue;
+		}
+
+		sprintf (tmp3, "%s", "_CONF_START");
+		if (memcmp (buf+2, tmp3, strlen (tmp3)) == 0)
+		{
+			fprintf (w_fp, "%s\n", buf);
+			cnt = 1;
+			continue;
+		}
+
+		sprintf (tmp3, "%s", "_CONF_END");
+		if (memcmp (buf+2, tmp3, strlen (tmp3)) == 0)
+		{
+			fprintf (w_fp, "%s\n", buf);
+			continue;
+		}
+
+		memset (tmp1, 0, sizeof (tmp1));
+		memset (tmp2, 0, sizeof (tmp2));
+
+		sp1 = strchr (buf, c1);
+		if (sp1 == NULL)
+		{
+			printf ("ERROR:udpip[%s]", buf);
+			fclose (r_fp);
+			fclose (w_fp);
+			exit (FAIL);
+		}
+		memcpy (tmp1, buf, sp1 - buf);
+		LtoU (tmp1, sp1 - buf);
+		sp2 = strchr (sp1+1, c2);
+		sp3 = strchr (sp1+1, c3);
+
+		if (sp3 && sp2 > sp3)	sp2 = sp3;
+
+		if (sp2 == NULL)	strcpy (tmp2, sp1+1);
+		else				memcpy (tmp2, sp1+1, sp2 - sp1 - 1);
+
+		sprintf (tmp3, "%s", "UDPIP_COUNT");
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Udpip_Count=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "UDPIP_%d_COMMENT", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Udpip_0000_Comment=%s", sp1 + 1);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "UDPIP_%d_IP_", cnt);
+		if (memcmp (tmp1, tmp3, strlen (tmp3)) == 0)
+		{
+			flag = 0;
+
+			for (j = 0; j < 20; j ++)
+			{
+				sprintf (tmp3, "UDPIP_%d_IP_%d", cnt, j + 1);
+				if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+				{
+					sprintf (ebuf, "Udpip_0000_Ip_%d=%s", j + 1, tmp2);
+					fprintf (w_fp, "%s\n", ebuf);
+					flag = 1;
+					break;
+				}
+			}
+
+			if (flag == 1)
+				continue;
+		}
+
+		sprintf (tmp3, "UDPIP_%d_DUP_ID", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Udpip_0000_Dup_Id=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "UDPIP_%d_PORT_", cnt);
+		if (memcmp (tmp1, tmp3, strlen (tmp3)) == 0)
+		{
+			flag = 0;
+
+			for (j = 0; j < 20; j ++)
+			{
+				sprintf (tmp3, "UDPIP_%d_PORT_%d", cnt, j + 1);
+				if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+				{
+					sprintf (ebuf, "Udpip_0000_Port_%d=%s", j + 1, tmp2);
+					fprintf (w_fp, "%s\n", ebuf);
+					flag = 1;
+					break;
+				}
+			}
+
+			if (flag == 1)
+				continue;
+		}
+
+		printf ("ERROR:udpip(%d):%s[%s]\n", cnt, tmp1, tmp2);
+	}
+
+	fclose (r_fp);
+	fclose (w_fp);
+
+	return;
+}	/* End of Udpip_Config_Read ()	*/
+
+/*----------------------------------------------------------------------*/
+void	SiseTr_Config_Read (void)
+/*----------------------------------------------------------------------*/
+{
+	int		cnt;
+	int		c1 = '=';
+	int		c2 = ' ';
+	int		c3 = '\t';
+	char	buf[128], ebuf[128], tmp1[40], tmp2[40], tmp3[40];
+	char	*sp, *sp1, *sp2, *sp3;
+
+	sprintf (buf, "%s/sisetr.ini", _FEP_CFG);
+	if ((r_fp = fopen (buf, "r")) == 0)
+	{
+		printf ("ERROR:cannot open read file[%s] {%d:%s}\n",
+			buf, SYS_NO, SYS_STR);
+		return;
+	}
+
+	sprintf (buf, "%s/sisetr.ini.tmp", _FEP_CFG);
+	if ((w_fp = fopen (buf, "w")) == 0)
+	{
+		printf ("ERROR:cannot open write file[%s] {%d:%s}\n",
+			buf, SYS_NO, SYS_STR);
+		return;
+	}
+	chmod (buf, 0660);
+
+	while (1)
+	{
+		memset (buf, 0, sizeof (buf));
+		memset (ebuf, 0, sizeof (ebuf));
+
+		sp = fgets (buf, sizeof (buf), r_fp);
+		if (sp == NULL)
+			break;
+
+		buf[strlen(buf)-1] = 0;
+		if (*buf == '#')
+		{
+			fprintf (w_fp, "%s\n", buf);
+			continue;
+		}
+		else if (*buf == '\0' || *buf == '\t' || *buf == ' ')
+		{
+			fprintf (w_fp, "\n", buf);
+			continue;
+		}
+
+		sprintf (tmp3, "%s", "Sise_End");
+		if (memcmp (buf, tmp3, Max(strlen(buf),strlen(tmp3))) == 0)
+		{
+			fprintf (w_fp, "%s\n", tmp3);
+			cnt ++;
+			continue;
+		}
+
+		sprintf (tmp3, "%s", "_CONF_START");
+		if (memcmp (buf+2, tmp3, strlen (tmp3)) == 0)
+		{
+			fprintf (w_fp, "%s\n", buf);
+			cnt = 1;
+			continue;
+		}
+
+		sprintf (tmp3, "%s", "_CONF_END");
+		if (memcmp (buf+2, tmp3, strlen (tmp3)) == 0)
+		{
+			fprintf (w_fp, "%s\n", buf);
+			continue;
+		}
+
+		memset (tmp1, 0, sizeof (tmp1));
+		memset (tmp2, 0, sizeof (tmp2));
+
+		sp1 = strchr (buf, c1);
+		if (sp1 == NULL)
+		{
+			printf ("ERROR:sisetr[%s]", buf);
+			fclose (r_fp);
+			fclose (w_fp);
+			exit (FAIL);
+		}
+		memcpy (tmp1, buf, sp1 - buf);
+		LtoU (tmp1, sp1 - buf);
+		sp2 = strchr (sp1+1, c2);
+		sp3 = strchr (sp1+1, c3);
+
+		if (sp3 && sp2 > sp3)	sp2 = sp3;
+
+		if (sp2 == NULL)	strcpy (tmp2, sp1+1);
+		else				memcpy (tmp2, sp1+1, sp2 - sp1 - 1);
+
+		sprintf (tmp3, "%s", "SISE_COUNT");
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Sise_Count=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "SISE_%d_COMMENT", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Sise_0000_Comment=%s", sp1 + 1);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "SISE_%d_TR", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Sise_0000_Tr=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "SISE_%d_LENGTH", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Sise_0000_Length=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "SISE_%d_QUEUE", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Sise_0000_Queue=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		printf ("ERROR:sisetr(%d):%s[%s]\n", cnt, tmp1, tmp2);
+	}
+
+	fclose (r_fp);
+	fclose (w_fp);
+
+	return;
+}	/* End of SiseTr_Config_Read ()	*/
+
+/*----------------------------------------------------------------------*/
+void	Accno_Config_Read (void)
+/*----------------------------------------------------------------------*/
+{
+	int		cnt;
+	int		c1 = '=';
+	int		c2 = ' ';
+	int		c3 = '\t';
+	char	buf[128], ebuf[128], tmp1[40], tmp2[40], tmp3[40];
+	char	*sp, *sp1, *sp2, *sp3;
+
+	sprintf (buf, "%s/accno.ini", _FEP_CFG);
+	if ((r_fp = fopen (buf, "r")) == 0)
+	{
+		printf ("ERROR:cannot open read file[%s] {%d:%s}\n",
+			buf, SYS_NO, SYS_STR);
+		return;
+	}
+
+	sprintf (buf, "%s/accno.ini.tmp", _FEP_CFG);
+	if ((w_fp = fopen (buf, "w")) == 0)
+	{
+		printf ("ERROR:cannot open write file[%s] {%d:%s}\n",
+			buf, SYS_NO, SYS_STR);
+		return;
+	}
+	chmod (buf, 0660);
+
+	while (1)
+	{
+		memset (buf, 0, sizeof (buf));
+		memset (ebuf, 0, sizeof (ebuf));
+
+		sp = fgets (buf, sizeof (buf), r_fp);
+		if (sp == NULL)
+			break;
+
+		buf[strlen(buf)-1] = 0;
+		if (*buf == '#')
+		{
+			fprintf (w_fp, "%s\n", buf);
+			continue;
+		}
+		else if (*buf == '\0' || *buf == '\t' || *buf == ' ')
+		{
+			fprintf (w_fp, "\n", buf);
+			continue;
+		}
+
+		sprintf (tmp3, "%s", "Accno_End");
+		if (memcmp (buf, tmp3, Max(strlen(buf),strlen(tmp3))) == 0)
+		{
+			fprintf (w_fp, "%s\n", tmp3);
+			cnt ++;
+			continue;
+		}
+
+		sprintf (tmp3, "%s", "_CONF_START");
+		if (memcmp (buf+2, tmp3, strlen (tmp3)) == 0)
+		{
+			fprintf (w_fp, "%s\n", buf);
+			cnt = 1;
+			continue;
+		}
+
+		sprintf (tmp3, "%s", "_CONF_END");
+		if (memcmp (buf+2, tmp3, strlen (tmp3)) == 0)
+		{
+			fprintf (w_fp, "%s\n", buf);
+			continue;
+		}
+
+		memset (tmp1, 0, sizeof (tmp1));
+		memset (tmp2, 0, sizeof (tmp2));
+
+		sp1 = strchr (buf, c1);
+		if (sp1 == NULL)
+		{
+			printf ("ERROR:accno[%s]", buf);
+			fclose (r_fp);
+			fclose (w_fp);
+			exit (FAIL);
+		}
+		memcpy (tmp1, buf, sp1 - buf);
+		LtoU (tmp1, sp1 - buf);
+		sp2 = strchr (sp1+1, c2);
+		sp3 = strchr (sp1+1, c3);
+
+		if (sp3 && sp2 > sp3)	sp2 = sp3;
+
+		if (sp2 == NULL)	strcpy (tmp2, sp1+1);
+		else				memcpy (tmp2, sp1+1, sp2 - sp1 - 1);
+
+		sprintf (tmp3, "%s", "ACCNO_COUNT");
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Accno_Count=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "ACCNO_%d_COMMENT", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Accno_0000_Comment=%s", sp1 + 1);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "ACCNO_%d_APTYPE", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Accno_0000_Aptype=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "ACCNO_%d_ACC_NO", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Accno_0000_Acc_No=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "ACCNO_%d_PWD", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Accno_0000_Pwd=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "ACCNO_%d_ATHRTY", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Accno_0000_Athrty=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "ACCNO_%d_IP", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Accno_0000_Ip=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "ACCNO_%d_AUTO_MAN_CNT", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Accno_0000_Auto_Man_Cnt=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		/* auto_use_cnt는 사용현황이라 초기화 필요없음 */
+		sprintf (tmp3, "ACCNO_%d_JS_BAND", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Accno_0000_Js_Band=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "ACCNO_%d_RISK_MAX", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Accno_0000_Risk_Max=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "ACCNO_%d_ACC_F_ORDER_MAXCNT", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Accno_0000_Acc_F_Order_MaxCnt=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "ACCNO_%d_ACC_F_GET_MAXCNT", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Accno_0000_Acc_F_Get_MaxCnt=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "ACCNO_%d_ACC_SO_ORDER_MAXCNT", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Accno_0000_Acc_SO_Order_MaxCnt=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "ACCNO_%d_ACC_SO_GET_MAXCNT", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Accno_0000_Acc_SO_Get_MaxCnt=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		printf ("ERROR:accno(%d):%s[%s]\n", cnt, tmp1, tmp2);
+	}
+
+	fclose (r_fp);
+	fclose (w_fp);
+
+	return;
+}	/* End of Accno_Config_Read ()	*/
+
+/*----------------------------------------------------------------------*/
+void	Proc_Config_Read (void)
+/*----------------------------------------------------------------------*/
+{
+	int		cnt, j, flag;
+	int		c1 = '=';
+	int		c2 = ' ';
+	int		c3 = '\t';
+	char	buf[128], ebuf[128], tmp1[40], tmp2[40], tmp3[40];
+	char	*sp, *sp1, *sp2, *sp3;
+
+	sprintf (buf, "%s/proc.ini", _FEP_CFG);
+	if ((r_fp = fopen (buf, "r")) == 0)
+	{
+		printf ("ERROR:cannot open read file[%s] {%d:%s}\n",
+			buf, SYS_NO, SYS_STR);
+		return;
+	}
+
+	sprintf (buf, "%s/proc.ini.tmp", _FEP_CFG);
+	if ((w_fp = fopen (buf, "w")) == 0)
+	{
+		printf ("ERROR:cannot open write file[%s] {%d:%s}\n",
+			buf, SYS_NO, SYS_STR);
+		return;
+	}
+	chmod (buf, 0660);
+
+	while (1)
+	{
+		memset (buf, 0, sizeof (buf));
+		memset (ebuf, 0, sizeof (ebuf));
+
+		sp = fgets (buf, sizeof (buf), r_fp);
+		if (sp == NULL)
+			break;
+
+		buf[strlen(buf)-1] = 0;
+		if (*buf == '#')
+		{
+			fprintf (w_fp, "%s\n", buf);
+			continue;
+		}
+		else if (*buf == '\0' || *buf == '\t' || *buf == ' ')
+		{
+			fprintf (w_fp, "\n", buf);
+			continue;
+		}
+
+		sprintf (tmp3, "%s", "Proc_End");
+		if (memcmp (buf, tmp3, Max(strlen(buf),strlen(tmp3))) == 0)
+		{
+			fprintf (w_fp, "%s\n", tmp3);
+			cnt ++;
+			continue;
+		}
+
+		sprintf (tmp3, "%s", "_CONF_START");
+		if (memcmp (buf+2, tmp3, strlen (tmp3)) == 0)
+		{
+			fprintf (w_fp, "%s\n", buf);
+			cnt = 1;
+			continue;
+		}
+
+		sprintf (tmp3, "%s", "_CONF_END");
+		if (memcmp (buf+2, tmp3, strlen (tmp3)) == 0)
+		{
+			fprintf (w_fp, "%s\n", buf);
+			continue;
+		}
+
+		memset (tmp1, 0, sizeof (tmp1));
+		memset (tmp2, 0, sizeof (tmp2));
+
+		sp1 = strchr (buf, c1);
+		if (sp1 == NULL)
+		{
+			printf ("ERROR:proc[%s]", buf);
+			fclose (r_fp);
+			fclose (w_fp);
+			exit (FAIL);
+		}
+		memcpy (tmp1, buf, sp1 - buf);
+		LtoU (tmp1, sp1 - buf);
+		sp2 = strchr (sp1+1, c2);
+		sp3 = strchr (sp1+1, c3);
+
+		if (sp3 && sp2 > sp3)	sp2 = sp3;
+
+		if (sp2 == NULL)	strcpy (tmp2, sp1+1);
+		else				memcpy (tmp2, sp1+1, sp2 - sp1 - 1);
+
+		sprintf (tmp3, "%s", "PROC_COUNT");
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Proc_Count=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "PROC_%d_COMMENT", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Proc_0000_Comment=%s", sp1 + 1);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "PROC_%d_ID", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Proc_0000_ID=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "PROC_%d_STATUS", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Proc_0000_Status=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "PROC_%d_IFN_", cnt);
+		if (memcmp (tmp1, tmp3, strlen (tmp3)) == 0)
+		{
+			flag = 0;
+
+			for (j = 0; j < 3; j ++)
+			{
+				sprintf (tmp3, "PROC_%d_IFN_%d", cnt, j + 1);
+				if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+				{
+					sprintf (ebuf, "Proc_0000_IFN_%d=%s", j + 1, tmp2);
+					fprintf (w_fp, "%s\n", ebuf);
+					flag = 1;
+					break;
+				}
+			}
+
+			if (flag == 1)
+				continue;
+		}
+
+		sprintf (tmp3, "PROC_%d_IDN_", cnt);
+		if (memcmp (tmp1, tmp3, strlen (tmp3)) == 0)
+		{
+			flag = 0;
+
+			for (j = 0; j < 3; j ++)
+			{
+				sprintf (tmp3, "PROC_%d_IDN_%d", cnt, j + 1);
+				if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+				{
+					sprintf (ebuf, "Proc_0000_IDN_%d=%s", j + 1, tmp2);
+					fprintf (w_fp, "%s\n", ebuf);
+					flag = 1;
+					break;
+				}
+			}
+
+			if (flag == 1)
+				continue;
+		}
+
+		sprintf (tmp3, "PROC_%d_FFN_", cnt);
+		if (memcmp (tmp1, tmp3, strlen (tmp3)) == 0)
+		{
+			flag = 0;
+
+			for (j = 0; j < 3; j ++)
+			{
+				sprintf (tmp3, "PROC_%d_FFN_%d", cnt, j + 1);
+				if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+				{
+					sprintf (ebuf, "Proc_0000_FFN_%d=%s", j + 1, tmp2);
+					fprintf (w_fp, "%s\n", ebuf);
+					flag = 1;
+					break;
+				}
+			}
+
+			if (flag == 1)
+				continue;
+		}
+
+#if defined ISAM_INCL
+		sprintf (tmp3, "PROC_%d_ICN_", cnt);
+		if (memcmp (tmp1, tmp3, strlen (tmp3)) == 0)
+		{
+			flag = 0;
+
+			for (j = 0; j < 3; j ++)
+			{
+				sprintf (tmp3, "PROC_%d_ICN_%d", cnt, j + 1);
+				if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+				{
+					sprintf (ebuf, "Proc_0000_ICN_%d=%s", j + 1, tmp2);
+					fprintf (w_fp, "%s\n", ebuf);
+					flag = 1;
+					break;
+				}
+			}
+
+			if (flag == 1)
+				continue;
+		}
+#endif
+
+		sprintf (tmp3, "PROC_%d_OFN_", cnt);
+		if (memcmp (tmp1, tmp3, strlen (tmp3)) == 0)
+		{
+			flag = 0;
+
+			for (j = 0; j < 99; j ++)
+			{
+				sprintf (tmp3, "PROC_%d_OFN_%d", cnt, j + 1);
+				if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+				{
+					sprintf (ebuf, "Proc_0000_OFN_%d=%s", j + 1, tmp2);
+					fprintf (w_fp, "%s\n", ebuf);
+					flag = 1;
+					break;
+				}
+			}
+
+			if (flag == 1)
+				continue;
+		}
+
+		sprintf (tmp3, "PROC_%d_ODN_", cnt);
+		if (memcmp (tmp1, tmp3, strlen (tmp3)) == 0)
+		{
+			flag = 0;
+
+			for (j = 0; j < 99; j ++)
+			{
+				sprintf (tmp3, "PROC_%d_ODN_%d", cnt, j + 1);
+				if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+				{
+					sprintf (ebuf, "Proc_0000_ODN_%d=%s", j + 1, tmp2);
+					fprintf (w_fp, "%s\n", ebuf);
+					flag = 1;
+					break;
+				}
+			}
+
+			if (flag == 1)
+				continue;
+		}
+
+#if defined ISAM_INCL
+		sprintf (tmp3, "PROC_%d_OCN_", cnt);
+		if (memcmp (tmp1, tmp3, strlen (tmp3)) == 0)
+		{
+			flag = 0;
+
+			for (j = 0; j < 3; j ++)
+			{
+				sprintf (tmp3, "PROC_%d_OCN_%d", cnt, j + 1);
+				if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+				{
+					sprintf (ebuf, "Proc_0000_OCN_%d=%s", j + 1, tmp2);
+					fprintf (w_fp, "%s\n", ebuf);
+					flag = 1;
+					break;
+				}
+			}
+
+			if (flag == 1)
+				continue;
+		}
+#endif
+
+		sprintf (tmp3, "PROC_%d_TYPE", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Proc_0000_Type=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "PROC_%d_START_TIME", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Proc_0000_Start_Time=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "PROC_%d_END_TIME", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Proc_0000_End_Time=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "PROC_%d_EXTERNAL_TIME", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Proc_0000_External_Time=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "PROC_%d_TIME_OUT", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Proc_0000_Time_Out=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "PROC_%d_DELAY", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Proc_0000_Delay=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "PROC_%d_DATA_BUF", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Proc_0000_Data_Buf=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "PROC_%d_TCP1_TYPE", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Proc_0000_Tcp1_Type=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "PROC_%d_TCP1_PORT", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Proc_0000_Tcp1_Port=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "PROC_%d_TCP2_PRIMARY", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Proc_0000_Tcp2_Primary=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "PROC_%d_TCP2_BACKUP", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Proc_0000_Tcp2_Backup=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "PROC_%d_UDP_PORT", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Proc_0000_Udp_Port=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "PROC_%d_DUP_ID", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Proc_0000_Dup_Id=%s", tmp2);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "PROC_%d_LOGONID", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Proc_0000_LogonID=%s", sp1 + 1);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		sprintf (tmp3, "PROC_%d_LOGONPW", cnt);
+		if (memcmp (tmp1, tmp3, Max(strlen(tmp1),strlen(tmp3))) == 0)
+		{
+			sprintf (ebuf, "Proc_0000_LogonPW=%s", sp1 + 1);
+			fprintf (w_fp, "%s\n", ebuf);
+			continue;
+		}
+
+		printf ("ERROR:proc(%d):%s[%s]\n", cnt, tmp1, tmp2);
+	}
+
+	fclose (r_fp);
+	fclose (w_fp);
+
+	return;
+}	/* End of Proc_Config_Read ()	*/
+
+/*************************************************************************
+	End of Program (px_cfgback.c)
+*************************************************************************/

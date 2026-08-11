@@ -1,0 +1,525 @@
+#define     _GLOBAL
+/*------------------------------------------------------------------------
+ * #    Author  : PSH
+ * #    Module  : KRX시세수신 TCP용(KRX,IMECO), 시세FEP전용
+ * #    File    : pa_7100_ts.c
+ * #    Commant : Send To Client
+ * ------------------------------------------------------------------------*/
+
+/*------------------------------------------------------------------------
+ *  Header Files
+ *------------------------------------------------------------------------*/
+#include    "fep_fepp.h"
+#include    "cli_interface.h"
+
+#define     MAX_CNT         1
+
+#if defined A7612
+#define     DATA_SIZE       700
+#elif defined A7613
+#define     DATA_SIZE       100
+#endif
+#include    "buf_struct.h"
+
+/*------------------------------------------------------------------------
+ *  Constants and Structures
+ *------------------------------------------------------------------------*/
+#define     FOREVER_TIME    60 * 1000                       /* 60 sec   */
+
+#define     SOCKET_EVENT    0
+#define     DATA_EVENT      1
+
+/*------------------------------------------------------------------------
+ *  Global Variables
+ *------------------------------------------------------------------------*/
+int     Sockfd, Newfd;
+int		SendLen, MsgLen, ReTrCode;
+int     PollCnt, FirstSeq, TimeOut, Pk, PortNo, SendFlag;
+char    ApType[10], IpAddr[20];
+char    RecvPkt[CLI_BUFF_MAX_LEN], SendPkt[CLI_BUFF_MAX_LEN];
+char    LogOnFlag, OpenFlag;
+
+FILE_BUFF_FORMAT        R_Fmt[MAX_CNT], W_Fmt[MAX_CNT];		// Read Buff
+
+struct pollfd           Poll[2];
+
+/*------------------------------------------------------------------------
+ *  Function Prototypes
+ *-----------------------------------------------------------------------*/
+void    PA_7100_TS (void);
+void    Init_Parameters (void);
+void    Fifo_Event_Rtn (void);
+void    Socket_Event_Rtn (void);
+void    Data_Event_Rtn (void);
+void    Device_Write (void);
+void    Device_Open (void);
+void    Device_Close (void);
+void    Time_Out_Rtn (void);
+void	Make_Send_Msg (int);
+void	Set_Socket_Linger (void);
+
+/*----------------------------------------------------------------------*/
+int     main (int argc, char *argv[])
+/*----------------------------------------------------------------------*/
+{
+    Init_Proc (argc, argv);
+    PA_7100_TS ();
+    Exit_Process ();
+}   /* End of main ()   */
+
+/*----------------------------------------------------------------------*/
+void    PA_7100_TS (void)
+/*----------------------------------------------------------------------*/
+{
+    int     rt, i;
+
+    Init_Parameters ();
+
+#if defined HOLIDAY_APPLY
+    char    t_time[12], dt[20];
+    time_t  t = time(NULL);
+    struct  tm  tm, *tp;
+
+    while (1)
+    {
+        Get_Time (t_time);
+
+        memset (dt, 0, sizeof (dt));
+        sprintf (dt, "%.4s-%.2s-%.2s %.2s:%.2s:%.2s", DAEMON(D_K).date,
+            DAEMON(D_K).date+4, DAEMON(D_K).date+6, t_time, t_time+2, t_time+4);
+        strptime (dt, "%Y-%m-%d %H:%M:%S", &tm);
+        //t = mktime (&tm);
+        tp = localtime (&t);
+
+        if (tp->tm_wday == 0 || tp->tm_wday == 6)       /* Sun, Sat */
+        {
+            Log (USR_OK, "it's weekend. sleeping...[%d]", tp->tm_wday);
+            sleep (60);
+        }
+        else
+        {
+			Log (USR_OK, "it's not weekend. not sleeping...[%d]", tp->tm_wday);
+			break;
+/*
+            Log (USR_OK, "it's weekday. ok...[%d]", tp->tm_wday);
+			if (memcmp (Shm_Risk[0].business_day, DAEMON(D_K).date, 8) == 0)
+                break;
+            else
+            {
+                Log (USR_OK, "system Day와 business Day가 다르다...[%8.8s][%8.8s]",
+                    DAEMON(D_K).date, Shm_Risk[0].business_day);
+                sleep (600);
+                continue;
+            }
+*/
+        }
+    }
+#endif
+
+    while (START_S != END)
+    {
+        Stat_Save ();
+
+        if (TCP2_NET_STA(0) == END || TCP2_NET_STA(0) == JOB_STOP)
+        {                                               /* 종료/중  */
+            if (LogOnFlag == ON && TCP2_NET_STA(0) == END)
+            {
+                Device_Close ();
+            }
+        }
+        else                                            /* 정상주문시간 */
+        {
+            if (OpenFlag == OFF)
+            {
+                Device_Open ();
+				TCP2_NET_STA(0) = ON;
+
+				if (OpenFlag == OFF)
+					continue;
+			}
+
+			PollCnt = 2;
+			TimeOut = FOREVER_TIME;
+        }
+
+        rt = poll (Poll, PollCnt, TimeOut);
+        if (rt < 0)
+        {
+            if (SYS_NO == EINTR)
+                Log (SYS_OK, "poll interrupted {%d:%s}", SYS_NO, SYS_STR);
+            else
+                Log (SYS_ERROR, "poll failure {%d:%s}", SYS_NO, SYS_STR);
+
+            continue;
+        }
+        else if (rt == 0)
+        {
+            Time_Out_Rtn ();
+            continue;
+        }
+
+        for (i = 0; i < PollCnt; i ++)
+        {
+            if (Poll[i].revents & POLLHUP)
+            {
+                if (i == SOCKET_EVENT)
+                {
+                    Log (TCP_ERROR, "socket disconnected[%#06x]", Poll[i].revents);
+                    return;
+                }
+
+                Log (SYS_ERROR, "poll hangup[%d,%d]", i, PollCnt);
+                continue;
+            }
+        }
+
+        for (i = 0; i < PollCnt; i ++)
+        {
+            if (Poll[i].revents & POLLIN)
+            {
+                Poll[i].revents = 0;
+                break;
+            }
+        }
+
+        switch (i)
+        {
+            case    SOCKET_EVENT:
+                Socket_Event_Rtn ();
+                break;
+            case    DATA_EVENT:
+                Data_Event_Rtn ();
+                break;
+            default:
+                Log (USR_ERROR, "event case error[%d,%d]", i, PollCnt);
+                Exit_Process ();
+                break;
+        }
+    }
+
+    //Device_Close ();
+
+    return;
+}   /* End of PA_7100_TS ()    */
+
+/*************************************************************************
+ *  Function        : . Init_Parameters
+ *  Parameters IN   : .
+ *  Parameters OUT  : .
+ *  Return Code     : . void
+ *  Comment         : . All Program Parameters Init
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+void    Init_Parameters (void)
+/*----------------------------------------------------------------------*/
+{
+    LogOnFlag = OFF;
+    OpenFlag = OFF;
+
+	L_K = 0;
+
+	sprintf (IpAddr, "%d.%d.%d.%d", TCP2_IP1(D_K,P_K,S_K),
+    TCP2_IP2(D_K,P_K,S_K), TCP2_IP3(D_K,P_K,S_K), TCP2_IP4(D_K,P_K,S_K));
+
+	PortNo = TCP2_PORT_NO;
+    Log (TCP_OK, "Server Side port[%d]", PortNo);
+
+    TCP2_PROC_ST = ON;
+    TCP2_LINE_ST = OFF;
+
+    Poll[1].fd = INPUT_FD;
+    Poll[1].events = POLLIN;
+
+    return;
+}   /* End of Init_Parameters ()    */
+
+/*************************************************************************
+ *  Function        : . Fifo_Event_Rtn
+ *  Parameters IN   : .
+ *  Parameters OUT  : .
+ *  Return Code     : . void
+ *  Comment         : . 업무 통제 FIFO SIGNAL GET & No Action
+**************************************************************************/
+/*----------------------------------------------------------------------*/
+void    Fifo_Event_Rtn (void)
+/*----------------------------------------------------------------------*/
+{
+    char    tmp[2];
+
+    read (START_FD, tmp, 1);
+
+    return;
+}   /* End of Fifo_Event_Rtn () */
+
+/*************************************************************************
+ *  Function        : . Socket_Event_Rtn
+ *  Parameters IN   : .
+ *  Parameters OUT  : .
+ *  Return Code     : . void
+ *  Comment         : . CLI Data Recv & Response Action
+**************************************************************************/
+/*----------------------------------------------------------------------*/
+void    Socket_Event_Rtn (void)
+/*----------------------------------------------------------------------*/
+{
+	Log (USR_OK, "Socket_Event_Rtn Ok");
+
+    return;
+}   /* End of Socket_Event_Rtn ()   */
+
+/*************************************************************************
+ *  Function        : . Data_Event_Rtn
+ *  Parameters IN   : .
+ *  Parameters OUT  : .
+ *  Return Code     : . int : result
+ *  Comment         : . SHM Data Processing
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+void		Data_Event_Rtn (void)
+/*----------------------------------------------------------------------*/
+{
+    int     rt, r_cnt, i, j;
+    char    tmp[128];
+
+    Make_Send_Msg (TR_DATA);
+
+    /* Device Send */
+    Device_Write ();
+    Set_TR_Time ();
+
+    while (1)
+    {
+        rt = read (INPUT_FD, tmp, sizeof(tmp));
+
+        if (rt == 0)
+            break;
+        else if (rt == -1)
+        {
+            if (SYS_NO == EINTR)
+                continue;
+            if (SYS_NO != 11)
+                Log (FIF_ERROR, "Poll:cannot read FIFO {%d:%s}", SYS_NO, SYS_STR);
+            break;
+        }
+    }
+
+    return;
+}   /* End of Data_Event_Rtn () */
+
+/*************************************************************************
+ *  Function        : .  Device_Open
+ *  Parameters IN   : .
+ *  Parameters OUT  : .
+ *  Return Code     : . void
+ *  Comment         : . Svm Line Status Set & TCPIP Poll fd set & LOGON
+                        Server Version
+**************************************************************************/
+/*----------------------------------------------------------------------*/
+void    Device_Open (void)
+/*----------------------------------------------------------------------*/
+{
+    int     rt, rval;
+
+	Sockfd = Socket ();
+
+	if (Sockfd < 0)
+	{
+		SLog (TCP_ERROR, "socket fail:Sockfd[%d] {%d:%s}",
+			Sockfd, SYS_NO, SYS_STR);
+		return;
+	}
+
+	SLog (USR_OK, "socket created:Sockfd[%d]", Sockfd);
+	SLog (USR_OK, "connecting to %s:%d", IpAddr, TCP2_PORT_NO);
+
+	rt = Connect (Sockfd, IpAddr, TCP2_PORT_NO);
+
+	if (rt < 0)
+	{
+		SLog (TCP_ERROR, "connect fail {%d:%s}", SYS_NO, SYS_STR);
+		close (Sockfd);
+		return;
+	}
+
+	OpenFlag = LogOnFlag = ON;
+
+	Poll[1].fd = Sockfd;
+	Poll[1].events = POLLIN;
+	SLog (TCP_OK, "TCP Connect & LOGON OK");
+
+    return;
+}   /* End of Device_Open ()    */
+
+/*************************************************************************
+ *  Function        : .  Device_Close
+ *  Parameters IN   : .
+ *  Parameters OUT  : .
+ *  Return Code     : . void
+ *  Comment         : . Svm Line Status Set
+ ************************************************************************/
+/*----------------------------------------------------------------------*/
+void    Device_Close (void)
+/*----------------------------------------------------------------------*/
+{
+    close (Sockfd);
+    close (Newfd);
+    Log (TCP_OK, "TCP device close");
+
+    LogOnFlag = OFF;
+    TCP2_LINE_ST = OpenFlag = OFF;
+
+    return;
+}   /* End of Device_Close ()   */
+
+/*************************************************************************
+ *  Function        : .  Device_Write
+ *  Parameters IN   : .
+ *  Parameters OUT  : .
+ *  Return Code     : . void
+ *  Comment         : . Tcpip Data Send
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+void    Device_Write (void)
+/*----------------------------------------------------------------------*/
+{
+    int     rt;
+
+    rt = Select_Send (Newfd, SendPkt, strlen (SendPkt));
+
+    if (rt != OK)
+    {
+        Log (TCP_ERROR, "TCP data send fail");
+        Device_Close ();
+    }
+
+    Log (TCP_OK, "TCP SD [%s](%d)<%d>", SendPkt, strlen (SendPkt), INT_SEQ);
+
+    return;
+}   /* End of Device_Write ()   */
+
+/*************************************************************************
+ *  Function        : .  Time_Out_Rtn
+ *  Parameters IN   : .
+ *  Parameters OUT  : .
+ *  Return Code     : . void
+ *  Comment         : . Timeout Control
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+void    Time_Out_Rtn (void)
+/*----------------------------------------------------------------------*/
+{
+    int     rt;
+    char    in_num[10];
+
+	Make_Send_Msg (TR_POLL);
+	Device_Write ();
+
+    return;
+}   /* End of Time_Out_Rtn ()   */
+
+/*************************************************************************
+    Function        : . Make_Send_Msg
+    Parameters IN   : . TR_TYPE
+    Parameters OUT  : .
+    Return Code     : .
+    Comment         : . Send data header making
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+void     Make_Send_Msg (int tr_code)
+/*----------------------------------------------------------------------*/
+{
+    int     r_cnt, data_length;
+    int     arry_cnt, arry_len, arry_dat;
+    char    d_time[16];
+
+    memset (SendPkt,	0,	sizeof (SendPkt));
+
+	if (tr_code == TR_POLL)
+	{
+		memcpy (SendPkt, "LK000000000", 11);
+		SendPkt[11] = (char)0xFF;
+	}
+	else			// DATA
+	{
+		memset (R_Fmt, 0, sizeof (FILE_BUFF_FORMAT) * MAX_CNT);
+		r_cnt = F_R (PS_R_1, (void *)R_Fmt, MAX_CNT);
+		if (r_cnt < 0 || r_cnt > MAX_CNT)
+		{
+			Log (SAM_FATAL, "F_R(PS_R_1) R cnt Err [%s] r_cnt[%d]", IDN(D_K,P_K,0), r_cnt);
+			Exit_Process ();
+		}
+		else if (r_cnt == 0)
+		{
+			return;
+		}
+		else
+		{
+/* TCP송신은 채권시세만 대상 */
+#if defined A7612
+			if (memcmp (&R_Fmt[0].Data, "A301K", 5) == 0)
+			{
+				memcmp (SendPkt, &R_Fmt[0].Data, sizeof(CO_A301K));
+				SendPkt[sizeof(CO_A301K)] = (char)0xFF;
+			}
+			else if (memcmp (&R_Fmt[0].Data, "G701K", 5) == 0)
+			{
+				memcmp (SendPkt, &R_Fmt[0].Data, sizeof(CO_G701K));
+				SendPkt[sizeof(CO_G701K)] = (char)0xFF;
+			}
+			else if (memcmp (&R_Fmt[0].Data, "B601K", 5) == 0)
+			{
+				memcmp (SendPkt, &R_Fmt[0].Data, sizeof(CO_B601K));
+				SendPkt[sizeof(CO_B601K)] = (char)0xFF;
+			}
+			else if (memcmp (&R_Fmt[0].Data, "A601K", 5) == 0)
+			{
+				memcmp (SendPkt, &R_Fmt[0].Data, sizeof(CO_A601K));
+				SendPkt[sizeof(CO_A601K)] = (char)0xFF;
+			}
+#elif defined A7613
+			if (memcmp (&R_Fmt[0].Data, "A701K", 5) == 0)
+			{
+				memcmp (SendPkt, &R_Fmt[0].Data, sizeof(CO_A701A));
+				SendPkt[sizeof(CO_A701A)] = (char)0xFF;
+			}
+			else if (memcmp (&R_Fmt[0].Data, "M401K", 5) == 0)
+			{
+				memcmp (SendPkt, &R_Fmt[0].Data, sizeof(CO_M401K));
+				SendPkt[sizeof(CO_M401K)] = (char)0xFF;
+			}
+#endif
+		}
+	}
+
+    return;
+}   /* End of Make_Send_Msg ()  */
+
+/*************************************************************************
+    Function        : . Set_Socket_Linger
+    Parameters IN   : . 
+    Parameters OUT  : .
+    Return Code     : .
+    Comment         : . set linger option on socket
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+void    Set_Socket_Linger (void)
+/*----------------------------------------------------------------------*/
+{
+    int     rt;
+    struct linger   ling;
+
+    /* close () returns after discarding any unsent data */
+    ling.l_onoff = 1;
+    ling.l_linger = 0;
+
+    rt = setsockopt (Newfd, SOL_SOCKET, SO_LINGER, (char *)&ling, sizeof(ling));
+    if (rt < 0)
+        Log (TCP_ERROR, "setsockopt SO_LINGER {%d:%s}", SYS_NO, SYS_STR);
+
+    return;
+}
+
+/*************************************************************************
+ *  End of Program (pa_7100_ts.c)
+ **************************************************************************/
+

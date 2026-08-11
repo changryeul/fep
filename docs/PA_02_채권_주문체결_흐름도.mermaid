@@ -1,0 +1,63 @@
+---
+title: PA 채권 주문/체결 흐름도
+---
+graph TD
+    KRX["KRX (채권 KTS)"]
+
+    subgraph ORDER["주문 경로"]
+        TS["pa_1101_ts\n채권주문송신\nType: TS2\n:37221"]
+        QR["pa_5001_qr\n채권주문큐관리"]
+        QS["pa_5201_qs\n채권주문확인송신"]
+    end
+
+    subgraph RESPONSE["응답 경로"]
+        TR["pa_1201_tr\n채권응답수신\nType: TR2\n:57221"]
+        MP_RESP["pa_1201_mp\n응답처리"]
+        MP_UNCH["pa_1291_mp\n미체결"]
+    end
+
+    subgraph EXECUTION["체결 경로"]
+        MP_EXEC["pa_1401_mp\n체결처리"]
+        MP_SUM["pa_1491_mp\n요약"]
+        MP_CALC["pa_1492_mp\n연산"]
+        QS_EXEC["pa_5401_qs\n채권체결송신"]
+    end
+
+    subgraph DROPCOPY["DP 경로"]
+        DP_TR["pa_1211_tr\n채권DP수신\n:61726"]
+        DP_TS["pa_8111_ts\n채권DP송신\n:32009"]
+    end
+
+    TS -->|"TCP :37221"| KRX
+    KRX -->|"TCP :57221"| TR
+    KRX -->|"TCP :61726"| DP_TR
+
+    TR -->|"FIFO"| MP_RESP
+    TR -->|"FIFO"| MP_EXEC
+    MP_RESP --> MP_UNCH
+
+    TS -->|"FIFO"| QS
+    QR -->|"DSHM"| TS
+
+    MP_EXEC --> MP_SUM
+    MP_EXEC --> MP_CALC
+
+    DP_TR -->|"FIFO"| DP_TS
+
+    subgraph OUTPUT["출력"]
+        CL_TX["pa_8101_ts\nClient송신\n:32001"]
+        HANDO["pa_9001_mp\n한도관리"]
+        AUTO["pa_50xxx_mp\nAuto전략 x40"]
+    end
+
+    MP_RESP -->|"FIFO"| CL_TX
+    MP_EXEC -->|"FIFO"| CL_TX
+    MP_EXEC -->|"FIFO"| HANDO
+    MP_UNCH -->|"DSHM"| AUTO
+    MP_EXEC -->|"DSHM"| AUTO
+    QS --> CL_TX
+    QS_EXEC --> CL_TX
+    DP_TS -->|":32009"| CL_TX
+
+    CL_RX["pa_8201_tr\nClient수신\n:32011"] -->|"DSHM"| QR
+    AUTO -->|"DSHM"| QR

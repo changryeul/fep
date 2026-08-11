@@ -1,0 +1,16 @@
+--recurse=yes
+--exclude=*.log
+--exclude=*.js
+--exclude=*.css
+--exclude=*.swp
+--exclude=*org*
+--exclude=*old*
+--exclude=*bak*
+--exclude=*back*
+--exclude=backup*
+--exclude=test
+--exclude=temp
+--exclude=git
+--exclude=fep
+--exclude=before
+--exclude=NEWMDS

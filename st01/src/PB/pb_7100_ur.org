@@ -1,0 +1,381 @@
+#define		_GLOBAL
+/*------------------------------------------------------------------------
+#	Module	: 파생 시세수신 (UDP)
+#	File	: pb_7100_ur.c
+------------------------------------------------------------------------*/
+
+/*------------------------------------------------------------------------
+	Header Files
+------------------------------------------------------------------------*/
+#include    "pa_struct.h"
+#include	"fep_fepp.h"
+
+/* 기본정보 채권KTS 시세 */
+/*
+#    A701K : 68  장운영TS
+#    M401K : 83, 장운영스캐쥴
+#
+#    B601K : 462 일반채권, 국고채권 우선호가
+#    A301K : 223 채권 체결
+#    G701K : 643 일반채권, 국고채권 체결 + 우선호가
+#    A601K : 57  채권 종목마감
+#    I2000 : 10  Polling, Log만 File은 처리안함
+*/
+#if defined B7102
+#define     DATA_SIZE       700
+#elif defined B7103
+#define     DATA_SIZE       100
+#endif
+
+#include    "buf_struct.h"
+
+/*------------------------------------------------------------------------
+	Constants and Structures
+------------------------------------------------------------------------*/
+#define		SVR_PORT_NO		UDP_PORT(D_K,P_K,0)
+#define		READ_BUF_SIZE	2048
+
+/* 시세 Seq 위치 Size */
+#define		S_H_SIZE		5								/* TR(5)	*/
+/* 기본마스터 Seq 위치 Size */
+#define		M_H_SIZE		27	/* TR(5) + SEQ(8) + JCNT(6) + DATE(8)	*/
+
+/*------------------------------------------------------------------------
+	Global Variables
+------------------------------------------------------------------------*/
+int		Sockfd, FIFO_fd, tot_cq;
+int		Idx, Che_Gbn;
+struct	ip_mreq     mreq;
+char	TrCode[8], ApType[10], Order_St[512];
+struct sockaddr_in	SvrAddr, ClntAddr;
+
+/*------------------------------------------------------------------------
+	Function Prototypes
+------------------------------------------------------------------------*/
+void	PB_7100_UR (void);
+int     Init_Parameters (void);
+int		Socket_Connect (void);
+int		Recv_Data (char *);
+int		Add_Count_UR (void);
+int		Add_Count_DD (char *);
+
+/*----------------------------------------------------------------------*/
+int		main (int argc, char *argv[])
+/*----------------------------------------------------------------------*/
+{
+	Init_Proc (argc, argv);
+	PB_7100_UR ();
+	Exit_Process ();
+}	/* End of main ()	*/
+
+/*----------------------------------------------------------------------*/
+void	PB_7100_UR (void)
+/*----------------------------------------------------------------------*/
+{
+	char	m_time[24];
+	char	Wdt[30], W2_Fmt[512];
+	char 	r_buf[READ_BUF_SIZE];
+	int		tr_gbn, rt, len, skip_rt;
+
+	BUFF_RW_HEAD		f_head;
+	FILE_BUFF_FORMAT    W_Fmt;
+
+	rt = Init_Parameters ( );
+	if (rt == NOTOK)
+		return;
+
+	rt = Socket_Connect ();
+	if (rt == NOTOK)
+		return;
+
+	Log (USR_OK, "socket connected:port[%d]", SVR_PORT_NO);
+
+	while (START_S != JOB_END)
+	{
+/* 20211022
+		Stat_Save ();
+*/
+		memset (r_buf, 0, sizeof (r_buf));
+
+		rt = Recv_Data (r_buf);
+
+		if (rt == 0)
+		{
+			Log (USR_OK, "poll timeout");
+			continue;
+		}
+		else if (rt < 0)
+		{
+			Log (UDP_ERROR, "receive fail {%d:%s}", SYS_NO, SYS_STR);
+			close (Sockfd);
+
+			rt = Socket_Connect ();
+
+			if (rt == NOTOK)
+				return;
+
+			continue;
+		}
+
+		memset (TrCode, 0, sizeof (TrCode));			/* TRCODE 저장	*/
+		sprintf (TrCode, "%-2.2s", r_buf);
+
+		if ((memcmp (TrCode, "A3", 2) == 0)	||
+			(memcmp (TrCode, "G7", 2) == 0)	||
+			(memcmp (TrCode, "B6", 2) == 0)	||
+			(memcmp (TrCode, "M4", 2) == 0)	)
+		{
+			/* File Write */
+			memset (&W_Fmt, 0x20, sizeof (FILE_BUFF_FORMAT));
+
+			/* write to DD file	*/
+			ItoAf (O_W_CNT1 + 1, W_Fmt.If_Seq,	sizeof (W_Fmt.If_Seq));
+			memcpy (W_Fmt.ApType, ApType,		sizeof (W_Fmt.ApType));
+			memcpy (W_Fmt.ResponseCode, RES_NORMAL, strlen (RES_NORMAL));
+			memcpy (W_Fmt.RecvTime1, m_time,	sizeof (W_Fmt.RecvTime1));
+			memcpy (W_Fmt.RecvTime2, &m_time[sizeof(W_Fmt.RecvTime1)],
+												sizeof (W_Fmt.RecvTime2));
+
+			memset (W_Fmt.DataHeader, 0x20, 20+DATA_SIZE);
+			memcpy (W_Fmt.Data, r_buf, strlen(r_buf));
+			W_Fmt.LineFeed[0] = '\n';
+
+			rt = F_W (TS_W1_1, (void *)&W_Fmt, 1);
+			if (rt != 1)
+			{
+				Log (SAM_FATAL, "file write fail[%s] rt[%d]", OFN(D_K,P_K,0), rt);
+					close (Sockfd);
+					return;
+			}
+
+			Add_Count_DD (TrCode);
+		}
+	}
+
+	return;
+}	/* End of PB_7100_UR ()	*/
+
+/*************************************************************************
+    Function        : . Init_Parameters
+    Parameters IN   : .
+    Parameters OUT  : .
+    Return Code     : . int
+    Comment         : . All Program Parameters Init
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+int    Init_Parameters ()
+/*----------------------------------------------------------------------*/
+{
+	int         i, j, rt, flag;
+	char        item_code[20], memberitem[10], tmp[128];
+	char        d_time[16], head_size[10], cli_orsnd[21];
+	char		fifo_name[100], bumun[4], m_time[24];
+
+	sprintf (ApType, "%-2.2s%-4.4s%-2.2s", _Exe_Name, _Exe_Name+3, _Exe_Name+8);
+	LtoU (ApType, strlen (ApType));
+
+	/* 누적체결수량 */
+	tot_cq = 0;
+
+	return (OK);
+}   /* End of Init_Parameters ()    */
+
+/*************************************************************************
+	Function		: . Socket_Connect
+	Parameters IN	: .
+	Parameters OUT	: .
+	Return Code		: . int (0:success, -1:failure)
+	Comment			: . connect to a socket
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+int		Socket_Connect (void)
+/*----------------------------------------------------------------------*/
+{
+	int 	rt, val, len;
+
+	char	ip_addr[16];
+
+	sprintf(ip_addr, "%d.%d.%d.%d", UDP_IP1(D_K,P_K,0), UDP_IP2(D_K,P_K,0),
+									UDP_IP3(D_K,P_K,0), UDP_IP4(D_K,P_K,0));
+
+	Log(USR_OK, "Ip_Addr -> [%s]", ip_addr);
+
+	bzero ((unsigned char *)&SvrAddr, sizeof (SvrAddr));
+	SvrAddr.sin_family         = AF_INET;
+/* 202108
+    SvrAddr.sin_addr.s_addr    = inet_addr (ip_addr);
+*/
+    inet_pton(AF_INET, ip_addr, &SvrAddr.sin_addr.s_addr);
+	SvrAddr.sin_port           = htons (SVR_PORT_NO);
+
+	bzero ((unsigned char *)&mreq, sizeof (mreq));
+	mreq.imr_multiaddr          = SvrAddr.sin_addr;
+	mreq.imr_interface.s_addr   = htonl(INADDR_ANY);
+
+	Sockfd = socket (AF_INET, SOCK_DGRAM, 0);
+
+	if (Sockfd < 0)
+	{
+		Log (UDP_FATAL, "socket open fail {%d:%s}", SYS_NO, SYS_STR);
+		return (NOTOK);
+	}
+
+	/* 2011.03 시세수신 증속에 따른 버퍼량 증가 */
+	/* val = 262144; 256K, 524288(512K)	*/
+#if 0
+	val = 524288;												/* 512K	*/
+#endif
+	val = 1228800;												/* 1228800K	*/
+	len = sizeof (val);
+
+	//rt = setsockopt (Sockfd, SOL_SOCKET, SO_RCVBUF, (char *)&val, len);
+	rt = setsockopt (Sockfd, SOL_SOCKET, SO_REUSEADDR, (char *)&val, len);
+	if (rt == -1)
+	{
+		Log (UDP_WARN, "setsockopt (SO_RCVBUF) fail {%d:%s}", SYS_NO, SYS_STR);
+		return (NOTOK);
+	}
+
+	if (bind (Sockfd, (struct sockaddr *)&SvrAddr, sizeof (SvrAddr)) < 0)
+	{
+		Log (UDP_FATAL, "bind fail {%d:%s}", SYS_NO, SYS_STR);
+		return (NOTOK);
+	}
+
+	rt = setsockopt(Sockfd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
+	if (rt == -1)
+	{
+		Log (UDP_WARN, "setsockopt (MULTICAST[%d]) fail {%d:%s}", mreq, SYS_NO, SYS_STR);
+		return (NOTOK);
+	}
+
+	return (OK);
+}	/* End of Socket_Connect ()	*/
+
+/*************************************************************************
+	Function		: . Recv_Data
+	Parameters IN	: .
+	Parameters OUT	: . p_str	: receive buffer
+	Return Code		: . int (0:timeout, -1:failure, >0:number of bytes received)
+	Comment			: . receive data
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+int		Recv_Data (char *p_str)
+/*----------------------------------------------------------------------*/
+{
+	int				rt, len;
+#if defined __linux
+	fd_set	read_set;
+#else
+	struct fd_set	read_set;
+#endif
+	struct timeval	timeout;
+
+	len = sizeof (ClntAddr);
+
+	FD_ZERO (&read_set);
+	FD_SET (Sockfd, &read_set);
+	timeout.tv_sec = 70;
+	timeout.tv_usec = 0;
+
+	rt = select (Sockfd+1, &read_set, NULL, NULL, &timeout);
+
+	if (rt < 0)
+	{
+	Log (SYS_FATAL, "select fail {%d:%s}", SYS_NO, SYS_STR);
+		return (NOTOK);
+	}
+
+	if (FD_ISSET (Sockfd, &read_set))
+	{
+#if defined __linux
+		rt = recvfrom (Sockfd, p_str, READ_BUF_SIZE, 0,
+			(struct sockaddr *)&ClntAddr, (socklen_t *)&len);
+#else
+		rt = recvfrom (Sockfd, p_str, READ_BUF_SIZE, NULL,
+			(struct sockaddr *)&ClntAddr, (socklen_t *)&len);
+#endif
+		return (rt);
+	}
+
+	return (OK);
+}	/* End of Recv_Data ()	*/
+
+/*************************************************************************
+	Function		: . Add_Count_UR
+	Parameters IN	: .
+	Parameters OUT	: .
+	Return Code		: . int (-1:failure, 0:not used, >0:data length)
+	Comment			: . add receive count
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+int		Add_Count_UR (void)
+/*----------------------------------------------------------------------*/
+{
+	int		rt;
+	int		i;
+
+	rt = NOTOK;
+	T_K = NOTOK;
+
+	for (i = 0; i < DAEMON(D_K).sisetr_count; i ++)
+	{
+		if (SISETR(D_K,i).tr[0] == '\0')
+			break;
+
+		if (memcmp (SISETR(D_K,i).tr, TrCode, 5) == 0)
+		{
+			if (SISETR(D_K,i).queue == 0)					/* not used	*/
+			{
+				rt = 0;
+				break;
+			}
+			else
+			{
+				SISETR(D_K,i).ur_count ++;
+
+				T_K = i;
+				rt = SISETR(D_K,T_K).length;
+				break;
+			}
+		}
+	}
+
+	return (rt);
+}	/* End of Add_Count_UR ()	*/
+
+/*************************************************************************
+	Function		: . Add_Count_DD
+	Parameters IN	: . tr	: TR code
+	Parameters OUT	: .
+	Return Code		: . void
+	Comment			: . add divide count
+*************************************************************************/
+/*----------------------------------------------------------------------*/
+int		Add_Count_DD (char *p_tr)
+/*----------------------------------------------------------------------*/
+{
+    int         rt = NOTOK;
+    register int   i;
+
+    for (i = 0; i < DAEMON(D_K).sisetr_count; i ++)
+    {
+        if (SISETR(D_K,i).tr[0] == '\0')
+            break;
+
+        if (memcmp (SISETR(D_K,i).tr, p_tr, strlen (p_tr)) == 0)
+        {
+            SISETR(D_K,i).dd_count ++;
+
+            rt = SISETR(D_K,i).length;
+            break;
+        }
+    }
+
+    return (rt);
+}	/* End of Add_Count_DD ()	*/
+
+/*************************************************************************
+	End of program (pb_7100_ur.c)
+*************************************************************************/ 
+

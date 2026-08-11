@@ -1,0 +1,544 @@
+/*#####################################################################
+// JPM 에서 NDF 를 거래하기 위한 시세 수신 및 전송
+//#######################################################################*/
+#include <sys/syscall.h>
+
+#include "agfix.h"
+#include "comdef.h"
+#include "wfaapi.h"    // 실시간전송(Client)
+#include "axsnd.h"
+#include "mymq.h"
+#include "agxpi.h"
+#include "agtrc.h"
+#include "comrdb.h"
+#include "comhdr.h"
+#include "comfun.h"
+#include "killmon.h"
+#include "quelog.h"
+
+#include "mds2.h"
+#include "agdef.h"
+
+char	*whoami = "ndfmds";
+
+MARKET	market;
+E_MSG	e_msg;      // Error Message info
+
+AG_FIX		s_afix;
+Ag_Fix		s_xfix;
+TFILE		s_trcf;
+TFile	_trcf_	=  (TFile) &s_trcf;
+
+KILLMON_T		*root;
+KILL_SWITCH_T	*pk=NULL;
+
+/* move to mds2.h
+typedef struct {
+	char		symb			[ 6];		// symbol
+	char		kymd			[ 8];		// korean trading time
+	char		khms			[ 6];		// korean trading time
+	double		bid				;
+	double		ask				;
+	double		vbid			;
+	double		vask			;
+	char		cbid			[ 1];		// 매수호가 색상('+', '-', ' ')
+	char		cask			[ 1];		// 매도호가 색상('+', '-', ' ')
+	char		valuedate		[ 8];		// valuedate
+	char		fixingdate		[ 8];		// fixingdate
+} NDFMAST;
+
+typedef struct {
+	char		type			[ 2];		// must be 'FD'
+	char		rdcode			[20];		// NUSDKRW
+	char		excode			[ 1];		// 'J':JPM
+	char		symb			[10];		// USDKRW
+	char		kymd			[ 8];		// korean trading time
+	char		khms			[ 6];		// korean trading time
+	char		cpask			[ 1];		// 매도호가 색상('+', '-', ' ')
+	char		pask			[20];		// ask
+	char		cpbid			[ 1];		// 매수호가 색상('+', '-', ' ')
+	char		pbid			[20];		// bid
+	char		vask			[20];		// ask size
+	char		vbid			[20];		// bid size
+	char		valuedate		[ 8];		// Fixing Date
+	char		fixingdate		[ 8];		// Value Date
+} NDFSISE_1;
+#define		SZ_NDFSISE		sizeof(NDFSISE)
+*/
+
+// 24.10.17) 실시간타입 신규(FD)로 하였으나 화면까지 전송 실패하여, 기존 시세 실시간 구조체(CUSTSISE) 와 타입(FA) 그대로 사용
+typedef		CUSTSISE		NDFSISE;
+#define		SZ_NDFSISE		sizeof(CUSTSISE)
+
+NDFMAST		*gmast=NULL;
+
+void exitproc(int );
+int update_mast(NDFMAST *pr, NDFSISE *ps);
+static int conv_JPM(char *pbuff, int dlen, NDFMAST *psise);
+
+/*===============================================================
+ * EXITPROC
+===============================================================*/
+void exitproc(int exitval)
+{
+	printf("\nProgram Terminated.. exitval[%d]\n\n", exitval);
+	
+	exit(exitval);
+}
+
+/*===============================================================
+ * MAIN PROCESS
+===============================================================*/
+int main(int argc, char *argv[])
+{
+	int		ii, rc, rport=(-1);	
+	char	procnm[40];
+	
+	memset(procnm,	0x00, sizeof(procnm));
+
+	/*===============================================================
+	 * PROCESS 초기화
+	===============================================================*/
+	for (ii=1; ii < argc; ii++)
+	{
+		if (strncmp(argv[ii], "-p", 2) == 0)		// 시세수신포트 
+		{
+			rport = atoi(&argv[ii][2]);
+		}
+	}
+
+	if (rport <= 0)		exitproc(-1);
+
+	memset(&market, 0x00, sizeof(market));
+
+	strcpy(market.procname, whoami);
+	market.ctx.llog = LOG_DEBUG;
+
+	memset(&e_msg,  0x00, E_MSG_SZ);
+	strcpy(e_msg.pname, whoami);
+
+	mds_log(&market, MLOG_MUST, "Start....!");
+
+	root = InitKillMon();
+	if(root == NULL) // 실패
+	{
+		mds_log(&market, MLOG_ERROR, "InitKillMon() Failed!");
+		exitproc(-2);
+	}
+	sprintf(procnm, "%s", market.procname);
+	pk = AddKillMon(root, procnm);
+	if(pk == NULL) // 실패
+	{
+		mds_log(&market, MLOG_ERROR, "AddKillMon() %s Failed!", market.procname);
+		exitproc(-3);
+	}
+	mds_log(&market, MLOG_MUST, "AddKillMon() %s Success!", market.procname);
+	strcpy(pk->pdesc, "NDF 시세수신");
+
+	pk->priority = 8100;
+
+	signal(SIGTERM, exitproc);
+//	signal(SIGINT , exitproc);
+//	signal(SIGQUIT, exitproc);
+
+	/*===============================================================
+	 * SHARED MEMORY 초기화
+	===============================================================*/
+	int 	shmid;
+	int		shmsz;
+	struct  shmid_ds shmid_ds;
+
+	// SharedMemory : WGMST + WGREQ[MX_WGREQ]
+	shmsz = sizeof(NDFMAST);
+
+	if ((shmid = shmget(DF_SHMKEY_NDF, 0, 0666)) >= 0)
+	{
+		shmctl(shmid, IPC_STAT, &shmid_ds);
+		if (shmid_ds.shm_segsz != shmsz) {
+			shmctl(shmid, IPC_RMID, &shmid_ds);
+			mds_log(&market, MLOG_ERROR, "(%s) shared memory delete..", __func__);
+		}
+	}
+
+	shmid = shmget(DF_SHMKEY_NDF, shmsz, 0666|IPC_CREAT);
+	if (shmid < 0)
+	{
+		mds_log(&market, MLOG_ERROR, "(%s) create shared memory error (%d/%s)", __func__, errno, strerror(errno));
+		exitproc(-4);
+	}
+
+	gmast = (NDFMAST *)shmat(shmid, NULL, 0);
+	if (gmast == NULL)
+	{
+		mds_log(&market, MLOG_ERROR, "(%s) shared memory attach error (%d/%s)", __func__, errno, strerror(errno));
+		exitproc(-5);
+	}
+
+	// 실행 시 매번 초기화 (FixingDate, ValueDate 변경되면 초기화)
+	memset(gmast, 0x00, sizeof(NDFMAST));
+
+	/*===============================================================
+	 * FIX 전문 변환용 로컬메모리 초기화
+	===============================================================*/
+	// init log file
+	rc = agxpi_tfile_vinit (_trcf_, LOG_DIR, AG_NULL, AG_HOME, TRC_DIR, AGINI_GID, AGINI_SGI, AGINI_MYI,TDAT, DALL);
+	agtrc_open (AG_NULL, _trcf_);
+	
+	// start message
+//	agtrc_msg (_trcf_, AGINI_GID, AGINI_SGI, AGINI_MYI, 0, 0, TDBG, "fixgetval START\n");
+	mxzinit(s_afix);
+	s_xfix = (Ag_Fix) &s_afix;
+
+	rc = agfix_at (s_xfix, AFIX_MAT_INIT);
+	if (rc)
+	{
+		mds_log(&market, MLOG_ERROR, "(%s) agfix_at ERROR-R:%d E:%d ...\n", __func__, rc, errno);
+		exitproc(-6);
+	}
+
+// ★TODO-04 : 실행 시 옵션에 따른 동작 구분
+//  > DB처리는 CUST 만 
+	/*===============================================================
+	 * UDP 서버기동 : 수신준비
+	  > ctx->sock 을 로컬변수로 변경
+	===============================================================*/
+	int		r_sock, bsize, options = 1;
+	struct	sockaddr_in svrsock, clisock;
+	struct	ip_mreq ip_mreq;
+	socklen_t socklen = sizeof(svrsock);
+	
+	size_t	stacksize;
+	in_addr_t addr, f, t;
+	pthread_attr_t attr;
+
+	memset(&svrsock, 0, sizeof(svrsock));
+	memset(&clisock, 0, sizeof(clisock));	
+
+	// broadcasting or unicasting
+	if ((r_sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
+	{
+		mds_log(&market, MLOG_ERROR, "Cannot open a socket for a port %d", rport);
+		exitproc(-7);
+	}
+
+	svrsock.sin_family = AF_INET;
+	svrsock.sin_addr.s_addr = INADDR_ANY;
+	svrsock.sin_port = htons(rport);
+	options = 1;
+	setsockopt(r_sock, SOL_SOCKET, SO_REUSEADDR, &options, sizeof(options));
+
+	if (bind(r_sock, (struct sockaddr *)&svrsock, sizeof(svrsock)) != 0)
+	{
+		mds_log(&market, MLOG_ERROR, "Cannot bind a socket for a port %d", rport);
+		close(r_sock);
+		exitproc(-8);
+	}
+	mds_log(&market, MLOG_MUST, "Start to receive from UDP port %d", rport);
+
+	bsize = 1024 * 1024;
+	setsockopt(r_sock, SOL_SOCKET, SO_RCVBUF, &bsize, sizeof(int));
+
+	// 소켓타임아웃 설정
+	struct timeval	tmout;
+
+	tmout.tv_sec  = 5;
+	tmout.tv_usec = 0;
+	if (setsockopt(r_sock, SOL_SOCKET, SO_RCVTIMEO, &tmout, sizeof(tmout)) != 0)
+	{
+		mds_log(&market, MLOG_ERROR, "setsockopt timeout error [%s]", strerror(errno));
+		close(r_sock);
+		exitproc(-9);
+	}
+
+	/*===============================================================
+	 * MAIN PROCESS (시세수신)
+	  > UDP 수신 처리는 멀티쓰레드가 아니므로 main() 내에서 처리함
+	===============================================================*/
+	int		rtn, dlen;
+	char	rbuff[MAX_PACKET_SIZE+512];	// FIX DATA
+	NDFMAST		rsise;
+	NDFSISE		*psise;
+	struct pushdata		pushdata;
+
+	while (1)
+	{
+		/*===============================================================
+		 * UDP 시세 수신
+		===============================================================*/
+		memset(rbuff, 0x00, sizeof(rbuff));
+		
+		dlen = recv(r_sock, rbuff, sizeof(rbuff), 0);
+		if (dlen < 0)
+		{
+			if (errno == EINTR || errno == EAGAIN)		continue;
+
+			break;
+		}
+
+		/*===============================================================
+		 * FIX FORMAT CONVERT
+		===============================================================*/
+		memset(&rsise, 0x00, sizeof(NDFMAST));
+
+		memset(&pushdata, 0x00, sizeof(struct pushdata));
+		psise = (NDFSISE *)(pushdata.pushmsg.msgb);
+
+		rtn = conv_JPM(rbuff, dlen, &rsise);
+		if (rtn != 0)
+		{
+			mds_log(&market, MLOG_WARNING, "Receive Data Convert Error (%d)", rtn);
+			continue;
+		}
+
+//mds_log(&market, 0, "RCV [%.6s:%.6s] [%g:%g] [%.f:%.f] [%.8s:%.8s]", rsise.symb, rsise.khms, rsise.bid, rsise.ask, rsise.vbid, rsise.vask, rsise.bestvbid, rsise.bizdate);
+
+		rtn = update_mast(&rsise, psise);
+		
+		if (rtn)	// BID, ASK 호가가 따로 내려오기 때문에 양쪽이 다 있는 경우만 실시간 전송
+		{
+			sprintf(pushdata.pushmsg.symb, "N%.6s", psise->symb);		// NUSDKRW
+			pushdata.mkid			= 30;			// market id
+			pushdata.pushmsg.mask	= PUSH_QUOT;	// event mask
+			pushdata.pushmsg.type	= 'A';
+			pushdata.pushmsg.msgl	= (SZ_NDFSISE > MAX_PUSH_LEN ? MAX_PUSH_LEN : SZ_NDFSISE);
+			
+			// SEND REAL TO MYMQ
+			int iret = myrq_push(&pushdata);
+            if (iret < 0)
+				mds_log(&market, 0, "myrq_push Error [%d]", iret);
+
+mds_log(&market, 0, "myrq_push [%.*s/%.*s/%.*s/%.*s/%.*s/%.*s/%.*s/%.*s/%.*s/%.*s/%.*s/%.*s/%.8s/%.8s]"
+,sizeof(psise->type), psise->type			
+,sizeof(psise->rdcode), psise->rdcode		
+,sizeof(psise->excode), psise->excode		
+,sizeof(psise->symb), psise->symb			
+,sizeof(psise->kymd), psise->kymd			
+,sizeof(psise->khms), psise->khms			
+,sizeof(psise->cpask), psise->cpask	
+,sizeof(psise->pask), psise->pask			
+,sizeof(psise->cpbid), psise->cpbid	
+,sizeof(psise->pbid), psise->pbid			
+,sizeof(psise->vask), psise->vask			
+,sizeof(psise->vbid), psise->vbid			
+,psise->bestvbid	
+,psise->bizdate);
+
+		}
+	}
+
+	mds_log(&market, MLOG_ERROR, "UDP 시세수신 BREAK. Call Termination function..");
+	
+	close(r_sock);
+
+	exitproc(-99);
+}
+
+/*===============================================================
+ * 마스트메모리 업데이트 후 실시간 패킷 세팅
+===============================================================*/
+int update_mast(NDFMAST *pr, NDFSISE *ps)
+{
+	int		rc=0;
+	int		ii;
+
+	// valuedate나 fixingdate 가 변경되면 전체 클리어.
+	if (memcmp(gmast->symb,       pr->symb,       sizeof(gmast->symb))       != 0 ||
+		memcmp(gmast->valuedate,  pr->valuedate,  sizeof(gmast->valuedate))  != 0 ||
+		memcmp(gmast->fixingdate, pr->fixingdate, sizeof(gmast->fixingdate)) != 0)
+	{
+		memset(gmast, 0x00, sizeof(NDFMAST));
+
+		memcpy(gmast->symb,       pr->symb,       sizeof(gmast->symb));
+		memcpy(gmast->valuedate,  pr->valuedate,  sizeof(gmast->valuedate));
+		memcpy(gmast->fixingdate, pr->fixingdate, sizeof(gmast->fixingdate));
+
+		mds_log(&market, MLOG_ERROR, "memory reset for new code [%.6s] [%.8s:%.8s]\n", gmast->symb, gmast->valuedate, gmast->fixingdate);
+	}
+
+	memcpy(gmast->kymd, pr->kymd, sizeof(gmast->kymd));
+	memcpy(gmast->khms, pr->khms, sizeof(gmast->khms));
+	
+	if (pr->bid > 0)
+	{
+		// 대비부호는 직전 호가와 비교
+		gmast->cbid[0] = (pr->bid > gmast->bid ? '+' : (pr->bid < gmast->bid ? '-' : '='));
+		gmast->bid  = pr->bid;
+		gmast->vbid = pr->vbid;
+	}
+
+	if (pr->ask > 0)
+	{
+		// 대비부호는 직전 호가와 비교
+		gmast->cask[0] = (pr->ask > gmast->ask ? '+' : (pr->ask < gmast->ask ? '-' : '='));
+		gmast->ask  = pr->ask;
+		gmast->vask = pr->vask;
+
+// ◆◆◆◆ CHECK : 호가가 두번 내려오는데.. ask 가 항상 뒤에 온다고 가정하고. ask 수신 시에만 실시간 전송
+		if (gmast->bid > 0)		rc = 1;
+	}
+
+	// BID, ASK 모두 수신된 상태가 아니면 리턴
+	//if (gmast->bid <= 0 || gmast->ask <= 0)		return (0);
+	if (!rc)	return (rc);
+	
+	for (ii = 0; ii < 5; ii++)
+	{	
+		gmast->book[ii].cbid[0] = (pr->book[ii].pbid > gmast->book[ii].pbid ? '+' : (pr->book[ii].pbid < gmast->book[ii].pbid ? '-' : '='));
+		gmast->book[ii].pbid = pr->book[ii].pbid;
+		gmast->book[ii].vbid = pr->book[ii].vbid;
+		gmast->book[ii].cask[0] = (pr->book[ii].pask > gmast->book[ii].pask ? '+' : (pr->book[ii].pask < gmast->book[ii].pask ? '-' : '='));
+		gmast->book[ii].pask = pr->book[ii].pask;	
+		gmast->book[ii].vask = pr->book[ii].vask;
+	}
+
+	// 실시간 패킷 세팅
+	char	stemp[32];
+
+	MEMCPY(ps->type, "FA");
+	ps->excode[0] = 'J';
+
+	ps->cpbid[0] = gmast->cbid[0];
+	ps->cpask[0] = gmast->cask[0];
+	
+	memcpy(ps->symb,       gmast->symb,       sizeof(gmast->symb));		// mast symb 가 더 작다 
+	memcpy(ps->kymd,       gmast->kymd,       sizeof(ps->kymd));
+	memcpy(ps->khms,       gmast->khms,       sizeof(ps->khms));
+
+	// 24.10.17) 실시간타입 신규(FD)로 하였으나 화면까지 전송 실패하여, 기존 시세 실시간 구조체(CUSTSISE) 와 타입(FA) 그대로 사용
+//	memcpy(ps->valuedate,  gmast->valuedate,  sizeof(ps->valuedate));
+//	memcpy(ps->fixingdate, gmast->fixingdate, sizeof(ps->fixingdate));
+	memcpy(ps->bestvbid,   gmast->valuedate,  sizeof(gmast->valuedate));		// 마지막 두개 필드를 일자로 활용
+	memcpy(ps->bizdate,    gmast->fixingdate, sizeof(gmast->fixingdate));
+
+	MXZINIT(stemp); sprintf(stemp, "N%.6s",	gmast->symb); MEMCPY(ps->rdcode, stemp);
+	MXZINIT(stemp); sprintf(stemp, "%.8f", gmast->bid); MEMCPY(ps->pbid, stemp);
+	MXZINIT(stemp); sprintf(stemp, "%.f", gmast->vbid); MEMCPY(ps->vbid, stemp);
+	MXZINIT(stemp); sprintf(stemp, "%.8f", gmast->ask); MEMCPY(ps->pask, stemp);
+	MXZINIT(stemp); sprintf(stemp, "%.f", gmast->vask); MEMCPY(ps->vask, stemp);
+
+	for (ii = 0; ii < 5; ii++)
+	{
+		ps->book[ii].cpbid[0] = gmast->book[ii].cbid[0];
+		MXZINIT(stemp); sprintf(stemp, "%.8f", gmast->book[ii].pbid); MEMCPY(ps->book[ii].pbid, stemp);
+		MXZINIT(stemp); sprintf(stemp, "%.f", gmast->book[ii].vbid); MEMCPY(ps->book[ii].vbid, stemp);
+		ps->book[ii].cpask[0] = gmast->book[ii].cask[0];
+		MXZINIT(stemp); sprintf(stemp, "%.8f", gmast->book[ii].pask); MEMCPY(ps->book[ii].pask, stemp);
+		MXZINIT(stemp); sprintf(stemp, "%.f", gmast->book[ii].vask); MEMCPY(ps->book[ii].vask, stemp);
+	}
+
+	return (rc);
+}
+
+/*===============================================================
+ * 수신한 FIX 데이터를 내부 포맷으로 전환
+===============================================================*/
+static int conv_JPM(char *pbuff, int dlen, NDFMAST *p)
+{
+	int		ii, rc, nrec;
+	uint32_t	ymd, hms;
+	char    type[DF_2], strval[64], strval2[64];
+	char	symbol[7+1];
+	char	sSymb[7+1];
+	char	sPBid[20];
+	char	sVBid[20];
+	char	sPAsk[20];
+	char	sVAsk[20];
+	char	sValueDt[8+1];
+	char	sFixDt[8+1];
+	struct tm *lt;
+
+// ★TODO-08 : 데이터 원천에 따라 FIX패킷 Convert 시 분기로직 추가 : sise_fix2ecm()
+	AFIX_TOK_SETVATINT(s_xfix, MsgSeqNum,				AG_ZERO, (double) EOF);
+	AFIX_TOK_SETVATINT(s_xfix, LastMsgSeqNumProcessed,	AG_ZERO, (double) EOF);
+	AFIX_TOK_SETVATINT(s_xfix, BeginSeqNo,				AG_ZERO, (double) EOF);
+	AFIX_TOK_SETVATINT(s_xfix, EndSeqNo,				AG_ZERO, (double) EOF);
+	AFIX_TOK_SETVATINT(s_xfix, NewSeqNo,				AG_ZERO, (double) EOF);
+
+	agfix_token_cls(s_xfix);
+	agfix_set_define_leg (s_xfix, NoMDEntries, AG_ZERO, (int *) AG_NULL, (int *) AG_NULL, (double) EOF);
+	
+	pbuff[dlen] = 0x00;
+	rc = agfix_dec (s_xfix, pbuff, dlen+1, SOH, EQU, AG_ZERO);		
+	if (rc) 
+ 	{
+		mds_log(&market, MLOG_WARNING, "[%s] agfix_dec error (%d) [%d:%s]",__func__, rc, dlen, pbuff);
+		return (-1);
+	}
+
+	struct timeb itb;
+	ftime(&itb);
+
+	lt = localtime(&itb.time);
+	MXZINIT(strval); sprintf (strval, "%04d%02d%02d", lt->tm_year+1900, lt->tm_mon+1, lt->tm_mday);
+	MEMCPY(p->kymd, strval);
+
+	MXZINIT(strval); sprintf (strval, "%02d%02d%02d", lt->tm_hour, lt->tm_min, lt->tm_sec);
+	MEMCPY(p->khms, strval);
+	//AFIX_TOK_GETSTR (s_xfix, SendingTime, AG_ZERO, g_time);	
+
+	nrec = AG_ZERO;
+	rc = AFIX_TOK_GETINT (s_xfix, NoMDEntries, AG_ZERO, nrec);
+	if (rc != AG_OK)	nrec = AG_ONE;
+
+	for (ii = 0; ii < nrec; ii++)
+	{
+		MXZINIT(symbol);
+		rc = AFIX_TOK_GETSTR (s_xfix, Symbol, ii, symbol);
+		if (rc != AG_OK)
+		{
+			mds_log(&market, MLOG_WARNING, "[%s] AFIX_TOK_GETSTR error (%d) [%d:%s]",__func__, rc, dlen, pbuff);
+			return (-1);
+		}
+		sprintf(sSymb, "%.3s%.3s", symbol, &symbol[4]);
+
+		MXZINIT(type); 
+		AFIX_TOK_GETSTR (s_xfix, MDEntryType, ii, type);
+
+		switch (type[0])
+		{
+		case '0' :
+			MXZINIT(sPBid); AFIX_TOK_GETSTR(s_xfix, MDEntryPx, ii, sPBid);
+			MXZINIT(sVBid); AFIX_TOK_GETSTR(s_xfix, MDEntrySize, ii, sVBid);
+			MXZINIT(strval); MXZINIT(sValueDt); AFIX_TOK_GETSTR(s_xfix, 9006, ii, strval); // YYYY-MM-DD 형태임
+			sprintf(sValueDt, "%.4s%.2s%.2s", strval, &strval[5], &strval[8]);
+			MXZINIT(strval); MXZINIT(sFixDt); AFIX_TOK_GETSTR (s_xfix, 6203, ii, strval);
+			sprintf(sFixDt, "%.4s%.2s%.2s", strval, &strval[5], &strval[8]);
+
+			break;
+
+		case '1' :
+			MXZINIT(sPAsk); AFIX_TOK_GETSTR(s_xfix, MDEntryPx, ii, sPAsk);
+            MXZINIT(sVAsk); AFIX_TOK_GETSTR(s_xfix, MDEntrySize, ii, sVAsk);
+            MXZINIT(strval); MXZINIT(sValueDt); AFIX_TOK_GETSTR(s_xfix, 9006, ii, strval); // YYYY-MM-DD 형태임
+            sprintf(sValueDt, "%.4s%.2s%.2s", strval, &strval[5], &strval[8]);
+            MXZINIT(strval); MXZINIT(sFixDt); AFIX_TOK_GETSTR (s_xfix, 6203, ii, strval);
+            sprintf(sFixDt, "%.4s%.2s%.2s", strval, &strval[5], &strval[8]);
+			
+			break;
+		}
+
+		if (ii == 0)
+		{
+			MEMCPY(p->symb, sSymb);
+			p->bid = atof(sPBid);
+			p->ask = atof(sPAsk);
+			p->vbid = atof(sVBid);
+			p->vask = atof(sVAsk);
+			MEMCPY(p->valuedate, sValueDt);
+			MEMCPY(p->fixingdate, sFixDt);
+			p->book[ii].pbid = atof(sPBid);
+			p->book[ii].pask = atof(sPAsk);
+			p->book[ii].vbid = atof(sVBid);
+			p->book[ii].vask = atof(sVAsk);
+		}
+		else if (ii > 0 && ii < 5)
+		{
+			p->book[ii].pbid = atof(sPBid);
+			p->book[ii].pask = atof(sPAsk);
+			p->book[ii].vbid = atof(sVBid);
+		    p->book[ii].vask = atof(sVAsk);
+		}
+	}
+
+	return 0;
+}

@@ -1,0 +1,1182 @@
+
+#include "mds2.h"
+#include "comrdb.h"
+#include "wgate.h"
+
+EXEC SQL INCLUDE SQLCA;
+
+enum {
+	DF_INIT_NONE	= 0,
+	DF_INIT_PART	,
+	DF_INIT_DONE
+};
+
+struct EX {
+	char	excode	[ 1];		// 원천 : 'S'=SMB, 'K'=KMB, 'E'=EBS, 'C'=CMB
+	char	exnm	[ 8];
+	int		ipck	;
+	MDARCH	*arch	;			// MDARCH
+	INDEX	*indx	;			// INDEX
+	MDFOLD	*fold	;			// FOLD
+};
+
+//static	__thread struct EX	g_ex[MAX_XCHG]={0,};
+//static	__thread int excnt=0;
+//static	__thread int initialized = 0;
+
+static	struct EX	g_ex[MAX_XCHG]={0,};
+static  int excnt=0;
+static	int initialized = 0;
+
+static int mds_attach(int mode, char *msg);
+
+static key_t get_ipck2(int exid)
+{
+	char	name[30], decimal;
+	int		hexa;
+	key_t	ipck;
+	int		ii;
+
+	sprintf(name, "%03d", exid);	
+	for (ii = 0, hexa = 0; ii < strlen(name) && ii < 3; ii++)
+	{
+		hexa <<= 4;
+		decimal = name[ii] & 0x0f;
+		hexa |= decimal;
+	}
+	hexa |= 0x9000;
+	ipck = (hexa << 16);				// 0x9{EXID}??##
+	
+	return(ipck);
+}
+
+static int cmpindex(INDEX *i1, INDEX *i2)
+{
+	return(strcmp(i1->symb, i2->symb));
+}
+
+static char *getwords(char *istr, char *word);
+
+//################################################################################################
+// STRING
+//################################################################################################
+void str2s(char *ts, int tl, char *fs, int fl)
+{
+	int	ii, go = 0;
+
+	memset(ts, 0, tl);
+	for (ii = fl-1; ii >= 0; ii--)
+	{
+		if (fs[ii] == ' ' && !go)
+			continue;
+		go = 1;
+		ts[ii] = fs[ii];
+	}
+} 
+
+int str2i(char *s, int l)
+{
+	char	t[200];
+
+	memcpy(t, s, l);
+	t[l] = '\0';
+	return(atoi(t));
+}
+
+float str2f(char *s, int l)
+{
+	char	t[200];
+	double	d;
+	char	*lptr;
+
+	sprintf(t, "%.*s", l, s);
+
+	if ((lptr = strchr(t, '.')) != NULL)
+		sprintf(t, "%.*s0", l, s);
+	else
+		sprintf(t, "%.*s", l, s);
+	d = atof(t);
+	return(d);
+}
+
+double str2d(char *s, int l)
+{
+	char	t[200];
+	double	d;
+	char	*lptr;
+
+	sprintf(t, "%.*s", l, s);
+
+	if ((lptr = strchr(t, '.')) != NULL)
+		sprintf(t, "%.*s0", l, s);
+	else
+		sprintf(t, "%.*s", l, s);
+	d = atof(t);
+	return(d);
+}
+
+double str2p(char *s, int l, int denominator, int with_sign)
+{
+	int	sign = 1;
+	double	d;
+
+	if (with_sign)
+	{
+		if (s[0] == '-')
+			sign = -1;
+		d = str2d(&s[1], l-1);
+	}
+	else
+		d = str2d(s, l);
+	d *= sign;
+	d /= denominator;
+	return(d);
+}
+
+/**
+ * getwords()
+ * Get word string from input string
+ */
+static char *getwords(char *istr, char *word)
+{
+	int	ii, jj;
+	int	ilen;
+
+	ilen = strlen(istr);
+	for (ii = 0, jj = 0; ii < ilen; ii++, istr++)
+	{
+		switch (*istr)
+		{
+		case ' ':
+		case '\t':
+		case '\n':
+		case '\r':
+			if (jj != 0)
+				break;
+			continue;
+		default:
+			word[jj++] = *istr;
+			continue;
+		}
+		break;
+	}
+	word[jj] = '\0';
+	if (ii < ilen && (*istr == '\n' || *istr == '\r'))
+	{
+		ii++;
+		istr++;
+	}
+	if (ii < ilen && (*istr == '\n' || *istr == '\r'))
+		istr++;
+	return(istr);
+}
+
+/*
+ * str2words()
+ * Seprator words
+ */
+int str2words(char *lineB, char *wordB[], int wordN)
+{
+	char	*nextP;
+	char	chckB[256];
+	int	ii;
+
+	nextP = lineB;
+	for (ii = 0; ii < wordN; ii++)
+	{
+		if (strlen(nextP) <= 0)
+			break;
+		nextP = getwords(nextP, chckB);
+		if (strlen(chckB) <= 0 || chckB[0] == '#')
+			break;
+		strcpy(wordB[ii], chckB);
+	}
+	return(ii);
+}
+
+/*===============================================================
+ * exchanges.new.cfg 에서 전체 대상 원천에 대한 정보 취득
+ * 원천별 SharedMemory 모두 Attach.. 호출 시 원하는 원천에 접근
+ * mode : 0=read only, 1=read/write
+===============================================================*/
+static int mds_attach(int mode, char *msg)
+{
+	int		ii=0, nxml;
+	char	xmlpath[128], args[52];
+	struct	xmltag xmltags[256];
+
+	if (initialized == DF_INIT_DONE)
+		return 0;
+
+/* 매번 다시 Attach (?)
+	for (ii=0; ii<MAX_XCHG; ii++) {
+		if (g_ex[ii].arch)	shmdt(g_ex[ii].arch);
+	}
+*/
+	/*===============================================================
+	 * XML파일(exchanges.cfg) 에서 원천 리스트 정보 READ
+	===============================================================*/	
+	memset(xmltags, 0x00, sizeof(xmltags));
+
+	sprintf(xmlpath, "%s/exchanges.new.cfg", ETC_DIR);
+	nxml = getxmlcfg(xmlpath, xmltags);
+
+	if (nxml <= 0)	return (-1);
+
+	if (initialized == DF_INIT_NONE)		// 최초 접근일 때만 xml 로딩
+	{
+		int		exid;
+		char	exnm[32];
+		memset(&g_ex, 0x00, sizeof(g_ex));
+
+		for (ii=0, excnt=0; ii < nxml; ii++)
+		{
+			memset(exnm, 0x00, sizeof(exnm));
+
+			getargs(&xmltags[ii], "name",  exnm);
+			getargs(&xmltags[ii], "exid",  args);
+			exid = atoi(args);
+
+			if (exid <= 0 || strlen(exnm) <= 0)
+				continue;
+
+			g_ex[excnt].ipck = get_ipck2(exid);
+			strcpy(g_ex[excnt].exnm, exnm);
+
+			excnt++;
+		}
+		if (excnt <= 0) {
+			sprintf(&msg[strlen(msg)], " 마스터메모리 정보 오류..");
+			return (-1);
+		}
+	}
+
+	/*===============================================================
+	 * 각 원천별 SHM 메모리 ATTACH
+	===============================================================*/	
+	MDARCH	*arch;
+	int		shmid, setcnt;
+
+	for (ii=0, setcnt=0; ii<MAX_XCHG; ii++)
+	{
+		if (strlen(g_ex[ii].exnm) <= 0)		break;
+
+		if (g_ex[ii].arch && g_ex[ii].ipck)	{
+			setcnt++;
+			continue;
+		}
+
+		if ((shmid = shmget(IPCK(g_ex[ii].ipck, 0), 0, 0666)) < 0)
+			continue;
+
+		arch = (MDARCH *)shmat(shmid, (char *)0, (mode==0?SHM_RDONLY:0));
+		if (!arch)	continue;
+
+		memcpy(g_ex[ii].excode, arch->xchg.excode, sizeof(arch->xchg.excode));
+		
+		g_ex[ii].arch = (MDARCH *)arch;
+		g_ex[ii].indx = (INDEX  *)((char *)arch + sizeof(MDARCH));
+		g_ex[ii].fold = (MDFOLD *)((char *)arch + sizeof(MDARCH) + (sizeof(INDEX)*arch->xchg.maxcnt));
+
+		setcnt++;
+	}
+
+	if (setcnt == excnt) {
+		initialized = DF_INIT_DONE;
+		sprintf(&msg[strlen(msg)], "마스터메모리 ALL ATTACH OK");
+	}
+	else if (setcnt < excnt)
+		initialized = DF_INIT_PART;
+
+	return 0;	
+}
+
+/*===============================================================
+ * mds_attach()를 통해
+ * exchanges.new.cfg 에서 전체 대상 원천에 대한 정보 취득
+ * 원천별 SharedMemory 모두 Attach.. 호출 시 원하는 원천에 접근
+===============================================================*/
+MDFOLD *mds_getfold(char *exnm, char *symb, char *msg)
+{
+	int		ii;
+	MDARCH	*arch;
+	INDEX	*indx, idx, *pidx;
+	MDFOLD	*fold, *pfold=NULL;
+
+	if (exnm == NULL || symb == NULL)		return NULL;
+
+	if (mds_attach(1, msg) < 0)		return NULL;
+
+	for (ii=0; ii<MAX_XCHG; ii++)
+	{
+		if (strlen(g_ex[ii].exnm) <= 0)
+		{
+			sprintf(&msg[strlen(msg)], " [%s] cfg 파일이 없습니다.", exnm);
+			break;
+		}
+
+		if (strcmp(exnm, g_ex[ii].exnm) == 0)
+		{
+			if (g_ex[ii].arch == NULL)
+			{
+				sprintf(&msg[strlen(msg)], " [%s] 마스트메모리가 없습니다.", exnm);
+				break;
+			}
+
+			memset(&idx, 0x00, sizeof(idx));
+			memcpy(idx.symb, symb, sizeof(idx.symb));
+
+			pidx = bsearch(&idx, g_ex[ii].indx, g_ex[ii].arch->nrec, sizeof(INDEX), cmpindex);
+			if (pidx == NULL)
+			{
+				sprintf(&msg[strlen(msg)], " [%.6s] 없는 통화코드입니다.", symb);
+				return NULL;
+			}
+			if (pidx->indx >= g_ex[ii].arch->nrec || pidx->indx < 0)		return NULL;
+        	
+			pfold = (MDFOLD *)(g_ex[ii].fold + (pidx->indx));
+        	
+			break;
+		}
+	}
+	
+	return pfold;
+}
+
+int mds_getbestfold(MDFOLD *pbest, MDSSISE *psise, char *msg)
+{
+	int		ii, first=1;
+	MDARCH	*arch;
+	INDEX	*indx, idx, *pidx;
+	MDFOLD	*pfold;
+
+	if (pbest->symb[0] == NULL)		return 0;
+
+	if (mds_attach(0, msg) < 0)	return (-1);
+
+	char	curtime[14+1];
+	time_t	t = time(NULL);
+	struct tm *tm = localtime(&t);
+
+	sprintf(curtime, "%04d%02d%02d%02d%02d%02d", tm->tm_year+1900, tm->tm_mon+1, tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec);
+
+	for (ii=0; ii<MAX_XCHG; ii++)
+	{
+		if (strlen(g_ex[ii].exnm) <= 0)
+			break;
+
+		if (g_ex[ii].arch == NULL)
+			continue;
+
+		// BEST, CUST, CMBS, 수기환율 은 제외
+		if (g_ex[ii].excode[0] == 'Z' || g_ex[ii].excode[0] == 'B' || g_ex[ii].excode[0] == 'C' || g_ex[ii].excode[0] == 'R' )
+			continue;
+
+		memset(&idx, 0x00, sizeof(idx));
+		strcpy(idx.symb, pbest->symb);
+
+		// ◆◆◆ TODO : LoadMaster 시 통화별 offset 이 동일하면 bsearch 생략해도 될 듯. 
+		//				(모든 LP의 마스트메모리에서 통화쌍의 offset 이 동일해야만 적용가능)
+		pidx = bsearch(&idx, g_ex[ii].indx, g_ex[ii].arch->nrec, sizeof(INDEX), cmpindex);
+		if (pidx == NULL)	continue;
+
+		if (pidx->indx >= g_ex[ii].arch->nrec || pidx->indx < 0)		continue;
+
+		pfold = (MDFOLD *)(g_ex[ii].fold + (pidx->indx));
+
+		if (pfold->trdf != DF_ON)	continue;
+
+		// 24.10.07) [1707] LP별 상품관리 화면에서 설정한 LP/상품별 유효시간 체크
+		if (memcmp(pfold->cust.stm, curtime, sizeof(pfold->cust.stm)) > 0 ||
+			memcmp(pfold->cust.etm, curtime, sizeof(pfold->cust.etm)) < 0)		continue;
+		
+		// 24.10.07) 해당 LP의 호가이상으로 알람 감시중이면 BEST 대상에서 제외(?)
+		// 24.10.10) 호가 이상인 LP가 하나라도 있으면 BEST 에 호가이상 여부 ON
+		if (pfold->quotalarm > 0)
+		{
+			pbest->quotalarm = t;
+			continue;
+		}
+
+		// 24.10.10) 수신한 시세의 LP 마스터메모리가 업데이트 되기 전에 비교하면 BEST를 놓치게 되어, 수신한 데이터로 비교
+		if (psise != NULL && psise->excode[0] == pfold->bidex[0] && (first || pbest->bidlast < psise->bidprc))
+		{
+			memcpy(pbest->bidex, psise->excode, sizeof(pbest->bidex));
+			pbest->bidlast		= psise->bidprc;
+			pbest->bidbest		= psise->bidbestprc;
+			pbest->bidvol		= psise->bidqty;
+			pbest->bidbestvol	= psise->bidbestqty;
+		}
+		else if (pfold->bidex[0] != 'H' && (first || pbest->bidlast < pfold->bidlast))
+		{
+			memcpy(pbest->bidex, pfold->bidex, sizeof(pbest->bidex));
+			pbest->bidlast		= pfold->bidlast;
+			pbest->bidbest		= pfold->bidbest;
+			pbest->bidvol		= pfold->bidvol;
+			pbest->bidbestvol	= pfold->bidbestvol;
+		}
+
+		// 24.10.10) 수신한 시세의 LP 마스터메모리가 업데이트 되기 전에 비교하면 BEST를 놓치게 되어, 수신한 데이터로 비교
+		if (psise != NULL && psise->excode[0] == pfold->offerex[0] && (first || pbest->offerlast > psise->offerprc))
+		{
+			memcpy(pbest->offerex, psise->excode, sizeof(pbest->offerex));
+			pbest->offerlast	= psise->offerprc;
+			pbest->offerbest	= psise->offerbestprc;
+			pbest->offervol		= psise->offerqty;
+			pbest->offerbestvol	= psise->offerbestqty;
+		}
+		else if (pfold->offerex[0] != 'H' && (first || pbest->offerlast > pfold->offerlast))
+		{
+			memcpy(pbest->offerex, pfold->offerex, sizeof(pbest->offerex));
+			pbest->offerlast	= pfold->offerlast;
+			pbest->offerbest	= pfold->offerbest;
+			pbest->offervol		= pfold->offervol;
+			pbest->offerbestvol	= pfold->offerbestvol;
+		}
+
+		first = 0;
+	}
+
+	// 거래가능한 해당통화 정보가 없을 경우.
+	if (first)	return (-2);
+
+	return 0;
+}
+
+/*===============================================================
+ * SMBS시세 수신 시 MU59 테이블 현재가 Update 여부 Flag.
+ * - LoadMaster() 시 xchg->custflag = '1'로 초기화. (업데이트 상태)
+ * - (4181) 화면을 통해 17시 이후에 정산환율 수신하면 Update 중지('0')
+ *
+ * int mds_set_updt_mu59(char flag, char *rejmsg)
+ *   flag : '1'= Update ON, '0'= Update OFF
+ * return : 0 = 정상,  < 0 = 오류
+===============================================================*/
+int mds_set_updt_mu59(char flag, char *rejmsg)
+{
+	MDARCH	*parch;
+
+	if (flag != DF_C_ON && flag != DF_C_OFF) {
+		sprintf(rejmsg, "%s input error (%c)", __func__, flag);
+		return (-1);
+	}
+	parch = mds_getarch(1, "SMBS", rejmsg);
+	if (!parch) {
+		if (!rejmsg)	strcpy(rejmsg, "mds_getarch() error..");
+		return (-2);
+	}
+
+	parch->xchg.custflag = flag;
+
+	shmdt(parch);
+
+	return 0;
+}
+
+/*===============================================================
+ * 마스터메모리 <거래상태> 변경
+ * int mds_updt_trdf(char *exnm, char *symb, int ival, char *msg)
+ *   exnm : "SMBS/CMBS/KMBS/EBS/CUST/BEST"
+ *   symb : "USDKRW"  ... 
+ *   ival : 0=초기상태(주문불가), 1=시세수신(주문가능), 9=대상제외(시세/주문 모두처리 안함)
+ *        : ('0'인 경우, 시세수신하면 자동으로 '1'로 변경됨)
+ *    msg : 결과메시지
+ * return : 0 = 정상,  < 0 = 오류
+===============================================================*/
+int mds_updt_trdf(char *exnm, char *symb, int ival, char *msg)
+{
+	MDFOLD	*pfold;
+
+	pfold = mds_getfold(exnm, symb, msg);
+	if (!pfold)		return (-1);
+	
+	if (ival != 0 && ival != 1 && ival != 9)
+	{
+		sprintf("input value error(%d). must be one of (0, 1, 9)", ival);
+		return (-2);
+	}
+	
+	pfold->trdf = ival;
+	
+	return 0;
+}
+
+/*===============================================================
+ * 마스터메모리 <스팟일자> 변경
+ * int mds_updt_spotdate(char *exnm, char *symb, char *sval, char *msg)
+ *   exnm : "SMBS/CMBS/KMBS/EBS/CUST/BEST"
+ *   symb : "USDKRW"  ... 
+ *   sval : "YYYYMMDD"
+ *    msg : 결과메시지
+ * return : 0 = 정상,  < 0 = 오류
+===============================================================*/
+int mds_updt_spotdate(char *exnm, char *symb, char *sval, char *msg)
+{
+	MDFOLD	*pfold;
+
+	pfold = mds_getfold(exnm, symb, msg);
+	if (!pfold)		return (-1);
+	
+	if (strlen(sval) != 8)
+	{
+		sprintf("input value error(%s). must be 'YYYYMMDD' format", sval);
+		return (-2);
+	}
+	
+	memcpy(pfold->spotdate, sval, sizeof(pfold->spotdate));
+	
+	return 0;
+}
+
+/*===============================================================
+ * DB to Memory 원천별 시세 시간/상태값 동기화 (TSKEIAM97,TSKEIAM98 업데이트 후 호출)
+ * int mds_updt_custfeed(char *exnm, char *symb, char *msg)
+ *   exnm : "CUST"만 가능
+ *   symb : "USDKRW"... or NULL for all
+ *    msg : 결과메시지
+ * return : 0 = 정상,  < 0 = 오류
+===============================================================*/
+static uint32_t getnextday(int n)
+{
+    time_t  clock;  
+    struct  tm tm;  
+    int ymd;
+    
+    int d = n*24;
+    
+    clock = time(NULL);
+    clock += (d*60*60);
+    localtime_r(&clock, &tm);
+    ymd = YMD((tm.tm_year+1900), (tm.tm_mon+1), tm.tm_mday);
+
+    return (ymd);
+}
+
+int mds_updt_custfeed(char *exnm, char *symb, char *rejmsg)
+{
+	int		ii;
+	int		chflag=0;		// 변경여부
+	time_t	clock;
+	struct	tm tm;
+	uint32_t nextday;
+	char	stime	[14+1];
+	char	etime	[14+1];
+	char	ctime	[14+1];
+	char	cur_hms	[ 6+1];
+	MDARCH	*parch;
+	MDFOLD	*pfold;
+
+EXEC SQL BEGIN DECLARE SECTION;
+	char v_fx_prdct_cd			[ 6+1];
+	char v_prc_orign_dstcd		[ 1+1];
+	char v_fincl_anoun_stop_yn	[ 1+1];
+	char v_fcm_id				[10+1];
+	char v_start_hms			[ 6+1];
+	char v_end_hms				[ 6+1];
+EXEC SQL END DECLARE SECTION;
+
+	if (strcmp(exnm, DF_EXNM_CUST) != 0) {
+		sprintf(rejmsg, "%s is just for the CUST update [%s] !!!!!!  ", __func__, exnm);
+		return (-1);
+	}
+
+	parch = mds_getarch(1, exnm, rejmsg);
+	if (!parch) {
+		if (!rejmsg)	strcpy(rejmsg, "mds_getarch() error..");
+		return (-1);
+	}
+	pfold = (MDFOLD *)((char *)parch + sizeof(MDARCH) + (sizeof(INDEX)*parch->xchg.maxcnt));
+
+	for (ii=0; ii < parch->nrec; ii++, pfold++)
+	{
+		if (pfold->symb[0] == NULL)		continue;
+
+		if (!symb && memcmp(pfold->symb, symb, sizeof(pfold->symb)) != 0)	continue;
+
+		// TSKEIAM97 테이블에서 관리하지 않는 통화코드 SKIP
+		if (memcmp(pfold->symb, "CNHKRW", 6) == 0 || memcmp(pfold->symb, "MARKRW", 6) == 0)		// 고객은 CNYKRW 사용하므로 CNHKRW는 관리하지 않음.
+			continue;
+	
+		memset(v_fx_prdct_cd		, 0x00, sizeof(v_fx_prdct_cd		));
+		memset(v_prc_orign_dstcd	, 0x00, sizeof(v_prc_orign_dstcd	));
+		memset(v_fincl_anoun_stop_yn, 0x00, sizeof(v_fincl_anoun_stop_yn));
+		memset(v_fcm_id				, 0x00, sizeof(v_fcm_id				));
+		memset(v_start_hms			, 0x00, sizeof(v_start_hms			));
+		memset(v_end_hms			, 0x00, sizeof(v_end_hms			));
+	
+		// 24.03.18) 화면(1801) 에서의 관리는 USDCNY 기준으로 하기 때문에 USDCNH 인 경우는 USDCNY를 카피해서 사용
+		if (memcmp(pfold->symb, "USDCNH", 6) == 0)		// 화면에서 USDCNH로 관리되므로 USDCNY는 USDCNH 시간설정을 동일하게 처리.
+			memcpy(v_fx_prdct_cd, "USDCNY", sizeof(pfold->symb));
+		else
+			memcpy(v_fx_prdct_cd, pfold->symb, sizeof(pfold->symb));
+	
+	EXEC SQL
+		SELECT	 FX_PRDCT_CD
+				,PRC_ORIGN_DSTCD
+				,FINCL_ANOUN_STOP_YN
+				,PROR_FCM_ID
+		  INTO	 :v_fx_prdct_cd
+				,:v_prc_orign_dstcd
+				,:v_fincl_anoun_stop_yn
+				,:v_fcm_id
+		  FROM	INST1.TSKEIAM97
+		 WHERE	FX_PRDCT_CD = :v_fx_prdct_cd
+		WITH UR
+		;
+		if (SQLCODE != 0)
+		{
+			sprintf(rejmsg, "TSKEIAM97 select error [%.6s] [%s] \n", pfold->symb, SQLERRM);
+			return (-1);
+		}
+	
+		l_rtrim(v_fx_prdct_cd		);
+		l_rtrim(v_prc_orign_dstcd	);
+		l_rtrim(v_fincl_anoun_stop_yn);
+		l_rtrim(v_fcm_id			);
+	
+		if (pfold->cust.feedtp[0]  != v_prc_orign_dstcd[0])
+		{
+			// 원천변경 시 trdf 거래불가로 세팅
+			if (v_prc_orign_dstcd[0] == DF_CFEED_HAND || v_prc_orign_dstcd[0] == DF_CFEED_STOP)
+			{
+				pfold->trdf = DF_OFF;
+			}
+			pfold->cust.feedtp[0]  = v_prc_orign_dstcd[0];
+			chflag = 1;
+		}
+		if (pfold->cust.finclstop[0] != v_fincl_anoun_stop_yn[0])
+		{
+			pfold->cust.finclstop[0] = v_fincl_anoun_stop_yn[0];
+			chflag = 1;
+		}
+	
+		clock = time(0);
+		localtime_r(&clock, &tm);
+	
+		// '가격원천구분코드'에 따른 분기처리
+		switch (v_prc_orign_dstcd[0])
+		{
+		case DF_CFEED_STOP :		// 고객시세 : 제공중단
+			break;
+	
+		case DF_CFEED_HAND :		// 고객시세 : 수기제공
+			break;
+	
+		case DF_CFEED_PRIO :		// 고객시세 : 우선설정
+	
+			if (v_fcm_id[0] == 0x00 || v_fcm_id[0] == ' ')
+			{
+				sprintf(rejmsg, "[%.6s] 고객시세 우선 원천코드 오류", pfold->symb);
+				return (-2);
+			}
+			// ★★★★ TODO : EXNM의 첫글자와 EXCODE가 같다는 전제로 세팅함. (추후 다르게 세팅된 원천이 추가되면 코드 변경 필요)
+			// 우선시세인 상태에서 원천만 변경될 수도 있기 때문에 UPDATE
+			if (pfold->cust.excode[0] != v_fcm_id[0])
+			{
+				pfold->cust.excode[0] = v_fcm_id[0];
+				chflag = 1;
+			}
+			break;
+	
+		case DF_CFEED_STND :		// 고객시세 : 기본설정(TSKEIAM98)
+	
+			memset(v_fcm_id		, 0x00, sizeof(v_fcm_id		));
+			memset(v_start_hms	, 0x00, sizeof(v_start_hms	));
+			memset(v_end_hms	, 0x00, sizeof(v_end_hms	));
+
+			// 현재시간 기준으로 적용할 설정시간이 있는지 조회
+		EXEC SQL
+			SELECT	 FCM_ID
+					,START_HMS
+					,END_HMS
+			  INTO	 :v_fcm_id
+					,:v_start_hms
+					,:v_end_hms
+			FROM (
+				SELECT	 FCM_ID, START_HMS, END_HMS
+				  FROM	INST1.TSKEIAM98
+				 WHERE	START_HMS < END_HMS
+				   AND	(TO_CHAR(SYSDATE, 'HH24MISS') > START_HMS AND TO_CHAR(SYSDATE, 'HH24MISS') < END_HMS)
+				   AND	FX_PRDCT_CD = :v_fx_prdct_cd
+				UNION ALL
+				SELECT	 FCM_ID, START_HMS, END_HMS
+				  FROM	INST1.TSKEIAM98
+				 WHERE	START_HMS > END_HMS
+				   AND	(TO_CHAR(SYSDATE, 'HH24MISS') > START_HMS OR TO_CHAR(SYSDATE, 'HH24MISS') < END_HMS)
+				   AND	FX_PRDCT_CD = :v_fx_prdct_cd
+			);
+			if (SQLCODE == 100)
+			{
+			// 현재 적용시간이 없으면 다음 설정시간대역 조회
+			EXEC SQL
+				SELECT	 FCM_ID
+						,START_HMS
+						,END_HMS
+				  INTO	 :v_fcm_id
+						,:v_start_hms
+						,:v_end_hms
+				  FROM	(	SELECT	 FCM_ID
+				  					,START_HMS
+									,END_HMS
+									,CASE WHEN START_HMS > END_HMS THEN TO_CHAR(TO_NUMBER(END_HMS) + 240000) ELSE END_HMS END AS ETIME
+							  FROM	INST1.TSKEIAM98
+							 WHERE	FX_PRDCT_CD = :v_fx_prdct_cd
+						)
+				 WHERE	ETIME > TO_CHAR(SYSDATE, 'HH24MISS')
+				ORDER BY ETIME
+				FETCH FIRST 1 ROWS ONLY
+				WITH UR;
+			}
+			if (SQLCODE != 0)
+			{		
+				if (memcmp(pfold->cust.stm, "99999999999999", sizeof(pfold->cust.stm)) || memcmp(pfold->cust.etm, "00000000000000", sizeof(pfold->cust.etm)))
+				{
+					memcpy(pfold->cust.stm, "99999999999999", sizeof(pfold->cust.stm));
+					memcpy(pfold->cust.etm, "00000000000000", sizeof(pfold->cust.etm));
+					pfold->trdf = DF_OFF;
+					chflag = 1;
+				}
+				break;
+			}
+
+			sprintf(ctime, "%04d%02d%02d%02d%02d%02d", tm.tm_year+1900, tm.tm_mon+1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+			sprintf(cur_hms, "%02d%02d%02d", tm.tm_hour, tm.tm_min, tm.tm_sec);
+			
+			if (strncmp(v_start_hms, v_end_hms, sizeof(v_start_hms)) > 0)
+			{
+				if (strncmp(cur_hms, v_end_hms, sizeof(cur_hms)) < 0) {		// 일자가 넘어간 상태면 시작일자가 전일
+					nextday = getnextday(-1);
+					sprintf(stime, "%08d%.6s", nextday, v_start_hms);
+					sprintf(etime, "%04d%02d%02d%.6s", tm.tm_year+1900, tm.tm_mon+1, tm.tm_mday, v_end_hms);
+				}
+				else {														// 일자변경 전이면 종료일자가 익일
+					nextday = getnextday(1);
+					sprintf(etime, "%08d%.6s", nextday, v_end_hms);
+					sprintf(stime, "%04d%02d%02d%.6s", tm.tm_year+1900, tm.tm_mon+1, tm.tm_mday, v_start_hms);
+				}
+			}
+			else
+			{
+				sprintf(stime, "%04d%02d%02d%.6s", tm.tm_year+1900, tm.tm_mon+1, tm.tm_mday, v_start_hms);
+				sprintf(etime, "%04d%02d%02d%.6s", tm.tm_year+1900, tm.tm_mon+1, tm.tm_mday, v_end_hms);
+			}
+
+			if (memcmp(pfold->cust.stm, stime, sizeof(pfold->cust.stm)) != 0)
+			{
+				memcpy(pfold->cust.stm, stime, sizeof(pfold->cust.stm));
+			}
+			if (memcmp(pfold->cust.etm, etime, sizeof(pfold->cust.etm)) != 0)
+			{
+				memcpy(pfold->cust.etm, etime, sizeof(pfold->cust.etm));
+			}
+			if (memcmp(pfold->cust.excode, v_fcm_id, sizeof(pfold->cust.excode)) != 0)
+			{
+				// ★★★★ TODO : EXNM의 첫글자와 EXCODE가 같다는 전제로 세팅함. (추후 다르게 세팅된 원천이 추가되면 코드 변경 필요)
+				pfold->cust.excode[0] =  v_fcm_id[0];
+			}
+
+			if (memcmp(pfold->cust.stm, ctime, sizeof(pfold->cust.stm)) > 0 || memcmp(pfold->cust.etm, ctime, sizeof(pfold->cust.etm)) < 0)
+				pfold->trdf = DF_OFF;
+
+			break;
+	
+		default :
+			sprintf(rejmsg, "TSKEIAM98 v_prc_orign_dstcd error [%.6s:%.1s] \n", pfold->symb, v_prc_orign_dstcd);
+			break;
+		}
+	}
+	shmdt(parch);
+
+	l_db2commit();
+
+	return 0;
+}
+
+/*===============================================================
+ * 특정 원천에 대한 SharedMemory 개별 접근
+ * mode : 0=read only, 1=read/write
+===============================================================*/
+MDARCH *mds_getarch(int mode, char *exnm, char *msg)
+{
+	int		ii=0, nxml, shmid;
+	char	xmlpath[128], args[52];
+	struct	xmltag xmltags[52];
+	struct	EX exinfo;
+	MDARCH	*arch=NULL;
+
+	/*===============================================================
+	 * XML파일(exchanges.cfg) 에서 원천 리스트 정보 READ
+	===============================================================*/	
+	memset(&xmltags, 0x00, sizeof(xmltags));
+	memset(&exinfo,  0x00, sizeof(exinfo));
+
+	sprintf(xmlpath, "%s/exchanges.new.cfg", ETC_DIR);
+	nxml = getxmlcfg(xmlpath, xmltags);
+
+	if (nxml <= 0)	return (NULL);
+
+	for (ii = 0; ii < nxml; ii++)
+	{
+		memset(&exinfo,  0x00, sizeof(exinfo));
+		
+		getargs(&xmltags[ii], "name",  exinfo.exnm);
+		if (strcmp(exinfo.exnm, exnm) != 0)		continue;
+		
+		getargs(&xmltags[ii], "exid",  args);
+		exinfo.ipck = get_ipck2(atoi(args));
+
+		break;
+	}
+	
+	if (exinfo.ipck == 0)	return (NULL);
+
+	if ((shmid = shmget(IPCK(exinfo.ipck, 0), 0, 0666)) < 0)
+	{
+		sprintf(&msg[strlen(msg)], "\n<%s : shmget error : %s>\n", exinfo.exnm, strerror(errno));
+		return (NULL);
+	}
+
+	arch = (MDARCH *)shmat(shmid, (char *)0, (mode==0?SHM_RDONLY:0));
+	if (!arch)
+	{
+		sprintf(&msg[strlen(msg)], "\n%s %s\n", exinfo.exnm, strerror(errno));
+		return (NULL);
+	}
+
+	return arch;
+}
+
+/*===============================================================
+ * 고객용 수기환율고시, MAR고시를 위한 UDP 전송
+===============================================================*/
+int mds_make_custsise(char *symb, double bid, double offer, char *msg)
+{
+	int		rtn, ii, portno=(-1), dlen;
+	char	sbuff[512];
+	MDARCH	*parch = NULL;
+	MDSSISE	*psise = &sbuff;
+
+	if (strlen(symb) != SYMB_LEN)
+	{
+		sprintf(msg, "wrong input [%s]", symb);
+		return (-1);
+	}
+
+	memset(sbuff, 0x00, sizeof(sbuff));
+
+	if (mds_attach(0, msg) < 0)	return (-1);
+
+	for (ii=0; ; ii++)
+	{
+		if (strlen(g_ex[ii].exnm) <= 0)
+			break;
+
+		if (g_ex[ii].arch == NULL)
+			continue;
+
+		if (strcmp(g_ex[ii].exnm, DF_EXNM_CUST) == 0)
+		{
+			portno = g_ex[ii].arch->xchg.from.port;		// 대상 원천에 대한 UDP 시세포트
+			parch  = (MDARCH *)g_ex[ii].arch;
+			break;
+		}
+	}
+	if (portno <= 0 || parch == NULL)
+	{
+		sprintf(msg, "exnm [%s] is not found..", DF_EXNM_CUST);
+		return (-1);
+	}
+
+	// MDSSISE PACKET SETUP
+	char	stemp[32];
+	struct	tm *tm;
+	struct	timeval tv;
+
+	gettimeofday(&tv, NULL);
+	tm = localtime(&tv.tv_sec);
+
+	//psise->excode[0] = g_ex[ii].arch->xchg.excode[0];
+	psise->excode[0] = DF_EXCD_HAND;
+	MEMCPY(psise->symb, symb);
+
+	sprintf(stemp, "%04d%02d%02d", tm->tm_year+1900, tm->tm_mon+1, tm->tm_mday);
+	MEMCPY(psise->date, stemp);
+	
+	sprintf(stemp, "%02d%02d%02d%03d",tm->tm_hour, tm->tm_min, tm->tm_sec, tv.tv_usec/1000);
+	MEMCPY(psise->time, stemp);
+	
+	sprintf(stemp, "API_%.1s%.9s", psise->excode, psise->time);		MEMCPY(psise->quotid,	stemp);
+
+	psise->bidprc	= bid;
+	psise->offerprc	= offer;
+
+	// UDP SEND
+	int		sockfd;
+	struct	sockaddr_in		sockadd;
+
+	memset(&sockadd, 0x00, sizeof(sockadd));
+
+	sockadd.sin_family       = AF_INET;
+	sockadd.sin_addr.s_addr  = inet_addr("127.0.0.1");	// 동일한 서버에 있음.
+	sockadd.sin_port         = htons(portno);
+
+	if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
+	{
+		sprintf(msg, "Cannot open a socket for a cust (%d) (%d:%s)", g_ex[ii].arch->xchg.from.port, errno, strerror(errno));
+		return(-1);
+	}
+
+	dlen = sendto(sockfd, sbuff, SZ_MDSSISE, 0, (struct sockaddr *)&sockadd, sizeof(sockadd));
+	if (dlen <  0)
+		sprintf(msg, "UDP SEND ERROR for BEST (%d) (%d:%s)", rtn, errno, strerror(errno));
+
+	close(sockfd);
+
+	return (dlen);
+}
+
+/*===============================================================
+ * 딜러가 입력한 RFQ환율데이터를 FIX로 전송하기 위한 API
+ * INPUT
+ 	char *sbuf   : 전송구조체 (W6109A02.sqc 내 struct rfq_info 와 동일)
+ 	int dlen     : sizeof(struct rfq_info)
+ 	char *rejmsg : 결과메시지(오류 시)
+ * OUTPUT
+ 	int          : 전송데이터 길이 = sizeof(struct rfq_info)
+ 	             : 오류 시 < 0
+===============================================================*/
+int mds_send_rfq(char *sbuf, int dlen, char *rejmsg)
+{
+	struct _rfq {	// W6109A02 서비스에 선언된 broadcast 용 구조체
+		char	RspnsCd[ 1];	//응답코드(1:제시, 2:거부)
+		char	Winkey [20];	//WindowKey
+		char	RFQKey [15];	//RFQ키
+		char	BidPrc [20];	//BID최종가격
+		char	AskPrc [20];	//ASK최종가격
+		char	NearPrc[20];	//NEAR가격 
+		char	FarPrc [20];	//FAR가격
+	} *p = sbuf;
+
+	int		sockfd, slen=-1, options = 1;
+	struct	sockaddr_in	multisock;
+	
+	if (dlen != sizeof(struct _rfq))
+	{
+		sprintf(rejmsg, "data size error (%d:%d)", sizeof(struct _rfq), dlen);
+		return slen;
+	}
+	
+	memset(&multisock, 0x00, sizeof(multisock));
+
+	if ((sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0)
+	{
+		sprintf(rejmsg, "Cannot open a socket for AP (%d:%s)", errno, strerror(errno));
+		return slen;
+	}
+
+	multisock.sin_family		= AF_INET;
+	multisock.sin_addr.s_addr	= inet_addr(DF_MDS_MCAST);
+	multisock.sin_port			= htons(DF_RFQ_PORT);
+	
+	// LOOPBACK OPTION ON
+	options = 1;
+	if (setsockopt(sockfd, IPPROTO_IP, IP_MULTICAST_LOOP, (void *)&options, sizeof(options)) != 0)
+	{
+		sprintf(rejmsg, "Set socketoption Failed 1. %s.%d (%s)", DF_MDS_MCAST, DF_RFQ_PORT, strerror(errno));
+		close(sockfd);
+		return slen;
+	}
+	
+	// TTL OPTION = 1
+	options = 1;
+	if (setsockopt(sockfd, IPPROTO_IP, IP_MULTICAST_TTL, (void *)&options, sizeof(options)) != 0)
+	{
+		sprintf(rejmsg, "Set socketoption Failed 2. %s.%d (%s)", DF_MDS_MCAST, DF_RFQ_PORT, strerror(errno));
+		close(sockfd);
+		return slen;
+	}
+
+	slen = sendto(sockfd, sbuf, dlen, 0, (struct sockaddr *)&multisock, sizeof(multisock));
+	if (slen < 0)
+		sprintf(rejmsg, "send failed. (%d:%s)", errno, strerror(errno));
+
+	close(sockfd);
+
+//printf("(%d) send (%.*s:%.*s) bid/ask(%.*s/%.*s) \n", slen, sizeof(p->RspnsCd), p->RspnsCd, sizeof(p->RFQKey), p->RFQKey, p->BidPrc, p->BidPrc, sizeof(p->AskPrc), p->AskPrc);
+
+	return slen;
+}
+
+/*===============================================================
+ * 현재 마스터 메모리의 값으로 고객시세(CUSTSISE), 내부시세(APSISE) 전송
+ * INPUT
+ 	char *exnm  : LP명 (CUST/BEST/SMBS/CMBS/KMB/EBS/REUT...)
+ 	char *symb  : USDKRW ...
+ 	char *msg   : 결과메시지(오류 시)
+ * OUTPUT
+ 	int         : 정상 = 0
+ 	            : 오류 < 0
+===============================================================*/
+int mds_send_mast(char *exnm, char *symb, char *msg)
+{
+	int			ii;
+	char		sbuf[2048], stemp[128];
+	MDFOLD		*pfold=NULL;
+	MDARCH		*parch=NULL;
+	XCHG		*pxchg=NULL;
+
+	/*===============================================================
+	 * 초기화 (MDFOLD Attach, Multicast Open)
+	===============================================================*/
+	pfold = mds_getfold(exnm, symb, msg);
+	if (pfold == NULL)		return (-1);
+
+	for (ii=0; ii<MAX_XCHG; ii++)	{
+		if (strcmp(exnm, g_ex[ii].exnm) == 0) {
+			parch = g_ex[ii].arch;
+			pxchg = &parch->xchg;
+			break;
+		}
+	}
+
+	int		c_sock, options = 1;
+	struct	sockaddr_in	multisock;
+	
+	memset(&multisock, 0x00, sizeof(multisock));
+
+	if ((c_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0)
+	{
+		sprintf(msg, "[%s] Cannot open a socket for AP %s.%d", __func__, pxchg->apsnd.ipad, pxchg->apsnd.port);
+		return (-2);
+	}
+	
+	multisock.sin_family		= AF_INET;
+	multisock.sin_addr.s_addr	= inet_addr(pxchg->apsnd.ipad);
+	multisock.sin_port			= htons(pxchg->apsnd.port);
+	
+	// LOOPBACK OPTION OFF
+	options = 1;
+	if (setsockopt(c_sock, IPPROTO_IP, IP_MULTICAST_LOOP, (void *)&options, sizeof(options)) != 0)
+	{
+		sprintf(msg, "[%s] (%d) Set socketoption Failed. %s.%d (%s)", __func__, __LINE__, pxchg->apsnd.ipad, pxchg->apsnd.port, strerror(errno));
+		close(c_sock);
+		return (-3);
+	}
+
+	// TTL OPTION = 1
+	options = 1;
+	if (setsockopt(c_sock, IPPROTO_IP, IP_MULTICAST_TTL, (void *)&options, sizeof(options)) != 0)
+	{
+		sprintf(msg, "[%s] (%d) Set socketoption Failed. %s.%d (%s)", __func__, __LINE__, pxchg->apsnd.ipad, pxchg->apsnd.port, strerror(errno));
+		close(c_sock);
+		return (-4);
+	}
+
+	time_t	t;
+	struct tm *tm;
+	struct timeval tv;
+	
+	t = gettimeofday(&tv, NULL);
+	tm = localtime(&tv.tv_sec);
+
+	/*===============================================================
+	 * MAKE & SEND CUSTSISE
+	===============================================================*/
+	struct pushdata		pushdata;
+	memset(&pushdata, 0x00, sizeof(struct pushdata));
+
+	CUSTSISE	*pcust;
+	pcust = (CUSTSISE *)(pushdata.pushmsg.msgb);
+
+	// MAKE CUSTSISE
+	MEMCPY(pcust->type, "FA");
+	sprintf(stemp,"%c%.6s",	pxchg->excode[0], pfold->symb);		MEMCPY(pcust->rdcode, stemp);	// real symbol
+
+	pcust->excode[0] 	= pxchg->excode[0];
+	pcust->bidex[0]		= pfold->bidex[0];		//psise->source[0];
+	pcust->offerex[0]	= pfold->offerex[0];	//psise->source[0];
+
+	strcpy (stemp, 	pfold->symb);				MEMCPY(pcust->symb, stemp);
+	sprintf(stemp,	"%08d",	pfold->kymd);		MEMCPY(pcust->kymd, stemp);
+	sprintf(stemp,	"%02d%02d%02d",	tm->tm_hour, tm->tm_min, tm->tm_sec);	MEMCPY(pcust->khms, stemp);
+
+	//대비는 mid값 기준으로	
+	sprintf(stemp,	"%c",	COLOR(pfold->midopen, pfold->baseprc));			MEMCPY(pcust->copen,		stemp);
+	sprintf(stemp,	"%.8f",	pfold->midopen);								MEMCPY(pcust->open,			stemp);
+	sprintf(stemp,	"%c",	COLOR(pfold->bidhigh, pfold->baseprc));			MEMCPY(pcust->chigh,		stemp);
+	sprintf(stemp,	"%.8f",	pfold->midhigh);								MEMCPY(pcust->high,			stemp);
+	sprintf(stemp,	"%c",	COLOR(pfold->midlow,  pfold->baseprc));			MEMCPY(pcust->clow,			stemp);
+	sprintf(stemp,	"%.8f",	pfold->midlow);									MEMCPY(pcust->low,			stemp);
+	sprintf(stemp,	"%c",	COLOR(pfold->midlast, pfold->baseprc));			MEMCPY(pcust->clast,		stemp);
+	sprintf(stemp,	"%.8f",	pfold->midlast);								MEMCPY(pcust->last,			stemp);
+	pcust->sign[0]	= pfold->midsign | '0';
+	sprintf(stemp,	"%c",	COLOR(pfold->middiff, 0));						MEMCPY(pcust->cdiff,		stemp);
+	sprintf(stemp,	"%.*f",	pfold->zdiv, pfold->middiff);					MEMCPY(pcust->diff,			stemp);
+	
+	sprintf(stemp,	"%c",	COLOR(pfold->midrate, 0));						MEMCPY(pcust->crate,		stemp);
+	sprintf(stemp,	"%.2f",	pfold->midrate);								MEMCPY(pcust->rate,			stemp);
+	
+	sprintf(stemp,	"%d",	pfold->offersign);								MEMCPY(pcust->cpask,		stemp);
+	sprintf(stemp,	"%.8f",	pfold->offerlast);								MEMCPY(pcust->pask,			stemp);
+	sprintf(stemp,	"%d",	pfold->bidsign);								MEMCPY(pcust->cpbid,		stemp);
+	sprintf(stemp,	"%.8f",	pfold->bidlast);								MEMCPY(pcust->pbid,			stemp);
+	sprintf(stemp,	"%.*f",	pfold->zdiv, pfold->offerlast - pfold->bidlast);MEMCPY(pcust->spread,		stemp);
+	
+	sprintf(stemp,	"%d",	pfold->offersign);								MEMCPY(pcust->bestcpask,	stemp);
+	sprintf(stemp,	"%.8f",	pfold->offerbest);								MEMCPY(pcust->bestpask,		stemp);
+	sprintf(stemp,	"%d",	pfold->bidsign);								MEMCPY(pcust->bestcpbid,	stemp);
+	sprintf(stemp,	"%.8f",	pfold->bidbest);								MEMCPY(pcust->bestpbid,		stemp);
+	sprintf(stemp,	"%.8f",	pfold->offerbest - pfold->bidbest);				MEMCPY(pcust->bestspread,	stemp);
+	
+	sprintf(stemp,	"%.0f",	pfold->offervol);								MEMCPY(pcust->vask,			stemp);
+	sprintf(stemp,	"%.0f",	pfold->bidvol);									MEMCPY(pcust->vbid,			stemp);
+	sprintf(stemp,	"%.0f", pfold->offerbestvol);							MEMCPY(pcust->bestvask,		stemp);
+	sprintf(stemp,	"%.0f",	pfold->bidbestvol);								MEMCPY(pcust->bestvbid,		stemp);
+	sprintf(stemp,	"%08d", pfold->tymd);									MEMCPY(pcust->bizdate,		stemp);
+
+	sprintf(pushdata.pushmsg.symb, "%.7s", pcust->rdcode);
+	pushdata.mkid			= pxchg->exid;
+	pushdata.pushmsg.mask	= PUSH_QUOT;
+	pushdata.pushmsg.type	= 'A';
+	pushdata.pushmsg.msgl	= (SZ_CUSTSISE > MAX_PUSH_LEN ? MAX_PUSH_LEN : SZ_CUSTSISE);
+		
+	// SEND REAL TO MYMQ
+	myrq_push(&pushdata);
+
+	/*===============================================================
+	 * MAKE & SEND APSISE
+	===============================================================*/
+	memset(sbuf,  0x00, sizeof(sbuf));
+
+	APSISE		*preal=sbuf;
+	MDFOLD		*pusdkrw;
+
+	pusdkrw = mds_getfold(exnm, DF_USDKRW, msg);
+	if (pusdkrw == NULL)		return (-1);
+
+	preal->excode[0] 	= pxchg->excode[0];
+	preal->bidex[0]		= pfold->bidex[0];		//psise->source[0];
+	preal->offerex[0]	= pfold->offerex[0];	//psise->source[0];
+	
+	memcpy(preal->symb, pfold->symb, sizeof(preal->symb));
+	sprintf(stemp, "%08d", parch->tymd);	MEMCPY(preal->date, stemp);
+	sprintf(stemp, "%02d%02d%02d%03d", tm->tm_hour, tm->tm_min, tm->tm_sec, tv.tv_usec/1000);	MEMCPY(preal->time, stemp);
+	
+	preal->bidprc		= pfold->bidlast;
+	preal->offerprc		= pfold->offerlast;
+	preal->bidqty		= pfold->bidvol;
+	preal->offerqty		= pfold->offervol;
+
+	preal->usdbid		= pusdkrw->bidlast;
+	preal->usdoffer		= pusdkrw->offerlast;
+
+	if (sendto(c_sock, sbuf, sizeof(APSISE), 0, (struct sockaddr *)&multisock, sizeof(multisock)) < 0) {
+		sprintf(msg, "[%s] sendto apsise error [%.7s] (%s)", __func__, preal->symb, strerror(errno));
+		close(c_sock);
+		return (-5);
+	}
+
+	close(c_sock);
+
+	return 0;
+}

@@ -1,0 +1,1753 @@
+//
+// Common schema interface initializer
+// Set procedure for market data cooking
+//
+#include"mds2.h"
+#define	_SCHEMA_H_
+#include "comrdb.h"
+
+#define		SQL_CNT		sqlca.sqlerrd[2]
+#define		FlotePoint	8
+
+EXEC SQL INCLUDE SQLCA;
+
+extern	MARKET	*market;
+
+/*
+//##### mds/src/lib/mds/mdsrdb.sqc
+int LoadMaster(MARKET *market);
+int INSERTTICKDATA(MARKET *market, MDSSISE *psise);
+int INSERTTICKDATA_CR(MARKET *market, MDFOLD *pfold, MDSSISE *pusdkrw);
+*/
+
+//###################################################################################
+//##### mds/src/lib/mds/mdsrdb.sqc
+
+/* 아래 함수의 합본임.
+loadmaster()
+InitMarketDate()
+initBasePriceData()
+SetBasePrice()
+reloadmaster()
+initSwapPriceData()
+initSwapPrice()
+initMarkupPriceData()
+initPriceOrign()
+roadPriceOrign()
+InitTrade()
+loadData()
+CustomPriceSetting() -> SendAndSavePriceData()
+*/
+int LoadMaster(MARKET *m)
+{
+	int		rtn, first=0;
+	INDEX	*indx, *pindx;
+	MDARCH	*parch;
+	MDFOLD	*fold, *pfold;
+	MDSSISE	msise;
+	uint32_t ymd, hms;
+
+EXEC SQL BEGIN DECLARE SECTION;
+	char	o_usdpos				[ 1+1];
+	char	o_fx_prdcd_cd			[ 6+1];
+	char	o_exrt_repsnt_nocip		[10+1];
+	char	o_ofpr_cust_rlnu_nocip	[10+1];
+	char	o_swap_rate_nocip		[10+1];
+	char	o_spt_ymd				[ 8+1];
+	//========================================
+	// TODO : DECIMAL 타입을 인쿼리 함수 DOUBLE()로 형변환 하면 nn.n20 으로 떨어지지 않고 nn.n199999999997 과 같이 변환 됨.
+	//        이런 현상으로 인해 double 형 변수에 직접 할당하지 못하고 char로 받아옴.
+	//========================================
+	char	v_bid_last_prc			[26+1];
+	char	v_offer_last_prc		[26+1];
+	char	v_mid_last_prc			[26+1];
+	char	v_bid_open_prc			[26+1];
+	char	v_bid_high_prc			[26+1];
+	char	v_bid_low_prc			[26+1];
+	char	v_offer_open_prc		[26+1];
+	char	v_offer_high_prc		[26+1];
+	char	v_offer_low_prc			[26+1];
+	char	v_mid_open_prc			[26+1];
+	char	v_mid_high_prc			[26+1];
+	char	v_mid_low_prc			[26+1];
+	char	v_fcm_id				[10+1];
+EXEC SQL END DECLARE SECTION;
+
+	parch	= (MDARCH *)m->arch;
+	pindx	= (INDEX  *)m->indx;
+	pfold	= (MDFOLD *)m->fold;
+	
+	mds_time(m, 0, &ymd, &hms, NULL, NULL);	// get local date & time
+
+	rtn = l_db2connect();		// 메모리 초기화를 위한 임시 CONNECT
+	if (rtn != 0)
+	{
+		mds_log(m, LOG_ERROR, "[%s] l_db2connect failed : (%d:%s)",__func__, rtn, SQLERRM);
+		return(-1);
+	}
+
+	memset(v_fcm_id, 0x00, sizeof(v_fcm_id));
+
+	memcpy(v_fcm_id, parch->xchg.exnm, sizeof(parch->xchg.exnm));
+	l_rtrim(v_fcm_id);
+
+	/*===============================================================
+	 * 마스터메모리 적재 대상 통화 조회
+	   > TODO : 원천(excode)별 대상 통화가 다를 시에는 TSKEIAM85 테이블에 KEY 추가필요
+	===============================================================*/	
+EXEC SQL DECLARE NEWMDS_C CURSOR FOR
+	SELECT	 FX_PRDCT_CD
+			,EXRT_REPSNT_NOCIP
+			,OFPR_CUST_RLNU_NOCIP
+			,SWAP_RATE_NOCIP
+			,DECODE(BASE_CNCYCD, 'USD', 0, 1)		-- USD위치 ("0": CADKRW=USDKRW/USDCAD, "1":EURKRW=USDKRW*EURUSD)
+			,SPT_YMD
+	  FROM	INST1.TSKEIAM85
+	 WHERE	GROUP_CO_CD	= 'KB0'
+	   AND	FINCL_YN	= '0'
+	   AND	MSTR_USE_YN	= '1'
+--	   AND	(SMBS_TRAN_ABIL_YN	= '1' OR STND_CRNCY_USE_YN = '1')
+	ORDER BY FX_PRDCT_CD
+	WITH UR
+	;
+
+EXEC SQL OPEN NEWMDS_C;
+	if (SQLCODE != 0 && SQLCODE != SQL_RC_W100)
+	{
+		mds_log(m, LOG_MUST, "[%-15s][%4d] ERROR OPEN NEWMDS_C [%s]\n", __FUNCTION__, __LINE__, SQLERRM);
+		EXEC SQL CLOSE NEWMDS_C;
+		return(-1);
+	}
+
+	// 현 상태 백업 용
+	int trdf, pricestat;
+
+	parch->nrec = 0;
+
+	while (1)
+	{
+		memset(o_fx_prdcd_cd,			0x00, sizeof(o_fx_prdcd_cd));
+		memset(o_exrt_repsnt_nocip,		0x00, sizeof(o_exrt_repsnt_nocip));
+		memset(o_ofpr_cust_rlnu_nocip,	0x00, sizeof(o_ofpr_cust_rlnu_nocip));
+		memset(o_swap_rate_nocip,		0x00, sizeof(o_swap_rate_nocip));
+		memset(o_usdpos, 				0x00, sizeof(o_usdpos));
+		memset(o_spt_ymd, 				0x00, sizeof(o_spt_ymd));
+		
+	EXEC SQL
+		FETCH NEWMDS_C
+		INTO	 :o_fx_prdcd_cd
+				,:o_exrt_repsnt_nocip
+				,:o_ofpr_cust_rlnu_nocip
+				,:o_swap_rate_nocip
+				,:o_usdpos
+				,:o_spt_ymd
+		;
+		if (SQLCODE == SQL_RC_W100)
+		{
+			if (SQL_CNT == 0)
+			{
+				mds_log(m, LOG_MUST, "[%s:%d] NOTFOUND FETCH NEWMDS_C [%s][%d]", __FUNCTION__, __LINE__, SQLERRM, SQL_CNT);
+			}
+			break;
+		}
+		else if (SQLCODE != 0)
+		{
+			mds_log(m, LOG_MUST, "[%s:%d] ERROR FETCH NEWMDS_C [%s]\n", __FUNCTION__, __LINE__, SQLERRM);
+			EXEC SQL CLOSE NEWMDS_C;
+			return(-2);
+		}
+		
+		l_rtrim(o_fx_prdcd_cd);
+		l_rtrim(o_exrt_repsnt_nocip);
+		l_rtrim(o_ofpr_cust_rlnu_nocip);
+		l_rtrim(o_swap_rate_nocip);
+		l_rtrim(o_spt_ymd);
+
+		fold = (MDFOLD *)&pfold[parch->nrec];
+		indx = (INDEX  *)&pindx[parch->nrec];
+
+		// FOLD 기초정보 세팅
+		if (fold->symb[0] == 0x00)	first = 1;		// 메모리 최초 초기화 상태여부
+		else						first = 0;
+
+		strcpy(fold->symb, o_fx_prdcd_cd);
+		fold->zdiv		= atoi(o_exrt_repsnt_nocip);
+		fold->zCustdiv	= atoi(o_ofpr_cust_rlnu_nocip);
+		fold->swapzdiv	= atoi(o_swap_rate_nocip);
+//		fold->usdpos	= atoi(o_usdpos);
+		memcpy(fold->spotdate, o_spt_ymd, sizeof(fold->spotdate));
+// ★TODO-15 : 24시간 가동하게 되면 초기화 시 영업일과 현재일자는 다를 수 있으므로 로직 체크 필요
+		fold->tymd		= ymd;
+		
+		// 초기화 전 시세처리 LOCK 및 현 상태 백업
+		pricestat		= fold->pricestat;
+		trdf			= fold->trdf;
+
+		fold->pricestat	= SISE_STOP;
+		fold->trdf		= DF_OFF;
+
+		// INDEX 정보 세팅
+		strcpy(indx->symb, o_fx_prdcd_cd);
+		indx->indx	= parch->nrec;
+		fold->seqn	= parch->nrec;
+
+		/*==============================================================
+	 	 * 마스터메모리 데이터 초기화 (from TSKEIMU52 일데이터)
+		===============================================================*/
+		memset(v_bid_last_prc,		0x00, sizeof(v_bid_last_prc));
+		memset(v_offer_last_prc,	0x00, sizeof(v_offer_last_prc));
+		memset(v_mid_last_prc,		0x00, sizeof(v_mid_last_prc));
+
+		// 전일자의 최종 환율정보 조회
+	EXEC SQL
+		SELECT	 BID_LAST_PRC
+				,OFFER_LAST_PRC
+				,(BID_LAST_PRC + OFFER_LAST_PRC)/2 --MID_LAST_PRC
+		  INTO	 :v_bid_last_prc
+				,:v_offer_last_prc
+				,:v_mid_last_prc
+		  FROM	INST1.TSKEIMU52
+		 WHERE	GROUP_CO_CD	= 'KB0'
+		   AND	FX_PRDCT_CD = :o_fx_prdcd_cd
+		   AND	REGI_YMD = (SELECT MAX(REGI_YMD) FROM INST1.TSKEIMU52 WHERE REGI_YMD <= TO_CHAR(CURRENT DATE - 1 DAY, 'YYYYMMDD'))
+		WITH UR
+		;
+		if (SQLCODE != 0)
+		{
+			mds_log(m, LOG_MUST, "[%s:%d] SELECT PRC FROM TSKEIMU52 ERROR [%s][%s] \n", __FUNCTION__, __LINE__, o_fx_prdcd_cd, SQLERRM);
+// 전일종가 없을 시.. 첫시세 수신하면 전일종가 세팅 (updatemast)
+//			continue;
+		}
+mds_log(m, LOG_MUST, "[%s] 전일종가 [%s:%.6s] [%s/%s/%s]", __func__, m->exnm, o_fx_prdcd_cd, v_bid_last_prc, v_offer_last_prc, v_mid_last_prc);
+
+		// 전일 최종 시세를 가져와 당일의 시/고/저/종 환율을 초기화 한다.
+		fold->baseprc	= str2d(v_mid_last_prc, FlotePoint);	// premid
+		fold->prebid	= str2d(v_bid_last_prc, FlotePoint);
+		fold->preoffer	= str2d(v_offer_last_prc, FlotePoint);
+
+		fold->bidlast = fold->bidopen = fold->bidhigh = fold->bidlow = fold->prebid;
+		fold->offerlast = fold->offeropen = fold->offerhigh = fold->offerlow = fold->preoffer;
+		fold->midopen = fold->midhigh = fold->midlow = fold->baseprc;
+
+		// update_mast()을 호출을 위한 시세패킷 세팅
+		memset(&msise, 0x00, sizeof(msise));
+		
+		memcpy (msise.excode,	parch->xchg.excode,	sizeof(msise.excode));		// BEST, CUST 인경우는 실제 EXCODE가 아닌 'B', 'Z'로 초기화 됨
+		memcpy (msise.symb,		fold->symb,			sizeof(msise.symb));
+		sprintf(msise.date,		"%08d",				ymd);
+		sprintf(msise.time,		"%06d000", 			hms);
+
+		// 당일 시세 있는 경우, 당일 최종 시세로 MDSSISE 패킷 생성
+		memset(v_bid_last_prc,		0x00, sizeof(v_bid_last_prc));
+		memset(v_offer_last_prc,	0x00, sizeof(v_offer_last_prc));
+		memset(v_mid_last_prc,		0x00, sizeof(v_mid_last_prc));
+		memset(v_bid_open_prc,		0x00, sizeof(v_bid_open_prc));
+		memset(v_bid_high_prc,		0x00, sizeof(v_bid_high_prc));
+		memset(v_bid_low_prc,		0x00, sizeof(v_bid_low_prc));
+		memset(v_offer_open_prc,	0x00, sizeof(v_offer_open_prc));
+		memset(v_offer_high_prc,	0x00, sizeof(v_offer_high_prc));
+		memset(v_offer_low_prc,		0x00, sizeof(v_offer_low_prc));
+		memset(v_mid_open_prc,		0x00, sizeof(v_mid_open_prc));
+		memset(v_mid_high_prc,		0x00, sizeof(v_mid_high_prc));
+		memset(v_mid_low_prc,		0x00, sizeof(v_mid_low_prc));
+
+		// 당일 최종 환율정보 조회
+	EXEC SQL
+		SELECT	 BID_LAST_PRC
+				,OFFER_LAST_PRC
+				,MID_LAST_PRC
+				,CASE WHEN(RGST_TIME = '000000000'OR REGI_YMD != TO_CHAR(CURRENT DATE, 'YYYYMMDD'))  THEN 0 ELSE BID_OPEN_PRC   END
+				,CASE WHEN(RGST_TIME = '000000000'OR REGI_YMD != TO_CHAR(CURRENT DATE, 'YYYYMMDD'))  THEN 0 ELSE BID_HIGH_PRC   END
+				,CASE WHEN(RGST_TIME = '000000000'OR REGI_YMD != TO_CHAR(CURRENT DATE, 'YYYYMMDD'))  THEN 0 ELSE BID_LOW_PRC    END
+				,CASE WHEN(RGST_TIME = '000000000'OR REGI_YMD != TO_CHAR(CURRENT DATE, 'YYYYMMDD'))  THEN 0 ELSE OFFER_OPEN_PRC END
+				,CASE WHEN(RGST_TIME = '000000000'OR REGI_YMD != TO_CHAR(CURRENT DATE, 'YYYYMMDD'))  THEN 0 ELSE OFFER_HIGH_PRC END
+				,CASE WHEN(RGST_TIME = '000000000'OR REGI_YMD != TO_CHAR(CURRENT DATE, 'YYYYMMDD'))  THEN 0 ELSE OFFER_LOW_PRC  END
+				,CASE WHEN(RGST_TIME = '000000000'OR REGI_YMD != TO_CHAR(CURRENT DATE, 'YYYYMMDD'))  THEN 0 ELSE (BID_OPEN_PRC + OFFER_OPEN_PRC)/2 END
+				,CASE WHEN(RGST_TIME = '000000000'OR REGI_YMD != TO_CHAR(CURRENT DATE, 'YYYYMMDD'))  THEN 0 ELSE (BID_HIGH_PRC + OFFER_HIGH_PRC)/2 END
+				,CASE WHEN(RGST_TIME = '000000000'OR REGI_YMD != TO_CHAR(CURRENT DATE, 'YYYYMMDD'))  THEN 0 ELSE (BID_LOW_PRC + OFFER_LOW_PRC)/2   END
+		  INTO	 :v_bid_last_prc
+		  		,:v_offer_last_prc
+		  		,:v_mid_last_prc
+				,:v_bid_open_prc
+				,:v_bid_high_prc
+				,:v_bid_low_prc
+				,:v_offer_open_prc
+				,:v_offer_high_prc
+				,:v_offer_low_prc
+				,:v_mid_open_prc
+				,:v_mid_high_prc
+				,:v_mid_low_prc
+		  FROM	INST1.TSKEIMU52
+		 WHERE	GROUP_CO_CD	= 'KB0'
+--		   AND	FX_EXCODE	= :i_excode
+		   AND	FX_PRDCT_CD = :o_fx_prdcd_cd
+		   AND	REGI_YMD = TO_CHAR(CURRENT DATE, 'YYYYMMDD')
+		WITH UR
+		;
+
+		// 당일 데이터가 없는 경우. 전일 최종 데이터로 시세패킷 생성
+		if (SQLCODE == SQL_RC_W100)
+		{
+			if (SQL_CNT == 0)
+			{
+mds_log(m, LOG_MUST, "[%s] 당일데이터 없음 [%s:%.6s]", __func__, m->exnm, o_fx_prdcd_cd);
+				msise.bidprc		= fold->bidlast;
+				msise.bidbestprc	= fold->bidlast;
+				msise.offerprc		= fold->offerlast;
+				msise.offerbestprc	= fold->offerlast;
+			}
+		}
+		// 당일 데이터가 있는 경우(장중 재기동) 조회된 값으로 마스트 메모리 세팅
+		else
+		{
+mds_log(m, LOG_MUST, "[%s] 당일데이터 [%s:%.6s] [%s/%s/%s]", __func__, m->exnm, o_fx_prdcd_cd, v_bid_last_prc, v_offer_last_prc, v_mid_last_prc);
+// ★TODO-16 : 장중에 마스터메모리 다시 적재 시 전일대비 세팅 로직 검토
+			fold->bidlast		= str2d(v_bid_last_prc,		FlotePoint);
+			fold->offerlast		= str2d(v_offer_last_prc,	FlotePoint);
+			
+			fold->bidopen		= str2d(v_bid_open_prc,		FlotePoint);
+			fold->bidhigh		= str2d(v_bid_high_prc,		FlotePoint);
+			fold->bidlow		= str2d(v_bid_low_prc,		FlotePoint);
+			fold->offeropen		= str2d(v_offer_open_prc,	FlotePoint);
+			fold->offerhigh		= str2d(v_offer_high_prc,	FlotePoint);
+			fold->offerlow		= str2d(v_offer_low_prc,	FlotePoint);
+			fold->midlast		= str2d(v_mid_last_prc,		FlotePoint);
+			fold->midopen		= str2d(v_mid_open_prc,		FlotePoint);
+			fold->midhigh		= str2d(v_mid_high_prc,		FlotePoint);
+			fold->midlow		= str2d(v_mid_low_prc,		FlotePoint);
+			
+			// 당일 최종 데이터로 시세패킷 생성
+			msise.bidprc		= str2d(v_bid_last_prc,		FlotePoint);
+			msise.bidbestprc	= str2d(v_bid_last_prc,		FlotePoint);
+			msise.offerprc		= str2d(v_offer_last_prc,	FlotePoint);
+			msise.offerbestprc	= str2d(v_offer_last_prc,	FlotePoint);
+		}
+		
+		msise.bidqty		= 0;
+		msise.bidbestqty	= 0;
+		msise.offerqty		= 0;
+		msise.offerbestqty	= 0;
+		
+		/*==============================================================
+	 	 * 가상의 내부시세패킷(MDSSISE) 생성 후 update_mast()을 호출
+	 	  > update_master() 는 장중 시세 수신 시 호출되는 함수
+	 	  > 환율외의 나머지 필드의 값을 초기화
+		===============================================================*/				
+		rtn = update_master(m, fold, &msise);
+		if (rtn < 0)
+		{
+			mds_log(m, LOG_MUST, "[%s] UPDATE MAST SHM(FOLD) ERROR [%s][%s] \n", __func__, o_fx_prdcd_cd, SQLERRM);
+			continue;
+		}
+
+// ★TODO-11 : 통화별 시세전송 상태 구분 체크 및 세팅로직 체크 필요 : if (pfold->pricestat == SOURCE_STOP - 1) //시세정지
+		// 최초 초기화시에는 거래정지 상태. 시세 수신 시에 update_master() 에서 trdf=1로 세팅. 중지이후 해제하였을 경우 시장가 체결방지.
+
+		// 초기화 후 시세처리 LOCK 해제 : 최초 초기화가 아닌 경우는 기존 상태 복원
+		fold->pricestat	= (first ? SISE_MARKET : pricestat);
+		fold->trdf		= (first ? 0 : trdf);
+
+		mds_log(m, LOG_MUST, "## [%s] [%s] SETUP MASTER SHM for [%.6s] DONE..", __func__, m->exnm, o_fx_prdcd_cd);
+		
+		// NEXT
+		(parch->nrec)++;
+	}
+	EXEC SQL CLOSE NEWMDS_C;
+
+	rtn = l_db2commit();
+	if (rtn != 0)
+	{
+		mds_log(m, LOG_ERROR, "[%s] l_db2commit failed : (%d:%s)",__func__, rtn, SQLERRM);
+		return(NULL);
+	}
+	
+	// INDEX 메모리 정렬 (SELECT 시 ORDER BY 했기 때문에 차이 없음) - 추후 제거 요망
+	mds_shmidxsort(m);
+
+	/*===============================================================
+	 * 통화별 고객시세 처리 시간 정보 세팅
+	===============================================================*/
+	if (m->excode[0] != DF_EXCD_CUST && m->excode[0] != DF_EXCD_BEST)
+		SetCustFeed(m);
+
+	rtn = l_db2disconnect();
+	if (rtn != 0)
+	{
+		mds_log(m, LOG_ERROR, "[%s] l_db2disconnect failed : (%d:%s)\n",__func__, rtn, SQLERRM);
+		return (-1);
+	}
+	
+	return (parch->nrec);
+
+} /* End of int LoadMaster(MARKET *m) */
+
+
+int InsertTrdTick(MDSSISE *psise)
+{
+	int		pind = 8;
+	
+EXEC SQL BEGIN DECLARE SECTION;
+	char	v_prc_orign_dstcd	[ 1+1];
+	char	v_fx_prdct_cd		[ 6+1];
+	char	v_trade_ymd			[ 8+1];
+	char	v_trade_time		[ 9+1];
+	char	v_trade_side		[ 1+1];
+	char	v_trade_prc			[20+1];
+	char	v_trade_vol			[20+1];
+	char	v_fx_ex_quote_id	[30+1];
+EXEC SQL END DECLARE SECTION;
+
+  //--------------------------------------------------------------------
+  // 1. initialization
+  //--------------------------------------------------------------------
+	memset(v_prc_orign_dstcd,	0x00, sizeof(v_prc_orign_dstcd));
+	memset(v_fx_prdct_cd,		0x00, sizeof(v_fx_prdct_cd));
+	memset(v_trade_ymd,			0x00, sizeof(v_trade_ymd));
+	memset(v_trade_time,		0x00, sizeof(v_trade_time));
+	memset(v_trade_side,		0x00, sizeof(v_trade_side));
+	memset(v_trade_prc,			0x00, sizeof(v_trade_prc));
+	memset(v_trade_vol,			0x00, sizeof(v_trade_vol));
+	memset(v_fx_ex_quote_id,	0x00, sizeof(v_fx_ex_quote_id));
+
+// ★TODO-18 : 마크업구분코드. CMBS, Reuter, Manual 인 경우 '2'  그 외는 '1'
+	v_prc_orign_dstcd[0] = psise->excode[0];
+
+	sprintf(v_fx_prdct_cd,	"%.6s%",	psise->symb);
+	sprintf(v_trade_ymd,	"%.8s",		psise->date);
+	sprintf(v_trade_time,	"%.9s",		psise->time);
+
+	if (psise->bidprc > 0.)
+	{
+		v_trade_side[0] = '1';
+		sprintf(v_trade_prc,	"%.*f",		pind, psise->bidprc);
+		sprintf(v_trade_vol,	"%.f",		psise->bidqty);
+	}
+	else
+	{
+		v_trade_side[0] = '2';
+		sprintf(v_trade_prc,	"%.*f",		pind, psise->offerprc);
+		sprintf(v_trade_vol,	"%.f",		psise->offerqty);
+	}
+	sprintf(v_fx_ex_quote_id, "%s", psise->quotid);
+
+	l_rtrim(v_prc_orign_dstcd);
+	l_rtrim(v_fx_prdct_cd);
+	l_rtrim(v_trade_ymd);
+	l_rtrim(v_trade_time);
+	l_rtrim(v_trade_side);
+	l_rtrim(v_trade_prc);
+	l_rtrim(v_trade_vol);
+	l_rtrim(v_fx_ex_quote_id);
+
+	//--------------------------------------------------------------------
+	// 1. initialization
+	//--------------------------------------------------------------------
+EXEC SQL 
+	INSERT INTO INST1.TSKEIMU80 (
+			 GROUP_CO_CD
+			,PRC_ORIGN_DSTCD
+			,FX_PRDCT_CD
+			,TRADE_YMD
+			,TRADE_TIME
+			,TRADE_SIDE
+			,TRADE_PRC
+			,TRADE_VOL
+			,FX_EX_QUOTE_ID
+			,SYS_LAST_PRCSS_YMS
+			,SYS_LAST_UNO
+	) VALUES (
+			'KB0'
+			,:v_prc_orign_dstcd
+			,:v_fx_prdct_cd
+			,:v_trade_ymd
+			,:v_trade_time
+			,:v_trade_side
+			,:v_trade_prc
+			,:v_trade_vol
+			,:v_fx_ex_quote_id
+			, SUBSTR(HEX(CURRENT TIMESTAMP),1,20)
+			,'KEI000'
+	);
+
+	if (SQLCODE != 0 && abs(SQLCODE) != 803)
+	{
+		mds_log(market, LOG_MUST, "TSKEIMU80 insert error [%.1s:%.6s] [%s]  \n", psise->excode, v_fx_prdct_cd, SQLERRM);
+		return(-1);
+	}
+
+	return(0);
+} /* End of int InsertTrdTick(MDSSISE *psise) */
+
+
+int InsertTick(MDSSISE *psise)
+{
+	int		pind = 8;
+	
+EXEC SQL BEGIN DECLARE SECTION;
+	char	v_mrkup_dstcd		[ 1+1];
+	char	v_fx_prdct_cd		[ 6+1];
+	char	v_rgst_date			[ 8+1];
+	char	v_rgst_time			[ 9+1];
+	char	v_bid_last_prc		[20+1];
+	char	v_offer_last_prc	[20+1];
+	char	v_mid_last_prc		[20+1];
+	char	v_fx_ex_quote_id	[30+1];
+EXEC SQL END DECLARE SECTION;
+
+  //--------------------------------------------------------------------
+  // 1. initialization
+  //--------------------------------------------------------------------
+	memset(v_mrkup_dstcd,		0x00, sizeof(v_mrkup_dstcd));
+	memset(v_fx_prdct_cd,		0x00, sizeof(v_fx_prdct_cd));
+	memset(v_rgst_date,			0x00, sizeof(v_rgst_date));
+	memset(v_rgst_time,			0x00, sizeof(v_rgst_time));
+	memset(v_bid_last_prc,		0x00, sizeof(v_bid_last_prc));
+	memset(v_offer_last_prc,	0x00, sizeof(v_offer_last_prc));
+	memset(v_mid_last_prc,		0x00, sizeof(v_mid_last_prc));
+	memset(v_fx_ex_quote_id,	0x00, sizeof(v_fx_ex_quote_id));
+
+// ★TODO-18 : 마크업구분코드. CMBS, Reuter, Manual 인 경우 '2'  그 외는 '1'
+	if (psise->excode[0] == 'C' || psise->excode[0] == 'R' || psise->excode[0] == 'H')
+		v_mrkup_dstcd[0] = '2';
+	else
+		v_mrkup_dstcd[0] = '1';
+
+	sprintf(v_fx_prdct_cd,		"%.6s%",	psise->symb);
+	sprintf(v_rgst_date,		"%.8s",		psise->date);
+	sprintf(v_rgst_time,		"%.9s",		psise->time);
+	sprintf(v_bid_last_prc,		"%.*f",		pind, psise->bidprc);
+	sprintf(v_offer_last_prc,	"%.*f",		pind, psise->offerprc);
+	sprintf(v_mid_last_prc,		"%.*f",		pind, (psise->bidprc + psise->offerprc)/2);
+	sprintf(v_fx_ex_quote_id,	"%.*s",		sizeof(psise->quotid), psise->quotid);
+
+	l_rtrim(v_mrkup_dstcd);
+	l_rtrim(v_fx_prdct_cd);
+	l_rtrim(v_rgst_date);
+	l_rtrim(v_rgst_time);
+	l_rtrim(v_bid_last_prc);
+	l_rtrim(v_offer_last_prc);
+	l_rtrim(v_mid_last_prc);
+	l_rtrim(v_fx_ex_quote_id);
+
+	//--------------------------------------------------------------------
+	// 1. initialization
+	//--------------------------------------------------------------------
+EXEC SQL 
+	INSERT INTO INST1.TSKEIMU50 (
+			 GROUP_CO_CD
+			,MRKUP_DSTCD --
+			,FX_PRDCT_CD
+			,REGI_YMD
+			,RGST_TIME
+			,BID_LAST_PRC
+			,OFFER_LAST_PRC
+			,MID_LAST_PRC --
+			,FX_EX_QUOTE_ID --
+			,SYS_LAST_PRCSS_YMS
+			,SYS_LAST_UNO
+	) VALUES (
+			'KB0'
+			,:v_mrkup_dstcd
+			,:v_fx_prdct_cd
+			,:v_rgst_date
+			,:v_rgst_time
+			,:v_bid_last_prc
+			,:v_offer_last_prc
+			,:v_mid_last_prc
+			,:v_fx_ex_quote_id
+			, SUBSTR(HEX(CURRENT TIMESTAMP),1,20)
+			,'KEI000'
+	);
+
+	// TODO : RSGT_TIME이 msec 이어서 시세가 많은 경우 중복에러(-803) 이 발생함
+	if (SQLCODE != 0 && abs(SQLCODE) != 803)
+	{
+		mds_log(market, LOG_MUST, "TSKEIMU50 insert error [%.1s:%.6s:%.9s] [%s]  \n", psise->excode, v_fx_prdct_cd, v_rgst_time, SQLERRM);
+		return(-1);
+	}
+
+	return(0);
+} /* End of int InsertTick(MDSSISE *psise) */
+
+int InsertTick_Fincl(MDSSISE *psise, MDFOLD *pfold, MDFOLD *pusdkrw)
+{
+	int		pind = 8;
+	
+EXEC SQL BEGIN DECLARE SECTION;
+	char	v_fx_prdct_cd		[ 6+1];
+	char	v_regi_ymd			[ 8+1];
+	char	v_rgst_time			[ 9+1];
+	char	v_mrkup_dstcd		[ 1+1];
+	char	v_fx_prdct_base_cd	[ 6+1];
+	char	v_bid_last_prc		[20+1];
+	char	v_offer_last_prc	[20+1];
+	char	v_usd_mrkup_dstcd	[ 1+1];
+	char	v_usd_bid_prc		[20+1];
+	char	v_usd_offer_prc		[20+1];
+	char	v_fx_ex_quote_id	[30+1];
+EXEC SQL END DECLARE SECTION;
+	double	d_bid_prc			= 0.0;
+	double	d_offer_prc			= 0.0;
+
+  //--------------------------------------------------------------------
+  // 1. initialization
+  //--------------------------------------------------------------------
+	memset(v_fx_prdct_cd		, 0x00, sizeof(v_fx_prdct_cd));
+	memset(v_regi_ymd			, 0x00, sizeof(v_regi_ymd));
+	memset(v_rgst_time			, 0x00, sizeof(v_rgst_time));
+	memset(v_mrkup_dstcd		, 0x00, sizeof(v_mrkup_dstcd));
+	memset(v_fx_prdct_base_cd	, 0x00, sizeof(v_fx_prdct_base_cd));
+	memset(v_bid_last_prc		, 0x00, sizeof(v_bid_last_prc));
+	memset(v_offer_last_prc		, 0x00, sizeof(v_offer_last_prc));
+	memset(v_usd_mrkup_dstcd	, 0x00, sizeof(v_usd_mrkup_dstcd));
+	memset(v_usd_bid_prc		, 0x00, sizeof(v_usd_bid_prc));
+	memset(v_usd_offer_prc		, 0x00, sizeof(v_usd_offer_prc));
+	memset(v_fx_ex_quote_id		, 0x00, sizeof(v_fx_ex_quote_id));
+
+//	if (pfold->usdpos == 0)			// USD위치 ("0": CADKRW=USDKRW/USDCAD, "1":EURKRW=USDKRW*EURUSD)
+	if (memcmp(pfold->symb, "USD", 3) == 0)
+		memcpy(v_fx_prdct_cd, &pfold->symb[3], 3);
+	else
+		memcpy(v_fx_prdct_cd, &pfold->symb, 3);
+	memcpy(&v_fx_prdct_cd[3], "KRW", 3);
+
+	sprintf(v_regi_ymd,			"%.8s",		psise->date);
+	sprintf(v_rgst_time,		"%.9s",		psise->time);
+	if (pfold->bidex[0] == 'C' || pfold->bidex[0] == 'R' || pfold->bidex[0] == 'H')
+		v_mrkup_dstcd[0] = '2';
+	else
+		v_mrkup_dstcd[0] = '1';
+
+	// USDKRW 수신으로 재정통화계산 시에는 psise값은 미사용, 두 통화의 마스트메모리 값으로 계산함.
+	if (memcmp(psise->symb, DF_USDKRW, 6) == 0)
+	{
+		d_bid_prc	= pfold->bidlast;
+		d_offer_prc	= pfold->offerlast;
+	}
+	else
+	{
+		d_bid_prc	= psise->bidprc;
+		d_offer_prc	= psise->offerprc;
+	}
+
+	sprintf(v_fx_prdct_base_cd,	"%.6s%",	pfold->symb);
+	sprintf(v_bid_last_prc,		"%.*f",		pind, d_bid_prc);
+	sprintf(v_offer_last_prc,	"%.*f",		pind, d_offer_prc);
+
+	if (pusdkrw->bidex[0] == 'C' || pusdkrw->bidex[0] == 'R' || pusdkrw->bidex[0] == 'H')
+		v_usd_mrkup_dstcd[0] = '2';
+	else
+		v_usd_mrkup_dstcd[0] = '1';
+	sprintf(v_usd_bid_prc,		"%.*f",		pind, pusdkrw->bidlast);
+	sprintf(v_usd_offer_prc,	"%.*f",		pind, pusdkrw->offerlast);
+	sprintf(v_fx_ex_quote_id,	"%.*s",		sizeof(psise->quotid), psise->quotid);
+	
+	l_rtrim(v_fx_prdct_cd);
+	l_rtrim(v_regi_ymd);
+	l_rtrim(v_rgst_time);
+	l_rtrim(v_mrkup_dstcd);
+	l_rtrim(v_fx_prdct_base_cd);
+	l_rtrim(v_bid_last_prc);
+	l_rtrim(v_offer_last_prc);
+	l_rtrim(v_usd_mrkup_dstcd);
+	l_rtrim(v_usd_bid_prc);
+	l_rtrim(v_usd_offer_prc);
+	l_rtrim(v_fx_ex_quote_id);
+
+	//--------------------------------------------------------------------
+	// 1. initialization
+	//--------------------------------------------------------------------
+EXEC SQL 
+	INSERT INTO INST1.TSKEIMU70 (
+			 GROUP_CO_CD
+			,FX_PRDCT_CD
+			,REGI_YMD
+			,RGST_TIME
+			,MRKUP_DSTCD
+			,FX_PRDCT_BASE_CD
+			,BID_LAST_PRC
+			,OFFER_LAST_PRC
+			,USD_MRKUP_DSTCD
+			,USD_BID_PRC
+			,USD_OFFER_PRC
+			,FX_EX_QUOTE_ID
+			,SYS_LAST_PRCSS_YMS
+			,SYS_LAST_UNO
+	) VALUES (
+			'KB0'
+			,:v_fx_prdct_cd
+			,:v_regi_ymd
+			,:v_rgst_time
+			,:v_mrkup_dstcd
+			,:v_fx_prdct_base_cd
+			,:v_bid_last_prc
+			,:v_offer_last_prc
+			,:v_usd_mrkup_dstcd
+			,:v_usd_bid_prc
+			,:v_usd_offer_prc
+			,:v_fx_ex_quote_id
+			, SUBSTR(HEX(CURRENT TIMESTAMP),1,20)
+			,'KEI000'
+	);
+
+	// TODO : RSGT_TIME이 msec 이어서 시세가 많은 경우 중복에러(-803) 이 발생함
+	if (SQLCODE != 0 && abs(SQLCODE) != 803)
+	{
+		mds_log(market, LOG_MUST, "TSKEIMU70 insert error [%.1s:%.6s:%.9s] [%s]  \n", psise->excode, v_fx_prdct_cd, v_rgst_time, SQLERRM);
+		return(-1);
+	}
+
+	return(0);
+} /* End of int InsertTick_Fincl(MDSSISE *psise, MDFOLD *pfold, MDFOLD *pusdkrw) */
+
+int UpsertMin(MDSSISE *psise)
+{
+	int		pind = 8;
+	
+EXEC SQL BEGIN DECLARE SECTION;
+	char	v_mrkup_dstcd       [ 1+1];
+	char	v_fx_prdct_cd       [ 6+1];
+	char	v_regi_ymd          [ 8+1];
+	char	v_rgst_time         [ 9+1];
+	char	v_bid_last_prc      [20+1];
+	char	v_offer_last_prc    [20+1];
+	char	v_mid_last_prc      [20+1];
+EXEC SQL END DECLARE SECTION;
+
+	memset(v_mrkup_dstcd   , 0x00, sizeof(v_mrkup_dstcd   ));
+	memset(v_fx_prdct_cd   , 0x00, sizeof(v_fx_prdct_cd   ));
+	memset(v_regi_ymd      , 0x00, sizeof(v_regi_ymd      ));
+	memset(v_rgst_time     , 0x00, sizeof(v_rgst_time     ));
+	memset(v_bid_last_prc  , 0x00, sizeof(v_bid_last_prc  ));
+	memset(v_offer_last_prc, 0x00, sizeof(v_offer_last_prc));
+	memset(v_mid_last_prc  , 0x00, sizeof(v_mid_last_prc  ));
+
+	sprintf(v_fx_prdct_cd,	"%.6s%",		psise->symb);
+	sprintf(v_regi_ymd,		"%.8s",			psise->date);
+	sprintf(v_rgst_time,	"%.4s00000",	psise->time);
+	if (psise->excode[0] == 'C' || psise->excode[0] == 'R' || psise->excode[0] == 'H')
+		v_mrkup_dstcd[0] = '2';
+	else
+		v_mrkup_dstcd[0] = '1';
+
+	sprintf(v_bid_last_prc,		"%.*f",		pind, psise->bidprc);
+	sprintf(v_offer_last_prc,	"%.*f",		pind, psise->offerprc);
+	sprintf(v_mid_last_prc,		"%.*f",		pind, (psise->bidprc+psise->offerprc)/2);
+
+	l_rtrim(v_mrkup_dstcd   );
+	l_rtrim(v_fx_prdct_cd   );
+	l_rtrim(v_regi_ymd      );
+	l_rtrim(v_rgst_time     );
+	l_rtrim(v_bid_last_prc  );
+	l_rtrim(v_offer_last_prc);
+	l_rtrim(v_mid_last_prc  );
+
+EXEC SQL 
+	UPDATE INST1.TSKEIMU51
+	SET	 GROUP_CO_CD        = 'KB0'
+		,MRKUP_DSTCD        = :v_mrkup_dstcd
+		,FX_PRDCT_CD        = :v_fx_prdct_cd
+		,REGI_YMD           = :v_regi_ymd
+		,RGST_TIME          = :v_rgst_time
+		,BID_LAST_PRC       = :v_bid_last_prc
+		,OFFER_LAST_PRC     = :v_offer_last_prc
+--		,BID_OPEN_PRC       = :v_bid_last_prc
+		,BID_HIGH_PRC       = CASE WHEN BID_HIGH_PRC < :v_bid_last_prc THEN :v_bid_last_prc ELSE BID_HIGH_PRC END
+		,BID_LOW_PRC        = CASE WHEN BID_LOW_PRC  > :v_bid_last_prc THEN :v_bid_last_prc ELSE BID_LOW_PRC  END
+--		,OFFER_OPEN_PRC     = :v_offer_last_prc
+		,OFFER_HIGH_PRC     = CASE WHEN OFFER_HIGH_PRC < :v_offer_last_prc THEN :v_offer_last_prc ELSE OFFER_HIGH_PRC END
+		,OFFER_LOW_PRC      = CASE WHEN OFFER_LOW_PRC  > :v_offer_last_prc THEN :v_offer_last_prc ELSE OFFER_LOW_PRC  END
+		,MID_LAST_PRC       = :v_mid_last_prc
+		,SYS_LAST_PRCSS_YMS = SUBSTR(HEX(CURRENT TIMESTAMP),1,20)
+		,SYS_LAST_UNO       = 'KEI000'
+	WHERE	GROUP_CO_CD	='KB0'
+	  AND	FX_PRDCT_CD	= :v_fx_prdct_cd
+	  AND	REGI_YMD	= :v_regi_ymd
+	  AND	RGST_TIME	= :v_rgst_time
+	;
+	if (SQLCODE == 100) 
+	{
+	EXEC SQL 
+		INSERT INTO INST1.TSKEIMU51 (
+			 GROUP_CO_CD
+			,MRKUP_DSTCD
+			,FX_PRDCT_CD
+			,REGI_YMD
+			,RGST_TIME
+			,BID_LAST_PRC
+			,OFFER_LAST_PRC
+			,BID_OPEN_PRC
+			,BID_HIGH_PRC
+			,BID_LOW_PRC
+			,OFFER_OPEN_PRC
+			,OFFER_HIGH_PRC
+			,OFFER_LOW_PRC
+			,MID_LAST_PRC
+			,SYS_LAST_PRCSS_YMS
+			,SYS_LAST_UNO
+		) VALUES (
+			 'KB0'
+			,:v_mrkup_dstcd
+			,:v_fx_prdct_cd
+			,:v_regi_ymd
+			,:v_rgst_time
+			,:v_bid_last_prc
+			,:v_offer_last_prc
+			,:v_bid_last_prc
+			,:v_bid_last_prc
+			,:v_bid_last_prc
+			,:v_offer_last_prc
+			,:v_offer_last_prc
+			,:v_offer_last_prc
+			,:v_mid_last_prc
+			,SUBSTR(HEX(CURRENT TIMESTAMP),1,20)
+			,'KEI000'
+		);
+		if (SQLCODE != 0)
+		{
+			mds_log(market, LOG_MUST, "TSKEIMU51 insert error [%.1s:%.6s] [%s] \n", psise->excode, psise->symb, SQLERRM);
+			return(-1);
+		}
+	}
+	else if (SQLCODE != 0)
+	{
+		mds_log(market, LOG_MUST, "TSKEIMU51 update error [%.1s:%.6s] [%s] \n", psise->excode, psise->symb, SQLERRM);
+		return(-1);
+	}
+
+	return (0);
+
+} /* End of int UpsertMin(MDSSISE *psise) */
+
+
+int UpsertMin_Fincl(MDSSISE *psise, MDFOLD *pfold, MDFOLD *pusdkrw)
+{
+	int		pind = 8;
+	
+EXEC SQL BEGIN DECLARE SECTION;
+	char	v_mrkup_dstcd       [ 1+1];
+	char	v_fx_prdct_cd       [ 6+1];
+	char	v_regi_ymd          [ 8+1];
+	char	v_rgst_time         [ 9+1];
+	char	v_bid_last_prc      [20+1];
+	char	v_offer_last_prc    [20+1];
+	char	v_mid_last_prc      [20+1];
+	char	v_usd_mrkup_dstcd	[ 1+1];
+	char	v_usd_bid_last_prc	[20+1];
+	char	v_usd_offer_last_prc[20+1];
+	char	v_usd_mid_last_prc	[20+1];
+
+	double  d_bid_high_prc      ;
+	double  d_bid_low_prc       ;
+	double  d_offer_high_prc    ;
+	double  d_offer_low_prc     ;
+	int     i_bh                ;
+	int     i_bl                ;
+	int     i_oh                ;
+	int     i_ol                ;
+EXEC SQL END DECLARE SECTION;
+
+	double  fn_bid              = 0.0;
+	double  fn_offer            = 0.0;
+	double  fn_baseprc          = 0.0;
+	double  d_updwn_rato        = 0.0;
+	double  d_mid_last_prc      = 0.0;
+	double	d_bid_prc			= 0.0;
+	double	d_offer_prc			= 0.0;
+
+	memset(v_mrkup_dstcd   		, 0x00, sizeof(v_mrkup_dstcd   ));
+	memset(v_fx_prdct_cd   		, 0x00, sizeof(v_fx_prdct_cd   ));
+	memset(v_regi_ymd      		, 0x00, sizeof(v_regi_ymd      ));
+	memset(v_rgst_time     		, 0x00, sizeof(v_rgst_time     ));
+	memset(v_bid_last_prc  		, 0x00, sizeof(v_bid_last_prc  ));
+	memset(v_offer_last_prc		, 0x00, sizeof(v_offer_last_prc));
+	memset(v_mid_last_prc  		, 0x00, sizeof(v_mid_last_prc  ));
+	memset(v_usd_mrkup_dstcd	, 0x00, sizeof(v_usd_mrkup_dstcd));
+	memset(v_usd_bid_last_prc	, 0x00, sizeof(v_usd_bid_last_prc));
+	memset(v_usd_offer_last_prc	, 0x00, sizeof(v_usd_offer_last_prc));
+	memset(v_usd_mid_last_prc	, 0x00, sizeof(v_usd_mid_last_prc));
+
+	d_bid_high_prc      = 0.0;
+	d_bid_low_prc       = 0.0;
+	d_offer_high_prc    = 0.0;
+	d_offer_low_prc     = 0.0;
+
+	i_bh = i_bl = i_oh = i_ol = 0;
+
+	//	if (pfold->usdpos == 0)			// USD위치 ("0": CADKRW=USDKRW/USDCAD, "1":EURKRW=USDKRW*EURUSD)
+	if (memcmp(pfold->symb, "USD", 3) == 0) memcpy(v_fx_prdct_cd, &pfold->symb[3], 3);
+	else 									memcpy(v_fx_prdct_cd, &pfold->symb, 3);
+	memcpy(&v_fx_prdct_cd[3], "KRW", 3);
+
+	sprintf(v_regi_ymd,		"%.8s",			psise->date);
+	sprintf(v_rgst_time,	"%.4s00000",	psise->time);
+
+	//if (pfold->bidex[0] == 'C' || pfold->bidex[0] == 'R' || pfold->bidex[0] == 'H')
+	if (psise->excode[0] == 'C' || psise->excode[0] == 'R' || psise->excode[0] == 'H')
+		v_mrkup_dstcd[0] = '2';
+	else
+		v_mrkup_dstcd[0] = '1';
+
+	// USDKRW 수신으로 재정통화계산 시에는 psise값은 미사용, 두 통화의 마스트메모리 값으로 계산함.
+	if (memcmp(psise->symb, DF_USDKRW, 6) == 0)
+	{
+		d_bid_prc	= pfold->bidlast;
+		d_offer_prc	= pfold->offerlast;
+	}
+	else
+	{
+		d_bid_prc	= psise->bidprc;
+		d_offer_prc	= psise->offerprc;
+	}
+
+	sprintf(v_bid_last_prc,		"%.*f",		pind, d_bid_prc);
+	sprintf(v_offer_last_prc,	"%.*f",		pind, d_offer_prc);
+
+	if (memcmp(pfold->symb, "USD", 3) == 0)
+	{
+		fn_bid      = pusdkrw->bidlast/d_bid_prc;
+		fn_offer    = pusdkrw->offerlast/d_offer_prc;
+		fn_baseprc  = pusdkrw->baseprc/pfold->baseprc;
+	}
+	else
+	{
+		fn_bid      = pusdkrw->bidlast*d_bid_prc;
+		fn_offer    = pusdkrw->offerlast*d_offer_prc;
+		fn_baseprc  = pusdkrw->baseprc*pfold->baseprc;
+	}
+
+	d_mid_last_prc = (fn_bid + fn_offer)/2; 
+	sprintf(v_mid_last_prc,		"%.*f",		pind, (d_bid_prc+d_offer_prc)/2);
+
+	if (d_mid_last_prc <= 0.0)  return (-1);
+
+	if (pusdkrw->bidex[0] == 'C' || pusdkrw->bidex[0] == 'R' || pusdkrw->bidex[0] == 'H')
+		v_usd_mrkup_dstcd[0] = '2';
+	else
+		v_usd_mrkup_dstcd[0] = '1';
+	sprintf(v_usd_bid_last_prc,		"%.*f",		pind, pusdkrw->bidlast);
+	sprintf(v_usd_offer_last_prc,	"%.*f",		pind, pusdkrw->offerlast);
+	sprintf(v_usd_mid_last_prc,		"%.*f",		pind, (pusdkrw->bidlast+pusdkrw->offerlast)/2);
+
+	l_rtrim(v_mrkup_dstcd   );
+	l_rtrim(v_fx_prdct_cd   );
+	l_rtrim(v_regi_ymd      );
+	l_rtrim(v_rgst_time     );
+	l_rtrim(v_bid_last_prc  );
+	l_rtrim(v_offer_last_prc);
+	l_rtrim(v_mid_last_prc  );
+	l_rtrim(v_usd_mrkup_dstcd);
+	l_rtrim(v_usd_bid_last_prc);
+	l_rtrim(v_usd_offer_last_prc);
+	l_rtrim(v_usd_mid_last_prc);
+
+	EXEC SQL
+	SELECT   CASE WHEN SUBSTR(FX_PRDCT_CD,1,3)='USD' THEN USD_BID_HIGH_PRC/BID_HIGH_PRC     ELSE USD_BID_HIGH_PRC*BID_HIGH_PRC     END
+			,CASE WHEN SUBSTR(FX_PRDCT_CD,1,3)='USD' THEN USD_BID_LOW_PRC/BID_LOW_PRC       ELSE USD_BID_LOW_PRC*BID_LOW_PRC       END
+			,CASE WHEN SUBSTR(FX_PRDCT_CD,1,3)='USD' THEN USD_OFFER_HIGH_PRC/OFFER_HIGH_PRC ELSE USD_OFFER_HIGH_PRC*OFFER_HIGH_PRC END
+			,CASE WHEN SUBSTR(FX_PRDCT_CD,1,3)='USD' THEN USD_OFFER_LOW_PRC/OFFER_LOW_PRC   ELSE USD_OFFER_LOW_PRC*OFFER_LOW_PRC   END
+	INTO   :d_bid_high_prc
+			,:d_bid_low_prc
+			,:d_offer_high_prc
+			,:d_offer_low_prc
+	FROM  INST1.TSKEIMU71
+	WHERE   GROUP_CO_CD ='KB0'
+		AND   FX_PRDCT_CD = :v_fx_prdct_cd
+		AND   REGI_YMD    = :v_regi_ymd
+		AND   RGST_TIME   = :v_rgst_time
+	;
+
+	if (SQLCODE == 100)
+	{
+		EXEC SQL 
+		INSERT INTO INST1.TSKEIMU71 (
+			 GROUP_CO_CD
+			,FX_PRDCT_CD
+			,REGI_YMD
+			,RGST_TIME
+			,MRKUP_DSTCD
+			,USD_MRKUP_DSTCD
+			,BID_OPEN_PRC
+			,BID_HIGH_PRC
+			,BID_LOW_PRC
+			,BID_LAST_PRC
+			,OFFER_OPEN_PRC
+			,OFFER_HIGH_PRC
+			,OFFER_LOW_PRC
+			,OFFER_LAST_PRC
+			,MID_LAST_PRC
+			,USD_BID_OPEN_PRC
+			,USD_BID_HIGH_PRC
+			,USD_BID_LOW_PRC
+			,USD_BID_LAST_PRC
+			,USD_OFFER_OPEN_PRC
+			,USD_OFFER_HIGH_PRC
+			,USD_OFFER_LOW_PRC
+			,USD_OFFER_LAST_PRC
+			,USD_MID_LAST_PRC
+			,SYS_LAST_PRCSS_YMS
+			,SYS_LAST_UNO
+		) VALUES (
+			 'KB0'
+			,:v_fx_prdct_cd
+			,:v_regi_ymd
+			,:v_rgst_time
+			,:v_mrkup_dstcd
+			,:v_usd_mrkup_dstcd
+			,:v_bid_last_prc
+			,:v_bid_last_prc
+			,:v_bid_last_prc
+			,:v_bid_last_prc
+			,:v_offer_last_prc
+			,:v_offer_last_prc
+			,:v_offer_last_prc
+			,:v_offer_last_prc
+			,:v_mid_last_prc
+			,:v_usd_bid_last_prc
+			,:v_usd_bid_last_prc
+			,:v_usd_bid_last_prc
+			,:v_usd_bid_last_prc
+			,:v_usd_offer_last_prc
+			,:v_usd_offer_last_prc
+			,:v_usd_offer_last_prc
+			,:v_usd_offer_last_prc
+			,:v_usd_mid_last_prc
+			, SUBSTR(HEX(CURRENT TIMESTAMP),1,20)
+			,'KEI000'
+		);
+
+	}
+	if (SQLCODE != 0)
+	{
+		mds_log(market, LOG_MUST, "TSKEIMU71 insert error [%.1s:%.6s] [%s] \n", psise->excode, psise->symb, SQLERRM);
+		return(-1);
+	}
+
+
+	/*===============================================================
+	* 고가와 저가는 계산된 재정환율을 기준으로 비교 함
+	* 계산된 재정환율이 고가를 갱신한 경우에 각 HIGH_PRC, USD_HIGH_PRC, HIGH_PRC_TIME 업데이트
+	* 계산된 재정환율이 저가를 갱신한 경우에 각 LOW_PRC, USD_LOW_PRC, LOW_PRC_TIME 업데이트
+	===============================================================*/
+	if (fn_bid > d_bid_high_prc)            i_bh = 1;
+	else if (fn_bid < d_bid_low_prc)        i_bl = 1;
+
+	if (fn_offer > d_offer_high_prc)        i_oh = 1;
+	else if (fn_offer < d_offer_low_prc)    i_ol = 1;
+
+	EXEC SQL 
+	UPDATE INST1.TSKEIMU71
+	SET	 
+--	   	 GROUP_CO_CD        = 'KB0'
+		 MRKUP_DSTCD        = :v_mrkup_dstcd
+		,USD_MRKUP_DSTCD    = :v_usd_mrkup_dstcd
+		,FX_PRDCT_CD        = :v_fx_prdct_cd
+--		,REGI_YMD           = :v_regi_ymd
+		,RGST_TIME          = :v_rgst_time
+		,BID_LAST_PRC       = :v_bid_last_prc
+		,OFFER_LAST_PRC     = :v_offer_last_prc
+--		,BID_OPEN_PRC       = :v_bid_last_prc
+		,BID_HIGH_PRC       = DECODE(:i_bh, 1, :v_bid_last_prc, BID_HIGH_PRC)
+		,BID_LOW_PRC        = DECODE(:i_bl, 1, :v_bid_last_prc, BID_LOW_PRC )
+--		,OFFER_OPEN_PRC     = :v_offer_last_prc
+		,OFFER_HIGH_PRC     = DECODE(:i_oh, 1, :v_offer_last_prc, OFFER_HIGH_PRC)
+		,OFFER_LOW_PRC      = DECODE(:i_ol, 1, :v_offer_last_prc, OFFER_LOW_PRC )
+		,USD_BID_LAST_PRC   = :v_usd_bid_last_prc
+		,MID_LAST_PRC       = :v_mid_last_prc
+--		,USD_BID_OPEN_PRC   = :v_usd_bid_last_prc
+		,USD_BID_HIGH_PRC   = DECODE(:i_bh, 1, :v_usd_bid_last_prc, USD_BID_HIGH_PRC)
+		,USD_BID_LOW_PRC    = DECODE(:i_bl, 1, :v_usd_bid_last_prc, USD_BID_LOW_PRC )
+--		,USD_OFFER_OPEN_PRC = :v_usd_offer_last_prc
+		,USD_OFFER_HIGH_PRC = CASE WHEN USD_OFFER_HIGH_PRC < :v_usd_offer_last_prc THEN :v_usd_offer_last_prc ELSE USD_OFFER_HIGH_PRC END
+		,USD_OFFER_LOW_PRC  = CASE WHEN USD_OFFER_LOW_PRC  > :v_usd_offer_last_prc THEN :v_usd_offer_last_prc ELSE USD_OFFER_LOW_PRC  END
+		,USD_OFFER_LAST_PRC = :v_usd_offer_last_prc
+		,USD_MID_LAST_PRC   = :v_usd_mid_last_prc
+		,SYS_LAST_PRCSS_YMS = SUBSTR(HEX(CURRENT TIMESTAMP),1,20)
+		,SYS_LAST_UNO       = 'KEI000'
+	WHERE	GROUP_CO_CD	='KB0'
+	  AND	FX_PRDCT_CD	= :v_fx_prdct_cd
+	  AND	REGI_YMD	= :v_regi_ymd
+	  AND	RGST_TIME	= :v_rgst_time
+	;
+	if (SQLCODE != 0)
+	{
+		if (abs(SQLCODE) == 420)
+			mds_log(market, LOG_MUST, "%s,%s,%s,%s,%s,%s,%s"
+			,v_fx_prdct_cd
+			,v_bid_last_prc
+			,v_offer_last_prc
+			,v_mid_last_prc
+			,v_usd_bid_last_prc
+			,v_usd_offer_last_prc
+			,v_usd_mid_last_prc );
+
+		mds_log(market, LOG_MUST, "TSKEIMU71 update error [%.1s:%.6s:%.6s] [%s]\n", psise->excode, psise->symb, pfold->symb, SQLERRM);
+		return(-1);
+	}
+
+	return (0);
+
+} /* End of int UpsertMin_Fincl(MDSSISE *psise, MDFOLD *pfold, MDFOLD *pusdkrw) */
+
+
+int UpsertDay(MDFOLD *pfold, MDSSISE *psise)
+{
+	int		pind = 8;
+	
+EXEC SQL BEGIN DECLARE SECTION;
+	char	v_mrkup_dstcd       [ 1+1];
+	char	v_fx_prdct_cd       [ 6+1];
+	char	v_regi_ymd          [ 8+1];
+	char	v_rgst_time         [ 9+1];
+	char	v_bid_last_prc      [20+1];
+	char	v_offer_last_prc    [20+1];
+	char	v_mid_last_prc      [20+1];
+	char	v_prdat_cntst_prc   [20+1];
+	char	v_updwn_rato        [ 8+1];
+EXEC SQL END DECLARE SECTION;
+
+	double	d_prdat_cntst_prc	;
+	double	d_updwn_rato		;
+	double	d_mid_last_prc		;
+
+	memset(v_mrkup_dstcd    , 0x00,		sizeof(v_mrkup_dstcd    ));
+	memset(v_fx_prdct_cd    , 0x00,		sizeof(v_fx_prdct_cd    ));
+	memset(v_regi_ymd       , 0x00,		sizeof(v_regi_ymd       ));
+	memset(v_rgst_time      , 0x00,		sizeof(v_rgst_time      ));
+	memset(v_bid_last_prc   , 0x00,		sizeof(v_bid_last_prc   ));
+	memset(v_offer_last_prc , 0x00,		sizeof(v_offer_last_prc ));
+	memset(v_mid_last_prc   , 0x00,		sizeof(v_mid_last_prc   ));
+	memset(v_prdat_cntst_prc, 0x00,		sizeof(v_prdat_cntst_prc));
+	memset(v_updwn_rato     , 0x00,		sizeof(v_updwn_rato     ));
+	
+	sprintf(v_fx_prdct_cd,	"%.6s%",		psise->symb);
+	sprintf(v_regi_ymd,		"%.8s",			psise->date);
+	sprintf(v_rgst_time,	"%.4s00000",	psise->time);
+	if (psise->excode[0] == 'C' || psise->excode[0] == 'R' || psise->excode[0] == 'H')
+		v_mrkup_dstcd[0] = '2';
+	else
+		v_mrkup_dstcd[0] = '1';
+
+	sprintf(v_bid_last_prc,		"%.*f",		pind, psise->bidprc);
+	sprintf(v_offer_last_prc,	"%.*f",		pind, psise->offerprc);
+
+	d_mid_last_prc = (psise->bidprc + psise->offerprc)/2;
+	sprintf(v_mid_last_prc,		"%.*f",		pind, d_mid_last_prc);
+	if (d_mid_last_prc > 0.0)
+	{
+		d_prdat_cntst_prc	= d_mid_last_prc - pfold->baseprc;
+		d_updwn_rato		= (d_prdat_cntst_prc / d_mid_last_prc) * 100.;
+		sprintf(v_prdat_cntst_prc,	"%.*f",		pind, d_prdat_cntst_prc);
+		sprintf(v_updwn_rato,		"%.*f",		pind, d_updwn_rato);
+	}
+
+	l_rtrim(v_mrkup_dstcd    );
+	l_rtrim(v_fx_prdct_cd    );
+	l_rtrim(v_regi_ymd       );
+	l_rtrim(v_rgst_time      );
+	l_rtrim(v_bid_last_prc   );
+	l_rtrim(v_offer_last_prc );
+	l_rtrim(v_mid_last_prc   );
+	l_rtrim(v_prdat_cntst_prc);
+	l_rtrim(v_updwn_rato     );
+
+EXEC SQL 
+	UPDATE INST1.TSKEIMU52
+	SET	 GROUP_CO_CD        = 'KB0'
+		,MRKUP_DSTCD        = :v_mrkup_dstcd
+		,FX_PRDCT_CD        = :v_fx_prdct_cd
+		,REGI_YMD           = :v_regi_ymd
+		,RGST_TIME          = :v_rgst_time
+		,BID_LAST_PRC       = :v_bid_last_prc
+		,OFFER_LAST_PRC     = :v_offer_last_prc
+--		,BID_OPEN_PRC       = :v_bid_last_prc
+		,BID_HIGH_PRC       = CASE WHEN BID_HIGH_PRC < :v_bid_last_prc THEN :v_bid_last_prc ELSE BID_HIGH_PRC END
+		,BID_LOW_PRC        = CASE WHEN BID_LOW_PRC  > :v_bid_last_prc THEN :v_bid_last_prc ELSE BID_LOW_PRC  END
+--		,OFFER_OPEN_PRC     = :v_offer_last_prc
+		,OFFER_HIGH_PRC     = CASE WHEN OFFER_HIGH_PRC < :v_offer_last_prc THEN :v_offer_last_prc ELSE OFFER_HIGH_PRC END
+		,OFFER_LOW_PRC      = CASE WHEN OFFER_LOW_PRC  > :v_offer_last_prc THEN :v_offer_last_prc ELSE OFFER_LOW_PRC  END
+		,MID_LAST_PRC       = :v_mid_last_prc
+--		,OPEN_PRC_TIME      = SUBSTR(HEX(CURRENT TIMESTAMP), 9, 9)
+		,HIGH_PRC_TIME      = CASE WHEN BID_HIGH_PRC < :v_bid_last_prc OR OFFER_HIGH_PRC < :v_offer_last_prc THEN 
+									SUBSTR(HEX(CURRENT TIMESTAMP), 9, 9) ELSE HIGH_PRC_TIME END
+		,LOW_PRC_TIME       = CASE WHEN BID_LOW_PRC  > :v_bid_last_prc OR OFFER_LOW_PRC  > :v_offer_last_prc THEN
+									SUBSTR(HEX(CURRENT TIMESTAMP), 9, 9) ELSE LOW_PRC_TIME  END
+		,PRDAT_CNTST_PRC    = :v_prdat_cntst_prc
+		,UPDWN_RATO         = :v_updwn_rato
+		,SYS_LAST_PRCSS_YMS = SUBSTR(HEX(CURRENT TIMESTAMP),1,20)
+		,SYS_LAST_UNO       = 'KEI000'
+	WHERE	GROUP_CO_CD	='KB0'
+	  AND	FX_PRDCT_CD	= :v_fx_prdct_cd
+	  AND	REGI_YMD	= :v_regi_ymd
+	;
+	if (SQLCODE == 100) 
+	{
+	EXEC SQL 
+		INSERT INTO INST1.TSKEIMU52 (
+			 GROUP_CO_CD
+			,MRKUP_DSTCD
+			,FX_PRDCT_CD
+			,REGI_YMD
+			,RGST_TIME
+			,BID_LAST_PRC
+			,OFFER_LAST_PRC
+			,BID_OPEN_PRC
+			,BID_HIGH_PRC
+			,BID_LOW_PRC
+			,OFFER_OPEN_PRC
+			,OFFER_HIGH_PRC
+			,OFFER_LOW_PRC
+			,MID_LAST_PRC
+			,OPEN_PRC_TIME
+			,HIGH_PRC_TIME
+			,LOW_PRC_TIME
+			,PRDAT_CNTST_PRC
+			,UPDWN_RATO
+			,SYS_LAST_PRCSS_YMS
+			,SYS_LAST_UNO
+		) VALUES (
+			 'KB0'
+			,:v_mrkup_dstcd
+			,:v_fx_prdct_cd
+			,:v_regi_ymd
+			,:v_rgst_time
+			,:v_bid_last_prc
+			,:v_offer_last_prc
+			,:v_bid_last_prc
+			,:v_bid_last_prc
+			,:v_bid_last_prc
+			,:v_offer_last_prc
+			,:v_offer_last_prc
+			,:v_offer_last_prc
+			,:v_mid_last_prc
+			, SUBSTR(HEX(CURRENT TIMESTAMP), 9, 9)
+			, SUBSTR(HEX(CURRENT TIMESTAMP), 9, 9)
+			, SUBSTR(HEX(CURRENT TIMESTAMP), 9, 9)
+			,:v_prdat_cntst_prc
+			,:v_updwn_rato
+			, SUBSTR(HEX(CURRENT TIMESTAMP), 1, 20)
+			,'KEI000'
+		);
+		if (SQLCODE != 0)
+		{
+			mds_log(market, LOG_MUST, "TSKEIMU52 insert error [%.1s:%.6s] [%s] \n", psise->excode, psise->symb, SQLERRM);
+			return(-1);
+		}
+	}
+	else if (SQLCODE != 0)
+	{
+		mds_log(market, LOG_MUST, "TSKEIMU52 update error [%.1s:%.6s] [%s] \n", psise->excode, psise->symb, SQLERRM);
+		return(-1);
+	}
+
+	return (0);
+
+} /* End of int UpsertDay(MDFOLD *pfold, MDSSISE *psise) */
+
+
+int UpsertDay_Fincl(MDSSISE *psise, MDFOLD *pfold, MDFOLD *pusdkrw)
+{
+	int		pind = 8;
+	
+EXEC SQL BEGIN DECLARE SECTION;
+	char	v_mrkup_dstcd       [ 1+1];
+	char	v_fx_prdct_cd       [ 6+1];
+	char	v_regi_ymd          [ 8+1];
+	char	v_rgst_time         [ 9+1];
+	char	v_bid_last_prc      [20+1];
+	char	v_offer_last_prc    [20+1];
+	char	v_mid_last_prc      [20+1];
+	char	v_prdat_cntst_prc   [20+1];
+	char	v_updwn_rato        [ 8+1];
+	char	v_usd_mrkup_dstcd	[ 1+1];
+	char	v_usd_bid_last_prc	[20+1];
+	char	v_usd_offer_last_prc[20+1];
+	char	v_usd_mid_last_prc	[20+1];
+	
+	double	d_bid_high_prc		;
+	double	d_bid_low_prc		;
+	double	d_offer_high_prc	;
+	double	d_offer_low_prc		;
+	int		i_bh				;
+	int		i_bl				;
+	int		i_oh				;
+	int		i_ol				;
+EXEC SQL END DECLARE SECTION;
+
+	double	fn_bid				= 0.0;
+	double	fn_offer			= 0.0;
+	double	fn_baseprc			= 0.0;
+	double	d_prdat_cntst_prc	= 0.0;
+	double	d_updwn_rato		= 0.0;
+	double	d_mid_last_prc		= 0.0;
+	double	d_bid_prc			= 0.0;
+	double	d_offer_prc			= 0.0;
+
+	memset(v_mrkup_dstcd    	, 0x00,	sizeof(v_mrkup_dstcd    ));
+	memset(v_fx_prdct_cd    	, 0x00,	sizeof(v_fx_prdct_cd    ));
+	memset(v_regi_ymd       	, 0x00,	sizeof(v_regi_ymd       ));
+	memset(v_rgst_time      	, 0x00,	sizeof(v_rgst_time      ));
+	memset(v_bid_last_prc   	, 0x00,	sizeof(v_bid_last_prc   ));
+	memset(v_offer_last_prc 	, 0x00,	sizeof(v_offer_last_prc ));
+	memset(v_mid_last_prc   	, 0x00,	sizeof(v_mid_last_prc   ));
+	memset(v_prdat_cntst_prc	, 0x00,	sizeof(v_prdat_cntst_prc));
+	memset(v_updwn_rato     	, 0x00,	sizeof(v_updwn_rato     ));
+	memset(v_usd_mrkup_dstcd	, 0x00, sizeof(v_usd_mrkup_dstcd));
+	memset(v_usd_bid_last_prc	, 0x00, sizeof(v_usd_bid_last_prc));
+	memset(v_usd_offer_last_prc	, 0x00, sizeof(v_usd_offer_last_prc));
+	memset(v_usd_mid_last_prc	, 0x00, sizeof(v_usd_mid_last_prc));
+
+	d_bid_high_prc		= 0.0;
+	d_bid_low_prc		= 0.0;
+	d_offer_high_prc	= 0.0;
+	d_offer_low_prc		= 0.0;
+
+	i_bh = i_bl = i_oh = i_ol = 0;
+
+	//	if (pfold->usdpos == 0)			// USD위치 ("0": CADKRW=USDKRW/USDCAD, "1":EURKRW=USDKRW*EURUSD)
+	if (memcmp(pfold->symb, "USD", 3) == 0)	memcpy(v_fx_prdct_cd, &pfold->symb[3], 3);
+	else									memcpy(v_fx_prdct_cd, &pfold->symb, 3);
+	memcpy(&v_fx_prdct_cd[3], "KRW", 3);
+
+	sprintf(v_regi_ymd,		"%.8s",			psise->date);
+	sprintf(v_rgst_time,	"%.4s00000",	psise->time);
+
+	if (psise->excode[0] == 'C' || psise->excode[0] == 'R' || psise->excode[0] == 'H')
+		v_mrkup_dstcd[0] = '2';	// SPOT markup 구분값,  C:CMBS,   R: Reuters,  H: Hand write
+	else
+		v_mrkup_dstcd[0] = '1'; // SMBS, EBS, KMBS .. .. main
+
+	// 재정통화계산 (Bid/offer)
+	//    이종통화(USDJPY)는 psise(recv@packet) 사용하며, USDKRW는 메모리값(latest price@memory)으로 사용 
+	if (memcmp(psise->symb, DF_USDKRW, 6) == 0) // in case,  recv data : USDKRW
+	{
+		d_bid_prc	= pfold->bidlast;
+		d_offer_prc	= pfold->offerlast;
+	}
+	else // in case,  recv data : USDJPY
+	{
+		d_bid_prc	= psise->bidprc;
+		d_offer_prc	= psise->offerprc;
+	}
+
+	sprintf(v_bid_last_prc,		"%.*f",		pind, d_bid_prc);
+	sprintf(v_offer_last_prc,	"%.*f",		pind, d_offer_prc);
+
+	//	if (pfold->usdpos == 0)			// USD위치 ("0": CADKRW=USDKRW/USDCAD, "1":EURKRW=USDKRW*EURUSD)
+	if (memcmp(pfold->symb, "USD", 3) == 0) // USDJPY,  USDKRW(*/)USDJPY
+	{
+		fn_bid		= pusdkrw->bidlast/d_bid_prc;
+		fn_offer	= pusdkrw->offerlast/d_offer_prc;
+		fn_baseprc	= pusdkrw->baseprc/pfold->baseprc;
+	}
+	else // JPYKRW
+	{
+		fn_bid		= pusdkrw->bidlast*d_bid_prc;
+		fn_offer	= pusdkrw->offerlast*d_offer_prc;
+		fn_baseprc	= pusdkrw->baseprc*pfold->baseprc;
+	}
+
+	d_mid_last_prc = (fn_bid + fn_offer)/2;
+	sprintf(v_mid_last_prc,		"%.*f",		pind, d_mid_last_prc);
+
+	if (d_mid_last_prc <= 0.0)	return (-1);
+
+	d_prdat_cntst_prc	= d_mid_last_prc - fn_baseprc;
+	d_updwn_rato		= (d_prdat_cntst_prc / d_mid_last_prc) * 100.;
+	sprintf(v_prdat_cntst_prc,	"%.*f",		pind, d_prdat_cntst_prc);
+	sprintf(v_updwn_rato,		"%.*f",		pind, d_updwn_rato);
+
+	if (pusdkrw->bidex[0] == 'C' || pusdkrw->bidex[0] == 'R' || pusdkrw->bidex[0] == 'H')
+		v_usd_mrkup_dstcd[0] = '2';
+	else
+		v_usd_mrkup_dstcd[0] = '1';
+
+	sprintf(v_usd_bid_last_prc,		"%.*f",		pind, pusdkrw->bidlast);
+	sprintf(v_usd_offer_last_prc,	"%.*f",		pind, pusdkrw->offerlast);
+	sprintf(v_usd_mid_last_prc,		"%.*f",		pind, (pusdkrw->bidlast+pusdkrw->offerlast)/2);
+
+	l_rtrim(v_mrkup_dstcd    );
+	l_rtrim(v_fx_prdct_cd    );
+	l_rtrim(v_regi_ymd       );
+	l_rtrim(v_rgst_time      );
+	l_rtrim(v_bid_last_prc   );
+	l_rtrim(v_offer_last_prc );
+	l_rtrim(v_mid_last_prc   );
+	l_rtrim(v_prdat_cntst_prc);
+	l_rtrim(v_updwn_rato     );
+	l_rtrim(v_usd_mrkup_dstcd);
+	l_rtrim(v_usd_bid_last_prc);
+	l_rtrim(v_usd_offer_last_prc);
+	l_rtrim(v_usd_mid_last_prc);
+
+EXEC SQL
+	SELECT	 CASE WHEN SUBSTR(FX_PRDCT_CD,1,3)='USD' THEN USD_BID_HIGH_PRC/BID_HIGH_PRC     ELSE USD_BID_HIGH_PRC*BID_HIGH_PRC     END
+			,CASE WHEN SUBSTR(FX_PRDCT_CD,1,3)='USD' THEN USD_BID_LOW_PRC/BID_LOW_PRC       ELSE USD_BID_LOW_PRC*BID_LOW_PRC       END
+			,CASE WHEN SUBSTR(FX_PRDCT_CD,1,3)='USD' THEN USD_OFFER_HIGH_PRC/OFFER_HIGH_PRC ELSE USD_OFFER_HIGH_PRC*OFFER_HIGH_PRC END
+			,CASE WHEN SUBSTR(FX_PRDCT_CD,1,3)='USD' THEN USD_OFFER_LOW_PRC/OFFER_LOW_PRC   ELSE USD_OFFER_LOW_PRC*OFFER_LOW_PRC   END
+	  INTO	 :d_bid_high_prc
+			,:d_bid_low_prc
+			,:d_offer_high_prc
+			,:d_offer_low_prc
+	  FROM	INST1.TSKEIMU72
+	WHERE	GROUP_CO_CD	='KB0'
+	  AND	FX_PRDCT_CD	= :v_fx_prdct_cd
+	  AND	REGI_YMD	= :v_regi_ymd
+	;
+	if (SQLCODE == 100) 
+	{
+	EXEC SQL
+		INSERT INTO INST1.TSKEIMU72 (
+			 GROUP_CO_CD
+			,MRKUP_DSTCD
+			,FX_PRDCT_CD
+			,REGI_YMD
+			,RGST_TIME
+			,BID_LAST_PRC
+			,OFFER_LAST_PRC
+			,BID_OPEN_PRC
+			,BID_HIGH_PRC
+			,BID_LOW_PRC
+			,OFFER_OPEN_PRC
+			,OFFER_HIGH_PRC
+			,OFFER_LOW_PRC
+			,MID_LAST_PRC
+			,USD_MRKUP_DSTCD
+			,USD_BID_OPEN_PRC
+			,USD_BID_HIGH_PRC
+			,USD_BID_LOW_PRC
+			,USD_BID_LAST_PRC
+			,USD_OFFER_OPEN_PRC
+			,USD_OFFER_HIGH_PRC
+			,USD_OFFER_LOW_PRC
+			,USD_OFFER_LAST_PRC
+			,USD_MID_LAST_PRC
+			,OPEN_PRC_TIME
+			,HIGH_PRC_TIME
+			,LOW_PRC_TIME
+			,PRDAT_CNTST_PRC
+			,UPDWN_RATO
+			,SYS_LAST_PRCSS_YMS
+			,SYS_LAST_UNO
+		) VALUES (
+			 'KB0'
+			,:v_mrkup_dstcd
+			,:v_fx_prdct_cd
+			,:v_regi_ymd
+			,:v_rgst_time
+			,:v_bid_last_prc
+			,:v_offer_last_prc
+			,:v_bid_last_prc
+			,:v_bid_last_prc
+			,:v_bid_last_prc
+			,:v_offer_last_prc
+			,:v_offer_last_prc
+			,:v_offer_last_prc
+			,:v_mid_last_prc
+			,:v_usd_mrkup_dstcd
+			,:v_usd_bid_last_prc
+			,:v_usd_bid_last_prc
+			,:v_usd_bid_last_prc
+			,:v_usd_bid_last_prc
+			,:v_usd_offer_last_prc
+			,:v_usd_offer_last_prc
+			,:v_usd_offer_last_prc
+			,:v_usd_offer_last_prc
+			,:v_usd_mid_last_prc
+			, SUBSTR(HEX(CURRENT TIMESTAMP), 9, 9)
+			, SUBSTR(HEX(CURRENT TIMESTAMP), 9, 9)
+			, SUBSTR(HEX(CURRENT TIMESTAMP), 9, 9)
+			,:v_prdat_cntst_prc
+			,:v_updwn_rato
+			, SUBSTR(HEX(CURRENT TIMESTAMP), 1, 20)
+			,'KEI000'
+		);
+		if (SQLCODE != 0)
+		{
+			mds_log(market, LOG_MUST, "TSKEIMU72 insert error [%.1s:%.6s:%.6s] [%s] \n", psise->excode, psise->symb, v_fx_prdct_cd, SQLERRM);
+			return(-1);
+		}
+		return (0);
+	}
+	else if (SQLCODE != 0)
+	{
+		mds_log(market, LOG_MUST, "TSKEIMU72 select error [%.1s:%.6s] [%s] \n", psise->excode, psise->symb, SQLERRM);
+		return(-1);
+	}
+
+	/*===============================================================
+	 * 고가와 저가는 계산된 재정환율을 기준으로 비교 함
+	 * 계산된 재정환율이 고가를 갱신한 경우에 각 HIGH_PRC, USD_HIGH_PRC, HIGH_PRC_TIME 업데이트
+	 * 계산된 재정환율이 저가를 갱신한 경우에 각 LOW_PRC, USD_LOW_PRC, LOW_PRC_TIME 업데이트
+	===============================================================*/
+	if (fn_bid > d_bid_high_prc)			i_bh = 1;
+	else if (fn_bid < d_bid_low_prc)		i_bl = 1;
+
+	if (fn_offer > d_offer_high_prc)		i_oh = 1;
+	else if (fn_offer < d_offer_low_prc)	i_ol = 1;
+
+EXEC SQL 
+	UPDATE INST1.TSKEIMU72
+	SET	 GROUP_CO_CD        = 'KB0'
+		,MRKUP_DSTCD        = :v_mrkup_dstcd
+		,FX_PRDCT_CD        = :v_fx_prdct_cd
+		,REGI_YMD           = :v_regi_ymd
+		,RGST_TIME          = :v_rgst_time
+		,BID_LAST_PRC       = :v_bid_last_prc
+		,OFFER_LAST_PRC     = :v_offer_last_prc
+--		,BID_OPEN_PRC       = :v_bid_last_prc
+		,BID_HIGH_PRC       = DECODE(:i_bh, 1, :v_bid_last_prc, BID_HIGH_PRC)
+		,BID_LOW_PRC        = DECODE(:i_bl, 1, :v_bid_last_prc, BID_LOW_PRC )
+--		,OFFER_OPEN_PRC     = :v_offer_last_prc
+		,OFFER_HIGH_PRC     = DECODE(:i_oh, 1, :v_offer_last_prc, OFFER_HIGH_PRC)
+		,OFFER_LOW_PRC      = DECODE(:i_ol, 1, :v_offer_last_prc, OFFER_LOW_PRC )
+		,MID_LAST_PRC       = :v_mid_last_prc
+		,USD_MRKUP_DSTCD    = :v_usd_mrkup_dstcd
+--		,USD_BID_OPEN_PRC   = :v_usd_bid_last_prc
+		,USD_BID_HIGH_PRC   = DECODE(:i_bh, 1, :v_usd_bid_last_prc, USD_BID_HIGH_PRC)
+		,USD_BID_LOW_PRC    = DECODE(:i_bl, 1, :v_usd_bid_last_prc, USD_BID_LOW_PRC )
+		,USD_BID_LAST_PRC   = :v_usd_bid_last_prc  
+--		,USD_OFFER_OPEN_PRC = :v_usd_offer_last_prc
+		,USD_OFFER_HIGH_PRC = DECODE(:i_oh, 1, :v_usd_offer_last_prc, USD_OFFER_HIGH_PRC)
+		,USD_OFFER_LOW_PRC  = DECODE(:i_ol, 1, :v_usd_offer_last_prc, USD_OFFER_LOW_PRC )
+		,USD_OFFER_LAST_PRC = :v_usd_offer_last_prc
+		,USD_MID_LAST_PRC   = :v_usd_mid_last_prc
+--		,OPEN_PRC_TIME      = SUBSTR(HEX(CURRENT TIMESTAMP), 9, 9)
+		,HIGH_PRC_TIME      = CASE WHEN :i_bh + :i_oh > 0 THEN SUBSTR(HEX(CURRENT TIMESTAMP), 9, 9) ELSE HIGH_PRC_TIME END
+		,LOW_PRC_TIME       = CASE WHEN :i_bl + :i_ol > 0 THEN SUBSTR(HEX(CURRENT TIMESTAMP), 9, 9) ELSE HIGH_PRC_TIME END
+		,PRDAT_CNTST_PRC    = :v_prdat_cntst_prc
+		,UPDWN_RATO         = :v_updwn_rato
+		,SYS_LAST_PRCSS_YMS = SUBSTR(HEX(CURRENT TIMESTAMP),1,20)
+		,SYS_LAST_UNO       = 'KEI000'
+	WHERE	GROUP_CO_CD	='KB0'
+	  AND	FX_PRDCT_CD	= :v_fx_prdct_cd
+	  AND	REGI_YMD	= :v_regi_ymd
+	;
+	if (SQLCODE != 0)
+	{
+		if (abs(SQLCODE) == 420)
+			mds_log(market, LOG_MUST, "%s,%s,%s,%s,%s,%s,%s,%s,%s"
+					,v_fx_prdct_cd
+					,v_bid_last_prc
+					,v_offer_last_prc
+					,v_mid_last_prc
+					,v_usd_bid_last_prc  
+					,v_usd_offer_last_prc
+					,v_usd_mid_last_prc
+					,v_prdat_cntst_prc
+					,v_updwn_rato);
+		mds_log(market, LOG_MUST, "TSKEIMU72 update error [%.1s:%.6s:%.6s] [%s]\n", psise->excode, psise->symb, pfold->symb, SQLERRM);
+		return(-1);
+	}
+
+	return (0);
+
+} /* End of int UpsertDay_Fincl(MDSSISE *psise, MDFOLD *pfold, MDFOLD *pusdkrw) */
+
+
+
+void SetCustFeed(MARKET *m)
+{
+	time_t	clock;
+	struct	tm tm;
+	uint32_t nextday;
+	char	stime	[14+1];
+	char	etime	[14+1];
+	MDFOLD	*pfold;
+
+EXEC SQL BEGIN DECLARE SECTION;
+	char v_fx_prdct_cd			[ 6+1];
+	char v_prc_orign_dstcd		[ 1+1];
+	char v_fincl_anoun_stop_yn	[ 1+1];
+	char v_fcm_id				[10+1];
+	char v_start_hms			[ 6+1];
+	char v_end_hms				[ 6+1];
+EXEC SQL END DECLARE SECTION;
+
+	while ((pfold = mds_popfolder(m)))
+	{
+		// TSKEIAM97 테이블에서 관리하지 않는 통화코드 SKIP
+		if (memcmp(pfold->symb, "CNHKRW", 6) == 0 || memcmp(pfold->symb, "MARKRW", 6) == 0)		// 고객은 CNYKRW 사용하므로 CNHKRW는 관리하지 않음.
+			continue;
+
+		memset(v_fx_prdct_cd		, 0x00, sizeof(v_fx_prdct_cd		));
+		memset(v_prc_orign_dstcd	, 0x00, sizeof(v_prc_orign_dstcd	));
+		memset(v_fincl_anoun_stop_yn, 0x00, sizeof(v_fincl_anoun_stop_yn));
+		memset(v_fcm_id				, 0x00, sizeof(v_fcm_id				));
+		memset(v_start_hms			, 0x00, sizeof(v_start_hms			));
+		memset(v_end_hms			, 0x00, sizeof(v_end_hms			));
+
+		if (memcmp(pfold->symb, "USDCNY", 6) == 0)		// 화면에서 USDCNH로 관리되므로 USDCNY는 USDCNH 시간설정을 동일하게 처리.
+			memcpy(v_fx_prdct_cd, "USDCNH", sizeof(pfold->symb));
+		else
+			memcpy(v_fx_prdct_cd, pfold->symb, sizeof(pfold->symb));
+
+	EXEC SQL
+		SELECT	 FX_PRDCT_CD
+				,PRC_ORIGN_DSTCD
+				,FINCL_ANOUN_STOP_YN
+				,PROR_FCM_ID
+				,PROR_START_HMS
+				,PROR_END_HMS
+		  INTO	 :v_fx_prdct_cd
+				,:v_prc_orign_dstcd
+				,:v_fincl_anoun_stop_yn
+				,:v_fcm_id
+				,:v_start_hms
+				,:v_end_hms
+		  FROM	INST1.TSKEIAM97
+		 WHERE	FX_PRDCT_CD = :v_fx_prdct_cd
+		WITH UR
+		;
+		if (SQLCODE != 0)
+		{
+			mds_log(m, LOG_MUST, "TSKEIAM97 select error [%.1s:%.6s] [%s] \n", m->excode, pfold->symb, SQLERRM);
+			continue;
+		}
+
+		l_rtrim(v_fx_prdct_cd		);
+		l_rtrim(v_prc_orign_dstcd	);
+		l_rtrim(v_fincl_anoun_stop_yn);
+		l_rtrim(v_fcm_id			);
+		l_rtrim(v_start_hms			);
+		l_rtrim(v_end_hms			);
+
+		if (pfold->custfeedtp[0]  != v_prc_orign_dstcd[0])
+		{
+			mds_log(m, LOG_MUST, "[%s] 고객제공원천 for [%.6s] 변경됨 -> [%.1s]",__func__, pfold->symb, v_prc_orign_dstcd);
+			pfold->custfeedtp[0]  = v_prc_orign_dstcd[0];
+		}
+		if (pfold->custfinclyn[0] != v_fincl_anoun_stop_yn[0])
+		{
+			mds_log(m, LOG_MUST, "[%s] 고객 재정환율제공 for [%.6s] 변경됨 -> [%.1s]",__func__, pfold->symb, v_fincl_anoun_stop_yn);
+			pfold->custfinclyn[0] = v_fincl_anoun_stop_yn[0];
+		}
+		
+		// CUST인 경우 시간관리는 하지 않으므로 원천정보만 표기함.
+		if (m->excode[0] == DF_EXCD_CUST)
+			continue;
+
+		clock = time(0);
+		localtime_r(&clock, &tm);
+
+		// '가격원천구분코드'에 따른 분기처리
+		switch (v_prc_orign_dstcd[0])
+		{
+		case DF_CFEED_STOP :		// 고객시세 : 제공중단
+			mds_log(m, LOG_MUST, "[%s] [%.6s] 고객시세 중단",__func__, pfold->symb);
+			break;
+
+		case DF_CFEED_HAND :		// 고객시세 : 수기제공
+			mds_log(m, LOG_MUST, "[%s] [%.6s] 고객시세 수기",__func__, pfold->symb);
+			break;
+
+		case DF_CFEED_PRIO :		// 고객시세 : 우선설정
+			if (memcmp(v_fcm_id, m->exnm, sizeof(v_fcm_id)) != 0)
+			{
+				if (memcmp(pfold->custstm, "99999999999999", sizeof(pfold->custstm)) != 0 || memcmp(pfold->custetm, "00000000000000", sizeof(pfold->custetm)) != 0)
+				{
+					mds_log(m, LOG_MUST, "[%s] [%.6s] 고객시세 우선 for [%.4s].. reset.",__func__, pfold->symb, v_fcm_id);
+					memcpy(pfold->custstm, "99999999999999", sizeof(pfold->custstm));
+					memcpy(pfold->custetm, "00000000000000", sizeof(pfold->custetm));
+				}
+				break;
+			}
+			
+			sprintf(stime, "%04d%02d%02d%.6s", tm.tm_year+1900, tm.tm_mon+1, tm.tm_mday, v_start_hms);
+			if (strncmp(v_start_hms, v_end_hms, sizeof(v_start_hms)) > 0)
+			{
+				nextday = getnextday();
+				sprintf(etime, "%08d%.6s", nextday, v_end_hms);
+			}
+			else
+				sprintf(etime, "%04d%02d%02d%.6s", tm.tm_year+1900, tm.tm_mon+1, tm.tm_mday, v_end_hms);
+
+			mds_log(m, LOG_MUST, "[%s] [%.6s] 고객시세 우선 [%.14s ~ %.14s]",__func__, pfold->symb, stime, etime);
+
+			if (memcmp(pfold->custstm, stime, sizeof(pfold->custstm)) != 0)
+			{
+				mds_log(m, LOG_MUST, "[%s] [%.6s] starttime 변경됨 [%.14s -> %.14s]",__func__, pfold->symb, pfold->custstm, stime);
+				memcpy(pfold->custstm, stime, sizeof(pfold->custstm));
+			}
+			if (memcmp(pfold->custetm, etime, sizeof(pfold->custetm)) != 0)
+			{
+				mds_log(m, LOG_MUST, "[%s] [%.6s] endtime 변경됨 [%.14s -> %.14s]",__func__, pfold->symb, pfold->custetm, etime);
+				memcpy(pfold->custetm, etime, sizeof(pfold->custetm));
+			}
+			break;
+
+		case DF_CFEED_STND :		// 고객시세 : 기본설정(TSKEIAM98)
+
+			memset(v_fcm_id		, 0x00, sizeof(v_fcm_id		));
+			memset(v_start_hms	, 0x00, sizeof(v_start_hms	));
+			memset(v_end_hms	, 0x00, sizeof(v_end_hms	));
+			
+			memcpy(v_fcm_id, m->exnm, sizeof(v_fcm_id));
+
+		EXEC SQL
+			SELECT	 START_HMS
+					,END_HMS
+			  INTO	 :v_start_hms
+			  		,:v_end_hms
+			  FROM	(	SELECT	 START_HMS
+								,END_HMS
+								,CASE WHEN START_HMS > END_HMS THEN TO_CHAR(TO_NUMBER(END_HMS) + 240000) ELSE END_HMS END AS ETIME
+						  FROM	INST1.TSKEIAM98
+						 WHERE	FCM_ID = :v_fcm_id
+						   AND	FX_PRDCT_CD = :v_fx_prdct_cd
+					)
+			 WHERE	ETIME > TO_CHAR(SYSDATE, 'HH24MISS')
+			ORDER BY ETIME
+			FETCH FIRST 1 ROWS ONLY
+			WITH UR
+			;
+			if (SQLCODE != 0)
+			{
+				if (SQLCODE != 100)		// NOT FOUND
+					mds_log(m, LOG_MUST, "TSKEIAM98 select error [%.1s:%.6s] [%s] \n", m->excode, pfold->symb, SQLERRM);
+
+				if (memcmp(pfold->custstm, "99999999999999", sizeof(pfold->custstm)) != 0 || memcmp(pfold->custetm, "00000000000000", sizeof(pfold->custetm)) != 0)
+				{
+					mds_log(m, LOG_MUST, "[%s] [%.6s] custfeed time reset [%.14s/%.14s]=>[9999/0000]", __func__, pfold->symb, pfold->custstm, pfold->custetm);
+					memcpy(pfold->custstm, "99999999999999", sizeof(pfold->custstm));
+					memcpy(pfold->custetm, "00000000000000", sizeof(pfold->custetm));
+				}
+				break;
+			}
+
+			sprintf(stime, "%04d%02d%02d%.6s", tm.tm_year+1900, tm.tm_mon+1, tm.tm_mday, v_start_hms);
+			if (strncmp(v_start_hms, v_end_hms, sizeof(v_start_hms)) > 0)
+			{
+				nextday = getnextday();
+				sprintf(etime, "%08d%.6s", nextday, v_end_hms);
+			}
+			else
+				sprintf(etime, "%04d%02d%02d%.6s", tm.tm_year+1900, tm.tm_mon+1, tm.tm_mday, v_end_hms);
+
+			//mds_log(m, LOG_MUST, "[%s] [%.6s] 고객시세 기본 [%.14s ~ %.14s]",__func__, pfold->symb, stime, etime);
+
+			if (memcmp(pfold->custstm, stime, sizeof(pfold->custstm)) != 0)
+			{
+				mds_log(m, LOG_MUST, "[%s] [%.6s] starttime 변경됨 [%.14s -> %.14s]",__func__, pfold->symb, pfold->custstm, stime);
+				memcpy(pfold->custstm, stime, sizeof(pfold->custstm));
+			}
+			if (memcmp(pfold->custetm, etime, sizeof(pfold->custetm)) != 0)
+			{
+				mds_log(m, LOG_MUST, "[%s] [%.6s] endtime 변경됨 [%.14s -> %.14s]",__func__, pfold->symb, pfold->custetm, etime);
+				memcpy(pfold->custetm, etime, sizeof(pfold->custetm));
+			}
+			break;
+
+		default :
+			mds_log(market, LOG_MUST, "TSKEIAM98 v_prc_orign_dstcd error [%.1s:%.6s] [%.1s] \n", market->excode, pfold->symb, v_prc_orign_dstcd);
+		}
+	}
+
+	l_db2commit();
+
+	return 0;
+}
+
+// END ##########################################################################################
+//###############################################################################################
+//###############################################################################################

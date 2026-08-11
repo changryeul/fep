@@ -1,0 +1,3 @@
+주문수량 jumun_cnt
+주문가격,jumun_price
+상품명   product_name

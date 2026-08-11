@@ -1,0 +1,27 @@
+SUFFIXES		=.c.o
+include			$(MAT_LIB)/make.env
+TARGET			= main
+LIB_TARGET		= $(LIBTARGET)
+SOURCE			= main.c task.c
+OBJ				= ${SOURCE:.c=.o}
+HEADER			= ${SOURCE:.c=.h}
+INC				= -I. -I..
+LIB				=
+
+#all			: $(TARGET)
+
+$(TARGET)	: $(OBJ)
+	$(LD) $(LDFLAGS) -o $@ $(OBJ) $(LIBS) $(LIB)
+
+.c.o		:
+	$(CC) $(CFLAGS) $(INCS) $(INC) -o $@ -c $<
+
+clean		:
+	rm -f $(OBJ) $(TARGET)
+
+#install		:
+#	cp $(TARGET) $(DIR)/lib
+#	cp $(HEADER) $(DIR)/include
+
+
+

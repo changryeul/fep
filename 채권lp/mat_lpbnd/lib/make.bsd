@@ -1,0 +1,15 @@
+DIR			= $(FEP_SRC_DIR)/lib
+LIBDIR		= $(FEP_LIB_DIR)
+LIBTARGET	= $(FEP_LIB_DIR)/libfep.a
+INCDIR		= $(HOME)/include
+INCDIR_SRC  = $(HOME)/src/include
+LIBS		= -L$(LIBDIR) -lerrmsg -lUserCrypt
+INCS		= -I$(INCDIR)
+CC			= gcc
+LD			= gcc
+AR			= ar
+CFLAGS		= -c -m64 -g
+CPPFLAGS	= -c -m64 -g
+LDFLAGS		= -g -m64
+ARFLAGS		= rucs
+

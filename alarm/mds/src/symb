@@ -1,0 +1,6 @@
+Binary file lib/mds/.shm.c.swp matches
+Binary file lib/mds/libmds.so matches
+Binary file lib/mds/libmds.a matches
+lib/mds/shm.c:	printf(" i1->symb : %s, i2->symb : %s \n" ,i1->symb,i2->symb);
+lib/mds/shm.c:	return(strcmp(i1->symb, i2->symb));
+Binary file util/conv/sam/heod_fut.tar.gz matches

@@ -1,0 +1,69 @@
+---
+title: PA 시세 수신/분배 흐름도
+---
+graph TD
+    KRX["KRX / KOSCOM 시세"]
+
+    subgraph UDP_RECV["UDP 시세 수신"]
+        UR1["pa_7102_ur\n채권KTS시세\nUDP:10402"]
+        UR2["pa_7103_ur\n채권M4시세\nUDP:10406"]
+        UR3["pa_7201_ur\n파생A0시세\nUDP:10301"]
+        UR4["pa_7202_ur\n파생체결시세\nUDP:10305"]
+        UR5["pa_7203_ur\n파생M4시세\nUDP:10315"]
+    end
+
+    subgraph TCP_RECV["TCP 시세 수신"]
+        TR1["pa_7622_tr\n채권TCP시세\nTCP:42001"]
+        TR2["pa_7701_tr\n파생TCP시세\nTCP:16511"]
+        TR3["pa_7801_tr\nRDS시세수신\nTCP:63725"]
+    end
+
+    KRX -->|"UDP"| UR1
+    KRX -->|"UDP"| UR2
+    KRX -->|"UDP"| UR3
+    KRX -->|"UDP"| UR4
+    KRX -->|"UDP"| UR5
+    KRX -->|"TCP"| TR1
+    KRX -->|"TCP"| TR2
+    KRX -->|"TCP"| TR3
+
+    subgraph DD_LOAD["시세 Data Distribution (Load)"]
+        DD1["pa_7102_dd\n채권KTS Load"]
+        DD2["pa_7103_dd\n채권M4 Load"]
+        DD3["pa_7201_dd\n파생A0 Load"]
+        DD4["pa_7202_dd\n파생체결 Load"]
+        DD5["pa_7203_dd\n파생M4 Load"]
+    end
+
+    subgraph RDS_DD["RDS 처리"]
+        RDD1["pa_7801_dd\nRDS채권시세\n-> pa_7181_dd"]
+        RDD2["pa_7802_dd\nRDS_KTS시세\n-> pa_7182_dd"]
+    end
+
+    UR1 --> DD1
+    UR2 --> DD2
+    UR3 --> DD3
+    UR4 --> DD4
+    UR5 --> DD5
+
+    TR1 -->|"합류"| DD1
+    TR2 -->|"합류"| DD3
+    TR2 -->|"합류"| DD4
+    TR2 -->|"합류"| DD5
+
+    TR3 --> RDD1
+    TR3 --> RDD2
+
+    subgraph SHM_AREA["SHM (시세 공유메모리)"]
+        SHM_NOTE["Shm_Note[]\n채권시세"]
+        SHM_FUT["Shm_FinFut[]\n파생시세"]
+        SHM_RISK["Shm_Risk[]\n잔고/한도"]
+    end
+
+    DD1 --> SHM_NOTE
+    DD2 --> SHM_NOTE
+    DD3 --> SHM_FUT
+    DD4 --> SHM_FUT
+    DD5 --> SHM_FUT
+    RDD1 --> SHM_NOTE
+    RDD2 --> SHM_NOTE

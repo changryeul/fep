@@ -1,0 +1,495 @@
+/*******************************************************************************
+ * Callback Name : TEST00A01
+ * Description   : 에러코드조회/등록/수정/삭제
+ *
+ *  Rev. History :
+ *      Ver     Date       Information
+ *      ------- ---------- -----------------------------------------------
+ *      1.00    2023-09-13 김경섭 최초 작성
+ *              변수사용시 v_baseDate 등 "_"를 사용하지 말고 카멜 표기준수
+ *              예) v_baseDate --> vBaseDate로 사용
+ *                  특히 DB입력변수에서는 절대 사용금지
+ *******************************************************************************/
+
+//#include "comglb.h"
+#if 0
+#include "comcom.h"
+#endif
+#include <sqlca.h>
+
+#include "log.h"
+#include "etc.h"
+#include "glb/gcomdef.h"
+
+#include "mat.h"
+#include "main.h"
+
+void l_dbcommit( void);
+void l_dbrollback( void);
+
+extern MAT	*Mat;
+
+EXEC SQL BEGIN DECLARE SECTION;
+typedef struct _trg005l_
+{
+	char    FX_CNTT_NO          [11 +1];    /* FX체결번호             */
+	char    ORDN_NO  	        [30 +1];    /* FX주문번호             */
+	char    TRHS_SRN            [22 +1];    /* 거래내역일련번호       */
+	char	SUB_FX_CNTT_NO		[ 2 +1];	/* NEAR=1, FAR=2          */
+	char    PRAS_ID             [60 +1];    /* 호가ID                 */
+	char    CRNC_PAIR_ID        [7  +1];    /* 통화페어ID             */
+	char    TNR_ID              [3  +1];    /* TENORID                */
+	char    EXPI_FNSH_YMD       [8  +1];    /* 만기종료년월일         */
+	char    BYSEL_DCD           [1  +1];    /* 매입매도구분코드       */
+	char    MRKT_SPOT_PRC       [22 +1];    /* 시장SPOT가격           */
+	char    MRKT_SWAP_PRC       [22 +1];    /* 시장스왑가격           */
+	char    FX_MRKT_PRC         [22 +1];    /* FX시장가격             */
+	char    CVR_SPR             [22 +1];    /* 커버스프레드           */
+	char    FX_CVR_PRC          [22 +1];    /* FX커버가격             */
+	char    CVR_SDCU_AMT        [22 +1];    /* 커버기준통화금액       */
+	char    CVR_COCU_AMT        [22 +1];    /* 커버상대통화금액       */
+	char    SLS_SPR             [22 +1];    /* 세일즈스프레드         */
+	char    ORCY_SPR            [22 +1];    /* 당사스프레드           */
+	char    FX_ORCY_PRC         [22 +1];    /* FX당사가격             */
+	char	HDBR_DSCN_RT		[22 +1];	/* 본지점 할인율          */
+	char    ORCY_SDCU_AMT       [22 +1];    /* 당사기준통화금액       */
+	char    ORCY_COCU_AMT       [22 +1];    /* 당사상대통화금액       */
+	char    CUS_SPR             [22 +1];    /* 고객스프레드           */
+	char    FX_CUS_PRC          [22 +1];    /* FX고객가격             */
+	char	CUS_SDCU_AMT		[22 +1];	/* 고객기준통화금액       */
+	char	CUS_COCU_AMT		[22 +1];	/* 고객상대통화금액       */
+	char    TRCO_EMP_NO         [10 +1];    /* 거래상대방직원번호     */
+	char    TRCO_PU_CD          [5  +1];    /* 거래상대방PU코드       */
+	char    TRCO_FXBK_ID        [20 +1];    /* 거래상대방FX북ID       */
+	char	ORGN_FX_CNTT_NO		[11 +1];	/* 원천FX체결번호         */
+	char    CNTT_TRN_TRNM_ID    [20 +1];    /* 체결거래송신ID         */
+	char    CNTT_TRN_RCV_ID     [20 +1];    /* 체결거래수신ID         */
+	char    USE_YN              [1  +1];    /* 사용여부               */
+	char    FX_SYS_LSMD_ID      [30 +1];    /* FX시스템최종변경ID     */
+	char    FX_SYS_LSMD_TS      [7  +1];    /* FX시스템최종변경일시   */
+}	TRG005L;
+
+EXEC SQL END DECLARE SECTION;
+
+#define NO_DATA_FOUND	1403
+
+
+int TRG005L_Print( TRG005L* ptr);
+
+/*******************************************************************************
+* Function Name : TEST00A01()
+* Description   : 에러코드조회/등록/수정/삭제
+*******************************************************************************/
+int Db_Process()
+{
+	int		rtn;
+
+	rtn = l_dbconnect();
+	if( rtn != RET_SUCCESS)
+	{
+		LogCri( "DB CONNECT ERROR. rtn=[%d] ", rtn);
+		return -1;
+	}
+	LogDbg( "DB CONNECT SUCCESS. rtn=[%d] ", rtn);
+
+	rtn = l_dbdisconnect();
+	if( rtn != RET_SUCCESS)
+	{
+		LogCri( "DB DISCONNECT ERROR. rtn=[%d] ", rtn);
+		return -1;
+	}
+	LogDbg( "DB DISCONNECT SUCCESS. rtn=[%d] ", rtn);
+
+
+	// 처리 결과를 보낸다.
+  	return rtn;
+}
+
+int Db_TRG005LInsert( MAT_RECORD *rec)
+{
+	int				i, j;
+	MAT_HEAD		*head;
+	ORDER			*book;
+	SPLIT_OUT_ST	*fee_out;
+	SPLIT_PRD_LIST	*pl;
+	MATSISE			*sise;
+	char			bs[ 8];
+	char			buf[ 512];
+
+EXEC SQL BEGIN DECLARE SECTION;
+	TRG005L		_de, *de = &_de;
+EXEC SQL END DECLARE SECTION;
+
+	head     = &rec->head;
+	book     = ( ORDER *)&rec->ord;
+	fee_out  = &head->fee_out;
+
+	for( i = 0; i < fee_out->n_rec_cnt; i++)
+	{
+		pl = &fee_out->rec[ i];
+
+		memset( bs, 0x00, sizeof( bs));
+		memset( de, 0x00, sizeof( TRG005L));
+		switch( i)
+		{
+			case 0:
+				sise     = &head->sise_curr;
+				break;
+			case 1:
+				sise     = &head->sise_base;
+				break;
+			case 2:
+				sise     = &head->sise_cont;
+				break;
+		}
+
+		sprintf( buf, "%.*s", ( int)sizeof( book->ClOrdID), book->ClOrdID);
+    	AtoA( de->FX_CNTT_NO      , "0000000000000000000"    , sizeof( de->FX_CNTT_NO      ) -1);    /* FX체결번호             */
+    	AtoA( de->ORDN_NO   	  , buf                      , sizeof( de->ORDN_NO         ) -1);    /* FX체결번호             */
+    	ItoA( de->TRHS_SRN        , i                        , sizeof( de->TRHS_SRN        ) -1);    /* 거래내역일련번호       */
+    	ItoA( de->SUB_FX_CNTT_NO  , 1                        , sizeof( de->SUB_FX_CNTT_NO  ) -1);    /* SWAP 거래구분          */
+    	AtoA( de->PRAS_ID         , sise->id                 , sizeof( de->PRAS_ID         ) -1);    /* 호가ID                 */
+    	AtoA( de->CRNC_PAIR_ID    , pl->s_cncr_pair_id       , sizeof( de->CRNC_PAIR_ID    ) -1);    /* 통화페어ID             */
+    	AtoA( de->TNR_ID          , pl->s_tnr_id             , sizeof( de->TNR_ID          ) -1);    /* TENORID                */
+    	AtoA( de->EXPI_FNSH_YMD   , pl->s_expi_fnsh_ymd      , sizeof( de->EXPI_FNSH_YMD   ) -1);    /* 만기종료년월일         */
+		if( pl->s_bysel_dcd[0] == '1')		bs[ 0] = 'B';
+		else								bs[ 0] = 'S';
+    	AtoA( de->BYSEL_DCD       , bs                       , sizeof( de->BYSEL_DCD       ) -1);    /* 매입매도구분코드       */
+    	DtoA( de->MRKT_SPOT_PRC   , pl->d_mrkt_spt_prc       , sizeof( de->MRKT_SPOT_PRC   ) -1);    /* 시장SPOT가격           */
+    	DtoA( de->MRKT_SWAP_PRC   , pl->d_mrkt_swap_prc      , sizeof( de->MRKT_SWAP_PRC   ) -1);    /* 시장스왑가격           */
+    	DtoA( de->FX_MRKT_PRC     , pl->d_fx_mrkt_prc        , sizeof( de->FX_MRKT_PRC     ) -1);    /* FX시장가격             */
+    	DtoA( de->CVR_SPR         , pl->d_cvr_spr            , sizeof( de->CVR_SPR         ) -1);    /* 커버스프레드           */
+    	DtoA( de->FX_CVR_PRC      , pl->d_fx_cvr_prc         , sizeof( de->FX_CVR_PRC      ) -1);    /* FX커버가격             */
+    	DtoA( de->CVR_SDCU_AMT    , 0.0                      , sizeof( de->CVR_SDCU_AMT    ) -1);    /* 커버기준통화금액       */
+    	DtoA( de->CVR_COCU_AMT    , 0.0                      , sizeof( de->CVR_COCU_AMT    ) -1);    /* 커버상대통화금액       */
+    	DtoA( de->SLS_SPR         , pl->d_sls_spr            , sizeof( de->SLS_SPR         ) -1);    /* 세일즈스프레드         */
+    	DtoA( de->ORCY_SPR        , pl->d_orcy_spr           , sizeof( de->ORCY_SPR        ) -1);    /* 당사스프레드           */
+    	DtoA( de->FX_ORCY_PRC     , pl->d_fx_orcy_prc        , sizeof( de->FX_ORCY_PRC     ) -1);    /* FX당사가격             */
+    	DtoA( de->HDBR_DSCN_RT    , 0.0                      , sizeof( de->HDBR_DSCN_RT    ) -1);    /* 본지점 할인율          */
+		
+    	DtoA( de->ORCY_SDCU_AMT   , 0.0                      , sizeof( de->ORCY_SDCU_AMT   ) -1);    /* 당사기준통화금액       */
+    	DtoA( de->ORCY_COCU_AMT   , 0.0                      , sizeof( de->ORCY_COCU_AMT   ) -1);    /* 당사상대통화금액       */
+    	DtoA( de->CUS_SPR         , pl->d_cus_spr            , sizeof( de->CUS_SPR         ) -1);    /* 고객스프레드           */
+    	DtoA( de->FX_CUS_PRC      , pl->d_fx_csac_prc        , sizeof( de->FX_CUS_PRC      ) -1);    /* FX고객가격             */
+    	DtoA( de->CUS_SDCU_AMT    , 0.0                      , sizeof( de->CUS_SDCU_AMT    ) -1);    /* FX고객가격             */
+    	DtoA( de->CUS_COCU_AMT    , 0.0                      , sizeof( de->CUS_COCU_AMT    ) -1);    /* FX고객가격             */
+
+    	AtoA( de->TRCO_EMP_NO     , " "                      , sizeof( de->TRCO_EMP_NO     ) -1);    /* 거래상대방직원번호     */
+    	AtoA( de->TRCO_PU_CD      , " "                      , sizeof( de->TRCO_PU_CD      ) -1);    /* 거래상대방PU코드       */
+    	AtoA( de->TRCO_FXBK_ID    , " "                      , sizeof( de->TRCO_FXBK_ID    ) -1);    /* 거래상대방FX북ID       */
+    	AtoA( de->ORGN_FX_CNTT_NO , " "                      , sizeof( de->ORGN_FX_CNTT_NO ) -1);    /* 거래상대방FX북ID       */
+    	AtoA( de->CNTT_TRN_TRNM_ID, " "                      , sizeof( de->CNTT_TRN_TRNM_ID) -1);    /* 체결거래송신ID         */
+    	AtoA( de->CNTT_TRN_RCV_ID , " "                      , sizeof( de->CNTT_TRN_RCV_ID ) -1);    /* 체결거래수신ID         */
+    	AtoA( de->USE_YN          , "Y"                      , sizeof( de->USE_YN          ) -1);    /* 사용여부               */
+    	AtoA( de->FX_SYS_LSMD_ID  , "SYSTEM"                 , sizeof( de->FX_SYS_LSMD_ID  ) -1);    /* FX시스템최종변경ID     */
+    	AtoA( de->FX_SYS_LSMD_TS  , " "                      , sizeof( de->FX_SYS_LSMD_TS  ) -1);    /* FX시스템최종변경일시   */
+
+		LogMsg( "Insert into TB_FXB_TRG005L. i=[%d]", i);
+		TRG005L_Print( de);
+
+		EXEC SQL
+		INSERT INTO TB_FXB_TRG005L
+		(
+			FX_CNTT_NO      ,
+			ORDN_NO			,
+			TRHS_SRN        ,
+			SUB_FX_CNTT_NO  ,
+			PRAS_ID         ,
+			CRNC_PAIR_ID    ,
+			TNR_ID          ,
+			EXPI_FNSH_YMD   ,
+			BYSEL_DCD       ,
+			MRKT_SPOT_PRC   ,
+			MRKT_SWAP_PRC   ,
+			FX_MRKT_PRC     ,
+			CVR_SPR         ,
+			FX_CVR_PRC      ,
+			CVR_SDCU_AMT    ,
+			CVR_COCU_AMT    ,
+			SLS_SPR         ,
+			ORCY_SPR        ,
+			FX_ORCY_PRC     ,
+			HDBR_DSCN_RT    ,
+			ORCY_SDCU_AMT   ,
+			ORCY_COCU_AMT   ,
+			CUS_SPR         ,
+			FX_CUS_PRC      ,
+			TRCO_EMP_NO     ,
+			TRCO_PU_CD      ,
+			TRCO_FXBK_ID    ,
+			ORGN_FX_CNTT_NO ,
+			CNTT_TRN_TRNM_ID,
+			CNTT_TRN_RCV_ID ,
+			CUS_SDCU_AMT    ,
+			CUS_COCU_AMT    ,
+			USE_YN          ,
+			FX_SYS_LSMD_ID  ,
+			FX_SYS_LSMD_TS  
+		)
+		VALUES
+		(
+			TRIM( :de->FX_CNTT_NO),
+			TRIM( :de->ORDN_NO)  ,
+			:de->TRHS_SRN        ,
+			:de->SUB_FX_CNTT_NO  ,
+			TRIM( :de->PRAS_ID)  ,
+			:de->CRNC_PAIR_ID    ,
+			:de->TNR_ID          ,
+			:de->EXPI_FNSH_YMD   ,
+			:de->BYSEL_DCD       ,
+			:de->MRKT_SPOT_PRC   ,
+			:de->MRKT_SWAP_PRC   ,
+			:de->FX_MRKT_PRC     ,
+			:de->CVR_SPR         ,
+			:de->FX_CVR_PRC      ,
+			:de->CVR_SDCU_AMT    ,
+			:de->CVR_COCU_AMT    ,
+			:de->SLS_SPR         ,
+			:de->ORCY_SPR        ,
+			:de->FX_ORCY_PRC     ,
+			:de->HDBR_DSCN_RT    ,
+			:de->ORCY_SDCU_AMT   ,
+			:de->ORCY_COCU_AMT   ,
+			:de->CUS_SPR         ,
+			:de->FX_CUS_PRC      ,
+			:de->TRCO_EMP_NO     ,
+			:de->TRCO_PU_CD      ,
+			:de->TRCO_FXBK_ID    ,
+			:de->ORGN_FX_CNTT_NO ,
+			:de->CNTT_TRN_TRNM_ID,
+			:de->CNTT_TRN_RCV_ID ,
+			:de->CUS_SDCU_AMT    ,
+			:de->CUS_COCU_AMT    ,
+			:de->USE_YN          ,
+			:de->FX_SYS_LSMD_ID  ,
+			SYSDATE
+		);
+		if (SQLCODE != 0)
+		{
+			LogCri( "Insert Error = [%d]", SQLCODE);
+			goto error;
+			/*
+			l_dbrollback();
+			return SQLCODE;
+			*/
+		}
+		/*
+		l_dbcommit();
+		*/
+	}
+
+	LogMsg( "book->SettType=[%.3s]", book->SettType);
+	if( memcmp( book->SettType, "SWP", 3))	/* SWAP 상품이 아니면 여기 까지만 */
+	{
+		l_dbcommit();
+		return 1;
+	}
+
+	fee_out  = &head->fee_out_far;
+	j = i;
+
+	for( i = 0; i < fee_out->n_rec_cnt; i++)
+	{
+		pl = &fee_out->rec[ i];
+
+		memset( bs, 0x00, sizeof( bs));
+		memset( de, 0x00, sizeof( TRG005L));
+		switch( i)
+		{
+			case 0:
+				sise     = &head->sise_curr;
+				break;
+			case 1:
+				sise     = &head->sise_base;
+				break;
+			case 2:
+				sise     = &head->sise_cont;
+				break;
+		}
+
+		sprintf( buf, "%.*s", ( int)sizeof( book->ClOrdID), book->ClOrdID);
+		AtoA( de->FX_CNTT_NO      , "0000000000000000000"    , sizeof( de->FX_CNTT_NO      ) -1);    /* FX체결번호       */
+		AtoA( de->ORDN_NO   	  , buf                      , sizeof( de->ORDN_NO         ) -1);    /* FX체결번호       */
+		ItoA( de->TRHS_SRN        , i + j                    , sizeof( de->TRHS_SRN        ) -1);    /* 거래내역일련번호 */
+    	ItoA( de->SUB_FX_CNTT_NO  , 2                        , sizeof( de->SUB_FX_CNTT_NO  ) -1);    /* SWAP 거래구분          */
+		AtoA( de->PRAS_ID         , sise->id                 , sizeof( de->PRAS_ID         ) -1);    /* 호가ID           */
+		AtoA( de->CRNC_PAIR_ID    , pl->s_cncr_pair_id       , sizeof( de->CRNC_PAIR_ID    ) -1);    /* 통화페어ID       */
+		AtoA( de->TNR_ID          , pl->s_tnr_id             , sizeof( de->TNR_ID          ) -1);    /* TENORID          */
+		AtoA( de->EXPI_FNSH_YMD   , pl->s_expi_fnsh_ymd      , sizeof( de->EXPI_FNSH_YMD   ) -1);    /* 만기종료년월일   */
+		if( pl->s_bysel_dcd[0] == '1')		bs[ 0] = 'B';
+		else								bs[ 0] = 'S';
+		AtoA( de->BYSEL_DCD       , bs                       , sizeof( de->BYSEL_DCD       ) -1);    /* 매입매도구분코드 */
+		DtoA( de->MRKT_SPOT_PRC   , pl->d_mrkt_spt_prc       , sizeof( de->MRKT_SPOT_PRC   ) -1);    /* 시장SPOT가격     */
+		DtoA( de->MRKT_SWAP_PRC   , pl->d_mrkt_swap_prc      , sizeof( de->MRKT_SWAP_PRC   ) -1);    /* 시장스왑가격     */
+		DtoA( de->FX_MRKT_PRC     , pl->d_fx_mrkt_prc        , sizeof( de->FX_MRKT_PRC     ) -1);    /* FX시장가격       */
+		DtoA( de->CVR_SPR         , pl->d_cvr_spr            , sizeof( de->CVR_SPR         ) -1);    /* 커버스프레드     */
+		DtoA( de->FX_CVR_PRC      , pl->d_fx_cvr_prc         , sizeof( de->FX_CVR_PRC      ) -1);    /* FX커버가격       */
+		DtoA( de->CVR_SDCU_AMT    , 0.0                      , sizeof( de->CVR_SDCU_AMT    ) -1);    /* 커버기준통화금액 */
+		DtoA( de->CVR_COCU_AMT    , 0.0                      , sizeof( de->CVR_COCU_AMT    ) -1);    /* 커버상대통화금액 */
+		DtoA( de->SLS_SPR         , pl->d_sls_spr            , sizeof( de->SLS_SPR         ) -1);    /* 세일즈스프레드   */
+		DtoA( de->ORCY_SPR        , pl->d_orcy_spr           , sizeof( de->ORCY_SPR        ) -1);    /* 당사스프레드     */
+		DtoA( de->FX_ORCY_PRC     , pl->d_fx_orcy_prc        , sizeof( de->FX_ORCY_PRC     ) -1);    /* FX당사가격       */
+		DtoA( de->HDBR_DSCN_RT    , 0.0                      , sizeof( de->FX_ORCY_PRC     ) -1);    /* 본지점 할인율    */
+		
+		DtoA( de->ORCY_SDCU_AMT   , 0.0                      , sizeof( de->ORCY_SDCU_AMT   ) -1);    /* 당사기준통화금액 */
+		DtoA( de->ORCY_COCU_AMT   , 0.0                      , sizeof( de->ORCY_COCU_AMT   ) -1);    /* 당사상대통화금액 */
+		DtoA( de->CUS_SPR         , pl->d_cus_spr            , sizeof( de->CUS_SPR         ) -1);    /* 고객스프레드     */
+		DtoA( de->FX_CUS_PRC      , pl->d_fx_csac_prc        , sizeof( de->FX_CUS_PRC      ) -1);    /* FX고객가격       */
+		DtoA( de->CUS_SDCU_AMT    , 0.0                      , sizeof( de->FX_CUS_PRC      ) -1);    /* FX고객가격       */
+		DtoA( de->CUS_COCU_AMT    , 0.0                      , sizeof( de->FX_CUS_PRC      ) -1);    /* FX고객가격       */
+
+		AtoA( de->TRCO_EMP_NO     , " "                      , sizeof( de->TRCO_EMP_NO     ) -1);    /* 거래상대방직원번호*/
+		AtoA( de->TRCO_PU_CD      , " "                      , sizeof( de->TRCO_PU_CD      ) -1);    /* 거래상대방PU코드 */
+		AtoA( de->TRCO_FXBK_ID    , " "                      , sizeof( de->TRCO_FXBK_ID    ) -1);    /* 거래상대방FX북ID */
+		AtoA( de->ORGN_FX_CNTT_NO , " "                      , sizeof( de->ORGN_FX_CNTT_NO ) -1);    /* 거래상대방FX북ID */
+		AtoA( de->CNTT_TRN_TRNM_ID, " "                      , sizeof( de->CNTT_TRN_TRNM_ID) -1);    /* 체결거래송신ID   */
+		AtoA( de->CNTT_TRN_RCV_ID , " "                      , sizeof( de->CNTT_TRN_RCV_ID ) -1);    /* 체결거래수신ID   */
+		AtoA( de->USE_YN          , "Y"                      , sizeof( de->USE_YN          ) -1);    /* 사용여부         */
+		AtoA( de->FX_SYS_LSMD_ID  , "SYSTEM"                 , sizeof( de->FX_SYS_LSMD_ID  ) -1);    /* FX시스템최종변경ID*/
+		AtoA( de->FX_SYS_LSMD_TS  , " "                      , sizeof( de->FX_SYS_LSMD_TS  ) -1);    /* FX시스템최종변경일시*/
+
+		LogMsg( "Insert into TB_FXB_TRG005L. i=[%d]", i);
+		TRG005L_Print( de);
+
+		EXEC SQL
+		INSERT INTO TB_FXB_TRG005L
+		(
+			FX_CNTT_NO      ,
+			ORDN_NO			,
+			TRHS_SRN        ,
+			SUB_FX_CNTT_NO  ,
+			PRAS_ID         ,
+			CRNC_PAIR_ID    ,
+			TNR_ID          ,
+			EXPI_FNSH_YMD   ,
+			BYSEL_DCD       ,
+			MRKT_SPOT_PRC   ,
+			MRKT_SWAP_PRC   ,
+			FX_MRKT_PRC     ,
+			CVR_SPR         ,
+			FX_CVR_PRC      ,
+			CVR_SDCU_AMT    ,
+			CVR_COCU_AMT    ,
+			SLS_SPR         ,
+			ORCY_SPR        ,
+			FX_ORCY_PRC     ,
+			HDBR_DSCN_RT    ,
+			ORCY_SDCU_AMT   ,
+			ORCY_COCU_AMT   ,
+			CUS_SPR         ,
+			FX_CUS_PRC      ,
+			TRCO_EMP_NO     ,
+			TRCO_PU_CD      ,
+			TRCO_FXBK_ID    ,
+			ORGN_FX_CNTT_NO ,
+			CNTT_TRN_TRNM_ID,
+			CNTT_TRN_RCV_ID ,
+			CUS_SDCU_AMT    ,
+			CUS_COCU_AMT    ,
+			USE_YN          ,
+			FX_SYS_LSMD_ID  ,
+			FX_SYS_LSMD_TS  
+		)
+		VALUES
+		(
+			TRIM( :de->FX_CNTT_NO),
+			TRIM( :de->ORDN_NO)  ,
+			:de->TRHS_SRN        ,
+			:de->SUB_FX_CNTT_NO  ,
+			TRIM( :de->PRAS_ID)  ,
+			:de->CRNC_PAIR_ID    ,
+			:de->TNR_ID          ,
+			:de->EXPI_FNSH_YMD   ,
+			:de->BYSEL_DCD       ,
+			:de->MRKT_SPOT_PRC   ,
+			:de->MRKT_SWAP_PRC   ,
+			:de->FX_MRKT_PRC     ,
+			:de->CVR_SPR         ,
+			:de->FX_CVR_PRC      ,
+			:de->CVR_SDCU_AMT    ,
+			:de->CVR_COCU_AMT    ,
+			:de->SLS_SPR         ,
+			:de->ORCY_SPR        ,
+			:de->FX_ORCY_PRC     ,
+			:de->HDBR_DSCN_RT    ,
+			:de->ORCY_SDCU_AMT   ,
+			:de->ORCY_COCU_AMT   ,
+			:de->CUS_SPR         ,
+			:de->FX_CUS_PRC      ,
+			:de->TRCO_EMP_NO     ,
+			:de->TRCO_PU_CD      ,
+			:de->TRCO_FXBK_ID    ,
+			:de->ORGN_FX_CNTT_NO ,
+			:de->CNTT_TRN_TRNM_ID,
+			:de->CNTT_TRN_RCV_ID ,
+			:de->CUS_SDCU_AMT    ,
+			:de->CUS_COCU_AMT    ,
+			:de->USE_YN          ,
+			:de->FX_SYS_LSMD_ID  ,
+			SYSDATE
+		);
+		if (SQLCODE != 0)
+		{
+			LogCri( "Insert Error = [%d]", SQLCODE);
+			goto error;
+			/*
+			l_dbrollback();
+			return SQLCODE;
+			*/
+		}
+		/*
+		l_dbcommit();
+		*/
+	}
+
+	l_dbcommit();
+	return 1;
+
+	error:
+		l_dbrollback();
+		return SQLCODE;
+}
+
+int TRG005L_Print( TRG005L* ptr)
+{
+    LogRaw( "%s", "----[ TRG005L ]-------------------------------------------------------------------------\n");
+    LogRaw( "FX체결번호                    FX_CNTT_NO            12    0 = [%.12s]\n", 	ptr->FX_CNTT_NO);
+    LogRaw( "FX주문번호                    ORDN_NO               31   12 = [%.31s]\n", 	ptr->ORDN_NO);
+    LogRaw( "거래내역일련번호              TRHS_SRN              23   43 = [%.23s]\n", 	ptr->TRHS_SRN);
+    LogRaw( "SWAP NEAR FAR 구분            SUB_FX_CNTT_NO        23   43 = [%.23s]\n", 	ptr->SUB_FX_CNTT_NO);
+    LogRaw( "호가ID                        PRAS_ID               61   66 = [%.61s]\n", 	ptr->PRAS_ID);
+    LogRaw( "통화페어ID                    CRNC_PAIR_ID           8  127 = [%.8s]\n", 	ptr->CRNC_PAIR_ID);
+    LogRaw( "TENORID                       TNR_ID                 4  135 = [%.4s]\n", 	ptr->TNR_ID);
+    LogRaw( "만기종료년월일                EXPI_FNSH_YMD          9  139 = [%.9s]\n", 	ptr->EXPI_FNSH_YMD);
+    LogRaw( "매입매도구분코드              BYSEL_DCD              2  148 = [%.2s]\n", 	ptr->BYSEL_DCD);
+    LogRaw( "시장SPOT가격                  MRKT_SPOT_PRC         23  150 = [%.23s]\n", 	ptr->MRKT_SPOT_PRC);
+    LogRaw( "시장스왑가격                  MRKT_SWAP_PRC         23  173 = [%.23s]\n", 	ptr->MRKT_SWAP_PRC);
+    LogRaw( "FX시장가격                    FX_MRKT_PRC           23  196 = [%.23s]\n", 	ptr->FX_MRKT_PRC);
+    LogRaw( "커버스프레드                  CVR_SPR               23  219 = [%.23s]\n", 	ptr->CVR_SPR);
+    LogRaw( "FX커버가격                    FX_CVR_PRC            23  242 = [%.23s]\n", 	ptr->FX_CVR_PRC);
+    LogRaw( "커버기준통화금액              CVR_SDCU_AMT          23  265 = [%.23s]\n", 	ptr->CVR_SDCU_AMT);
+    LogRaw( "커버상대통화금액              CVR_COCU_AMT          23  288 = [%.23s]\n", 	ptr->CVR_COCU_AMT);
+    LogRaw( "세일즈스프레드                SLS_SPR               23  311 = [%.23s]\n", 	ptr->SLS_SPR);
+    LogRaw( "당사스프레드                  ORCY_SPR              23  334 = [%.23s]\n", 	ptr->ORCY_SPR);
+    LogRaw( "FX당사가격                    FX_ORCY_PRC           23  357 = [%.23s]\n", 	ptr->FX_ORCY_PRC);
+    LogRaw( "본지점 할인율                 HDBR_DSCN_RT          23  380 = [%.23s]\n", 	ptr->HDBR_DSCN_RT);
+    LogRaw( "당사기준통화금액              ORCY_SDCU_AMT         23  403 = [%.23s]\n", 	ptr->ORCY_SDCU_AMT);
+    LogRaw( "당사상대통화금액              ORCY_COCU_AMT         23  426 = [%.23s]\n", 	ptr->ORCY_COCU_AMT);
+    LogRaw( "고객스프레드                  CUS_SPR               23  449 = [%.23s]\n", 	ptr->CUS_SPR);
+    LogRaw( "FX고객가격                    FX_CUS_PRC            23  472 = [%.23s]\n", 	ptr->FX_CUS_PRC);
+    LogRaw( "고객기준통화금액              CUS_SDCU_AMT          23  495 = [%.23s]\n", 	ptr->CUS_SDCU_AMT);
+    LogRaw( "고객상대통화금액              CUS_COCU_AMT          23  518 = [%.23s]\n", 	ptr->CUS_COCU_AMT);
+    LogRaw( "거래상대방직원번호            TRCO_EMP_NO           11  541 = [%.11s]\n", 	ptr->TRCO_EMP_NO);
+    LogRaw( "거래상대방PU코드              TRCO_PU_CD             6  552 = [%.6s]\n", 	ptr->TRCO_PU_CD);
+    LogRaw( "거래상대방FX북ID              TRCO_FXBK_ID          21  558 = [%.21s]\n", 	ptr->TRCO_FXBK_ID);
+    LogRaw( "원천FX체결번호                ORGN_FX_CNTT_NO       12  579 = [%.12s]\n", 	ptr->ORGN_FX_CNTT_NO);
+    LogRaw( "체결거래송신ID                CNTT_TRN_TRNM_ID      21  591 = [%.21s]\n", 	ptr->CNTT_TRN_TRNM_ID);
+    LogRaw( "체결거래수신ID                CNTT_TRN_RCV_ID       21  612 = [%.21s]\n", 	ptr->CNTT_TRN_RCV_ID);
+    LogRaw( "사용여부                      USE_YN                 2  633 = [%.2s]\n", 	ptr->USE_YN);
+    LogRaw( "FX시스템최종변경ID            FX_SYS_LSMD_ID        31  635 = [%.31s]\n", 	ptr->FX_SYS_LSMD_ID);
+    LogRaw( "FX시스템최종변경일시          FX_SYS_LSMD_TS         8  666 = [%.8s]\n", 	ptr->FX_SYS_LSMD_TS);
+    LogRaw( "%s", "-------------------------------------------------------------------------[ TRG005L ]----\n");
+
+    return sizeof( TRG005L);
+}
+

@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+</head>
+<body>
+<title>가상거래소 테스트 인벤토리</title>
+<style>
+  :root {
+    --bg:        #eef1f5;
+    --panel:     #ffffff;
+    --panel-2:   #f6f8fb;
+    --ink:       #161b26;
+    --ink-2:     #4a5567;
+    --ink-3:     #7c8798;
+    --line:      #d6dce6;
+    --line-2:    #e6ebf2;
+    --accent:    #0d7d8c;
+    --accent-2:  #0a606c;
+    --pass:      #1f9d5b;
+    --pass-bg:   #e2f4ea;
+    --warn:      #b8860b;
+    --warn-bg:   #f7eed5;
+    --fail:      #c0392b;
+    --fail-bg:   #f7e2df;
+    --mono: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:      #0d1117;
+      --panel:   #161b22;
+      --panel-2: #1b212b;
+      --ink:     #e6edf3;
+      --ink-2:   #9aa7b8;
+      --ink-3:   #6b7688;
+      --line:    #2a323d;
+      --line-2:  #222932;
+      --accent:  #33c2d1;
+      --accent-2:#5bd6e3;
+      --pass:    #3fb96f;
+      --pass-bg: #14301f;
+      --warn:    #d6a740;
+      --warn-bg: #322813;
+      --fail:    #e0685a;
+      --fail-bg: #331b18;
+    }
+  }
+  :root[data-theme="light"] {
+    --bg:#eef1f5; --panel:#ffffff; --panel-2:#f6f8fb; --ink:#161b26; --ink-2:#4a5567;
+    --ink-3:#7c8798; --line:#d6dce6; --line-2:#e6ebf2; --accent:#0d7d8c; --accent-2:#0a606c;
+    --pass:#1f9d5b; --pass-bg:#e2f4ea; --warn:#b8860b; --warn-bg:#f7eed5; --fail:#c0392b; --fail-bg:#f7e2df;
+  }
+  :root[data-theme="dark"] {
+    --bg:#0d1117; --panel:#161b22; --panel-2:#1b212b; --ink:#e6edf3; --ink-2:#9aa7b8;
+    --ink-3:#6b7688; --line:#2a323d; --line-2:#222932; --accent:#33c2d1; --accent-2:#5bd6e3;
+    --pass:#3fb96f; --pass-bg:#14301f; --warn:#d6a740; --warn-bg:#322813; --fail:#e0685a; --fail-bg:#331b18;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: var(--sans); line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 32px 24px 72px; }
+
+  /* ---- masthead ---- */
+  .mast { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px; padding-bottom: 20px; border-bottom: 1px solid var(--line); }
+  .mast h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.01em; font-weight: 650; }
+  .mast .sub { font-family: var(--mono); font-size: 12px; color: var(--ink-3); }
+  .mast .sub b { color: var(--accent); font-weight: 600; }
+  .eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 8px; }
+
+  /* ---- summary strip ---- */
+  .summary { display: grid; grid-template-columns: auto 1fr; gap: 20px; align-items: center; margin: 24px 0 8px; padding: 20px 24px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+  .bigstat { display: flex; align-items: baseline; gap: 10px; }
+  .bigstat .n { font-family: var(--mono); font-size: 46px; font-weight: 700; line-height: 1; color: var(--pass); font-variant-numeric: tabular-nums; }
+  .bigstat .d { font-family: var(--mono); font-size: 20px; color: var(--ink-3); }
+  .bigstat .lbl { font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3); margin-left: 4px; }
+  .meters { display: flex; flex-wrap: wrap; gap: 10px 26px; justify-content: flex-end; }
+  .meter { font-family: var(--mono); font-size: 12px; color: var(--ink-2); }
+  .meter b { color: var(--ink); font-weight: 600; }
+  .meter .ok { color: var(--pass); }
+
+  /* ---- section ---- */
+  section { margin-top: 40px; }
+  .sec-h { font-size: 13px; font-weight: 600; letter-spacing: 0.02em; margin: 0 0 14px; display: flex; align-items: center; gap: 10px; }
+  .sec-h::after { content: ""; flex: 1; height: 1px; background: var(--line-2); }
+
+  /* ---- test cards ---- */
+  .cards { display: grid; gap: 16px; }
+  .card { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px 22px 20px 26px; overflow: hidden; }
+  .card::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--pass); }
+  .card-top { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 4px; }
+  .card-top .file { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--ink); }
+  .card-top .tag { font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); border: 1px solid var(--line); padding: 2px 7px; border-radius: 20px; }
+  .pill { font-family: var(--mono); font-size: 11px; font-weight: 700; letter-spacing: 0.08em; padding: 3px 10px; border-radius: 20px; display: inline-flex; align-items: center; gap: 6px; }
+  .pill.pass { color: var(--pass); background: var(--pass-bg); }
+  .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .pill.pass::before { box-shadow: 0 0 0 3px color-mix(in srgb, var(--pass) 22%, transparent); }
+  .desc { font-size: 13.5px; color: var(--ink-2); margin: 2px 0 14px; max-width: 68ch; }
+  .desc b { color: var(--ink); font-weight: 600; }
+
+  /* ---- pipeline flow ---- */
+  .flow { display: flex; flex-wrap: wrap; align-items: stretch; gap: 6px; margin-top: 4px; }
+  .node { display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 8px; min-width: 0; }
+  .node .k { font-family: var(--mono); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); }
+  .node .v { font-family: var(--mono); font-size: 12.5px; color: var(--ink); font-weight: 600; white-space: nowrap; }
+  .node.real { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); background: color-mix(in srgb, var(--accent) 8%, var(--panel-2)); }
+  .node.real .k { color: var(--accent); }
+  .node.check { border-color: color-mix(in srgb, var(--pass) 40%, var(--line)); background: var(--pass-bg); }
+  .node.check .k { color: var(--pass); }
+  .arrow { align-self: center; color: var(--ink-3); font-family: var(--mono); font-size: 15px; padding: 0 1px; }
+
+  /* ---- catalog table ---- */
+  .tbl-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+  table { border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: 12.5px; min-width: 640px; }
+  thead th { text-align: left; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; padding: 12px 14px; border-bottom: 1px solid var(--line); background: var(--panel-2); white-space: nowrap; }
+  tbody td { padding: 11px 14px; border-bottom: 1px solid var(--line-2); color: var(--ink-2); white-space: nowrap; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody td b { color: var(--ink); font-weight: 600; }
+  .mk { display: inline-block; width: 20px; text-align: center; border-radius: 5px; font-weight: 700; font-size: 11px; padding: 1px 0; }
+  .mk-c { color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, transparent); }
+  .mk-b { color: var(--warn); background: var(--warn-bg); }
+  .mk-f { color: #8b5cf6; background: color-mix(in srgb, #8b5cf6 15%, transparent); }
+  .chip { font-size: 11px; padding: 1px 8px; border-radius: 20px; border: 1px solid var(--line); color: var(--ink-3); }
+  .chip.on { color: var(--pass); border-color: color-mix(in srgb, var(--pass) 40%, var(--line)); }
+
+  /* ---- info grid (guarantees + fill rules) ---- */
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+  .box { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; }
+  .box h3 { font-size: 12px; font-weight: 650; margin: 0 0 12px; letter-spacing: 0.02em; }
+  .guar { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+  .guar li { display: flex; gap: 10px; font-size: 13px; color: var(--ink-2); }
+  .guar li::before { content: "✓"; color: var(--pass); font-weight: 700; font-family: var(--mono); }
+  .guar code { font-family: var(--mono); font-size: 12px; color: var(--ink); background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
+  .rules { display: flex; flex-direction: column; gap: 8px; }
+  .rule { display: grid; grid-template-columns: 84px 1fr; gap: 12px; align-items: baseline; font-size: 13px; }
+  .rule .r { font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--accent); }
+  .rule .t { color: var(--ink-2); }
+
+  /* ---- run / extend ---- */
+  .run { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .run .bar { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel-2); }
+  .run .bar .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--line); }
+  .run .bar .ttl { font-family: var(--mono); font-size: 11px; color: var(--ink-3); margin-left: 4px; }
+  .run pre { margin: 0; padding: 16px 18px; overflow-x: auto; font-family: var(--mono); font-size: 12.5px; line-height: 1.7; color: var(--ink); }
+  .run .c { color: var(--ink-3); }
+  .run .p { color: var(--accent); }
+  .run .g { color: var(--pass); }
+
+  .extend { margin-top: 16px; display: flex; align-items: center; gap: 14px; padding: 16px 20px; background: color-mix(in srgb, var(--accent) 7%, var(--panel)); border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line)); border-radius: 12px; font-size: 13.5px; color: var(--ink-2); }
+  .extend .big { font-family: var(--mono); font-weight: 700; font-size: 13px; color: var(--accent); white-space: nowrap; }
+  .extend b { color: var(--ink); font-weight: 600; }
+
+  footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--line-2); font-family: var(--mono); font-size: 11px; color: var(--ink-3); display: flex; flex-wrap: wrap; gap: 6px 18px; }
+</style>
+
+<div class="wrap">
+
+  <div class="mast">
+    <div>
+      <div class="eyebrow">KRX FEP · Virtual Exchange</div>
+      <h1>가상거래소 테스트 인벤토리</h1>
+      <div class="sub">catalog-driven mock KRX exchange · <b>cfg/vexch.ini</b> 구동 · 상품 추가 = 블록 1개</div>
+    </div>
+    <div class="sub" style="text-align:right">
+      host <b>EC2 43.202.38.195</b><br>
+      last run <b>2026-08-11 05:02</b> · <b>_FEP_DIV=TEST</b>
+    </div>
+  </div>
+
+  <div class="summary">
+    <div class="bigstat">
+      <span class="n">3</span><span class="d">/&thinsp;3</span>
+      <span class="lbl">PASS</span>
+    </div>
+    <div class="meters">
+      <span class="meter"><span class="ok">●</span> 엔진 자체검증 <b>PASS</b></span>
+      <span class="meter"><span class="ok">●</span> KRX 시세 실수신 <b>PASS</b></span>
+      <span class="meter"><span class="ok">●</span> FX 시세 실수신 <b>PASS</b></span>
+      <span class="meter">core dump <b>0</b></span>
+    </div>
+  </div>
+
+  <!-- =============== TESTS =============== -->
+  <section>
+    <div class="sec-h">테스트 (3) · <span style="font-weight:400;color:var(--ink-3)">sh run_all.sh</span></div>
+    <div class="cards">
+
+      <!-- card 1 -->
+      <div class="card">
+        <div class="card-top">
+          <span class="file">run_vexch.sh</span>
+          <span class="tag">VX engine</span>
+          <span class="tag">FEP 무관</span>
+          <span class="pill pass" style="margin-left:auto">PASS</span>
+        </div>
+        <p class="desc">거래소 로직 단독 검증 — <b>주문/체결 4전문</b>(채권·파생), 시세 발행, <b>주문↔체결 correlation</b>(회원영역 echo), order-aware 라우팅. 빠르고 인프라 불요.</p>
+        <div class="flow">
+          <div class="node"><span class="k">client</span><span class="v">vx_probe</span></div>
+          <span class="arrow">→</span>
+          <div class="node real"><span class="k">exchange</span><span class="v">mock_krx_server</span></div>
+          <span class="arrow">→</span>
+          <div class="node"><span class="k">catalog</span><span class="v">vexch.ini</span></div>
+          <span class="arrow">→</span>
+          <div class="node check"><span class="k">verify</span><span class="v">TR≥4 · CORRELATED</span></div>
+        </div>
+      </div>
+
+      <!-- card 2 -->
+      <div class="card">
+        <div class="card-top">
+          <span class="file">run_vx_pc_e2e.sh</span>
+          <span class="tag">VX-2c</span>
+          <span class="tag">멀티캐스트</span>
+          <span class="pill pass" style="margin-left:auto">PASS</span>
+        </div>
+        <p class="desc">KRX 파생 시세 <b>A301F</b>(173B)를 멀티캐스트로 발행 → <b>실 FEP 수신부 pc_7100_ur</b>이 그룹 join·수신·분류. HA는 STANDALONE.</p>
+        <div class="flow">
+          <div class="node"><span class="k">publisher</span><span class="v">vx_sise_pub</span></div>
+          <span class="arrow">→</span>
+          <div class="node"><span class="k">mcast</span><span class="v">239.1.1.1:17001</span></div>
+          <span class="arrow">→</span>
+          <div class="node real"><span class="k">real FEP</span><span class="v">pc_7100_ur</span></div>
+          <span class="arrow">→</span>
+          <div class="node check"><span class="k">verify</span><span class="v">recv ×10 · A301F</span></div>
+        </div>
+      </div>
+
+      <!-- card 3 -->
+      <div class="card">
+        <div class="card-top">
+          <span class="file">run_pf_sise_e2e.sh</span>
+          <span class="tag">FX 시세</span>
+          <span class="tag">SHM 적재</span>
+          <span class="pill pass" style="margin-left:auto">PASS</span>
+        </div>
+        <p class="desc">FX 시세 <b>CO_B6FX</b>(USD/KRW)를 UDP로 발행 → <b>실 FEP 수신부 pf_7400_ur</b>이 수신·변환 후 <b>Shm_Risk[0].FX_Sise</b> 공유메모리에 적재.</p>
+        <div class="flow">
+          <div class="node"><span class="k">publisher</span><span class="v">vx_sise_pub</span></div>
+          <span class="arrow">→</span>
+          <div class="node"><span class="k">udp</span><span class="v">127.0.0.1:18400</span></div>
+          <span class="arrow">→</span>
+          <div class="node real"><span class="k">real FEP</span><span class="v">pf_7400_ur</span></div>
+          <span class="arrow">→</span>
+          <div class="node check"><span class="k">verify</span><span class="v">FX_Sise stored</span></div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- =============== CATALOG =============== -->
+  <section>
+    <div class="sec-h">상품 카탈로그 · <span style="font-weight:400;color:var(--ink-3)">cfg/vexch.ini</span></div>
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>product</th><th>market</th><th>order_tr</th><th>resp_tr</th><th>exec_tr</th><th>fill</th><th>시세</th><th>enabled</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><b>PRODUCT_DERIV</b></td>
+            <td><span class="mk mk-c">c</span> 파생</td>
+            <td>TCHODR10001</td><td>TTRODP11301</td><td>TTRTDP21301</td>
+            <td>full</td><td>krx · A301F</td>
+            <td><span class="chip on">Y</span></td>
+          </tr>
+          <tr>
+            <td><b>PRODUCT_BOND</b></td>
+            <td><span class="mk mk-b">b</span> 채권</td>
+            <td>TCHODR40001</td><td>TTRODP41301</td><td>TTRTDP42301</td>
+            <td>full</td><td>—</td>
+            <td><span class="chip on">Y</span></td>
+          </tr>
+          <tr>
+            <td><b>PRODUCT_FX_USDKRW</b></td>
+            <td><span class="mk mk-f">f</span> FX</td>
+            <td>—</td><td>—</td><td>—</td>
+            <td>ack</td><td>fx · USDKRW</td>
+            <td><span class="chip on">Y</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- =============== GUARANTEES + FILL RULES =============== -->
+  <section>
+    <div class="grid2">
+      <div class="box">
+        <h3>하니스 자기검증 (매 실행)</h3>
+        <ul class="guar">
+          <li><span><b style="color:var(--ink)">cfg 백업/복원</b> — <code>cfg.*backup</code>로 원복, 운영 설정 오염 방지</span></li>
+          <li><span><b style="color:var(--ink)">IPC/프로세스 클린</b> — 종료 시 <code>ipcrm</code> + <code>pkill</code></span></li>
+          <li><span><b style="color:var(--ink)">판정 근거 로그</b> — <code>result/all_*.log</code>에 원본 증거</span></li>
+          <li><span><b style="color:var(--ink)">core dump 0 확인</b> — 비정상 종료 감지</span></li>
+        </ul>
+      </div>
+      <div class="box">
+        <h3>fill_rule 변형 (체결 시나리오)</h3>
+        <div class="rules">
+          <div class="rule"><span class="r">ack</span><span class="t">응답만 (체결 없음) — FX 등</span></div>
+          <div class="rule"><span class="r">full</span><span class="t">전량 체결</span></div>
+          <div class="rule"><span class="r">partial</span><span class="t">부분 체결 (수량 절반)</span></div>
+          <div class="rule"><span class="r">reject</span><span class="t">거부 응답</span></div>
+        </div>
+        <p style="font-size:12px;color:var(--ink-3);margin:14px 0 0;font-family:var(--mono)">cfg의 fill_rule 변경 → run_vexch 재실행으로 검증</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- =============== RUN =============== -->
+  <section>
+    <div class="sec-h">실행 방법</div>
+    <div class="run">
+      <div class="bar"><span class="dot"></span><span class="ttl">ec2-user@43.202.38.195 — 전체 확인 (판정 집계)</span></div>
+      <pre><span class="c"># 전체 3종 순차 실행 + PASS/FAIL 집계</span>
+cd ~/new_fep/st01/test/vexch && sh <span class="p">run_all.sh</span>
+
+<span class="c"># 개별 상세</span>
+sh run_vexch.sh                        <span class="c"># VX 엔진 (주문/체결+시세+상관)</span>
+sh run_vx_pc_e2e.sh                    <span class="c"># KRX 시세 → pc_7100_ur</span>
+sh ../e2e/run_pf_sise_e2e.sh           <span class="c"># FX 시세 → pf_7400_ur → FX_Sise</span>
+
+<span class="c"># 이중소켓 교차상관 (주문 A소켓 → 체결 B소켓 echo)</span>
+$BIN/mock_krx_server 19995 &amp;
+$BIN/vx_probe 19995 send <span class="g">;</span> $BIN/vx_probe 19995 recv</pre>
+    </div>
+
+    <div class="extend">
+      <span class="big">+ 1 블록</span>
+      <span>상품이 늘어도 확인법은 동일 — <b>cfg/vexch.ini에 [PRODUCT_*] 블록 하나 추가</b> 후 <b>sh run_all.sh</b> 재실행. 엔진 재빌드 불요. 이것이 이 테스트 인프라의 핵심(카탈로그 구동)입니다.</span>
+    </div>
+  </section>
+
+  <footer>
+    <span>vexch test inventory</span>
+    <span>· PA/PB/PC/PF · KRX EXTURE3.0</span>
+    <span>· 실 FEP 수신부 연동: pc_7100_ur, pf_7400_ur</span>
+    <span>· VX_TEST 로그는 getenv 가드 (운영 무영향)</span>
+  </footer>
+
+</div>
+
+</body>
+</html>

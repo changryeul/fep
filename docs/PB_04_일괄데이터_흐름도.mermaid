@@ -1,0 +1,26 @@
+---
+title: PB 일괄 데이터(RDS/Batch) 흐름도
+---
+graph TD
+    subgraph RDS_RECV["KRX 일괄 송신 (우리측 수신)"]
+        KRX1["KRX"] -->|"TCP :63725"| RDS_RX["pb_7801_tr\nRDS일괄수신\nLogon:M00501S"]
+        RDS_RX -->|"FIFO"| RDS_TX["pb_1411_ts\nRDS일괄송신\n:41005"]
+        RDS_TX -->|"TCP :41005"| PA1["PA / Client"]
+    end
+
+    subgraph BATCH_SEND["KRX 일괄 수신 (우리측 송신)"]
+        PA2["PA / Client"] -->|"TCP :32019"| BATCH_RX["pb_8211_tr\n일괄수신\n(지점정보)"]
+        BATCH_RX -->|"FIFO"| BATCH_TX["pb_1801_ts\n일괄송신\nLogon:M00501R"]
+        BATCH_TX -->|"TCP :63724"| KRX2["KRX"]
+        BATCH_TX -->|"FIFO"| RDS_SEND["pb_8116_ts\n일괄RDS송신\n:32016"]
+        RDS_SEND -->|"TCP :32016"| PA3["PA / Client"]
+    end
+
+    subgraph UDP_SISE["UDP 시세 (별도 경로)"]
+        KRX3["KRX"] -->|"UDP :10402"| UR1["pb_7102_ur\n채권KTS시세수신"]
+        KRX3 -->|"UDP :10406"| UR2["pb_7103_ur\n채권M4시세수신"]
+        UR1 --> DD1["pb_7102_dd\n시세Load"]
+        UR2 --> DD2["pb_7103_dd\n시세Load"]
+        DD1 --> SHM["SHM\nShm_Note[]\n(채권시세)"]
+        DD2 --> SHM
+    end
