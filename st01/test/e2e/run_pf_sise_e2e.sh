@@ -9,16 +9,21 @@
 #   주입 심볼/가격이 FX_Sise/Shm_FX 에 실제 저장됨을 확인. (arb FX leg 가 읽을 데이터)
 #   ※ 실 FIX 디코드=agxpi 운영 전용; dev 는 CO_B6FX raw wire 로 대체.
 #------------------------------------------------------------------------
-FEP=$HOME/new_fep; ST01=$FEP/st01; E2E=$ST01/test/e2e; BIN=$ST01/bin; CFG=$ST01/cfg
+FEP=${_FEP_HOME:-$HOME/new_fep}; ST01=$FEP/st01; E2E=$ST01/test/e2e; BIN=$ST01/bin; CFG=$ST01/cfg
 RESULT=$E2E/result; PIDS=""; PF=pf_7400_ur; PFBIN=$BIN/pf_7400_ur
 log(){ printf '[PFSISE] %s\n' "$1"; }
+IPC_BASE=/tmp/pfs_ipcbase.$$
+ipc_snapshot(){ mkdir -p "$IPC_BASE"; for t in m s q; do ipcs -$t 2>/dev/null|awk '$2 ~ /^[0-9]+$/{print $2}' > "$IPC_BASE/$t" 2>/dev/null; done; }
+# 스냅샷 diff: 테스트 시작 이후 새로 생긴 IPC 만 제거 (공유 서버의 mymq/etcd/postgres 등 기존 IPC 보호)
 wipe_ipc(){
-    for t in m s q; do ipcs -$t 2>/dev/null|awk '/^0x/{print $2}'|xargs -r -n1 ipcrm -$t 2>/dev/null; done
+    [ -d "$IPC_BASE" ] || return 0
+    for t in m s q; do ipcs -$t 2>/dev/null|awk '$2 ~ /^[0-9]+$/{print $2}'|grep -vxF -f "$IPC_BASE/$t" 2>/dev/null|xargs -r -n1 ipcrm -$t 2>/dev/null; done
 }
 cleanup(){
     log "cleanup..."; for p in $PIDS; do kill -9 "$p" 2>/dev/null; done
     pkill -9 -x $PF 2>/dev/null; pkill -9 -x pz_memory_mp 2>/dev/null; sleep 1; wipe_ipc
     [ -d "$CFG.pfs_backup" ] && { rm -rf "$CFG"; mv "$CFG.pfs_backup" "$CFG"; log "cfg restored"; }
+    rm -rf "$IPC_BASE" 2>/dev/null
 }
 fail(){ printf '[PFSISE][FAIL] %s\n' "$1"; cleanup; exit 1; }
 trap cleanup INT TERM
@@ -26,7 +31,7 @@ export _FEP_HOME=$FEP; . $ST01/env/pkg_env.sh >/dev/null 2>&1; ulimit -c unlimit
 mkdir -p "$RESULT"; rm -f "$RESULT"/pfs_*.log 2>/dev/null
 
 if ps -ef|grep -E 'p[abcofwz]_[0-9a-z_]+_(mp|ts|tr|ur)'|grep -v grep >/dev/null; then fail "FEP 실행중"; fi
-wipe_ipc
+ipc_snapshot; wipe_ipc
 
 # --- pf_7400_ur 를 TESTLOG 로 재빌드(STORED 로그) + fx_sise_inject 빌드 ---
 log "build pf_7400_ur (-DTESTLOG) + fx_sise_inject ..."

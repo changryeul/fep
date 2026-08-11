@@ -7,7 +7,7 @@
 #   각 하니스를 순차 실행하고 판정(PASS/FAIL/PENDING)을 집계한다.
 #   개별 상세는 각 하니스를 직접 실행: 아래 [실행] 명령 참조.
 #------------------------------------------------------------------------
-FEP=$HOME/new_fep; VEXCH=$FEP/st01/test/vexch; E2E=$FEP/st01/test/e2e
+FEP=${_FEP_HOME:-$HOME/new_fep}; VEXCH=$FEP/st01/test/vexch; E2E=$FEP/st01/test/e2e
 pass=0; other=0; RESULT=$FEP/st01/test/e2e/result; mkdir -p "$RESULT"
 
 run_one() {

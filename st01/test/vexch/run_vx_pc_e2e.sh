@@ -7,21 +7,25 @@
 #   멀티캐스트 A301F → pc_7100_ur('c' 섹터, UDP 수신 + IP_ADD_MEMBERSHIP join) 수신·분류.
 #   HA 는 _FEP_DIV=TEST → STANDALONE. (relay/FF_SHM 하류는 VX-2c-full)
 #------------------------------------------------------------------------
-FEP=$HOME/new_fep; ST01=$FEP/st01; E2E=$ST01/test/e2e; BIN=$ST01/bin; CFG=$ST01/cfg
+FEP=${_FEP_HOME:-$HOME/new_fep}; ST01=$FEP/st01; E2E=$ST01/test/e2e; BIN=$ST01/bin; CFG=$ST01/cfg
 INTEG=$ST01/test/integ; RESULT=$E2E/result; PIDS=""; GRP=239.1.1.1; PORT=17001
 log(){ printf '[VXPC] %s\n' "$1"; }
-wipe_ipc(){ for t in m s q; do ipcs -$t 2>/dev/null|awk '/^0x/{print $2}'|xargs -r -n1 ipcrm -$t 2>/dev/null; done; }
+IPC_BASE=/tmp/vxpc_ipcbase.$$
+ipc_snapshot(){ mkdir -p "$IPC_BASE"; for t in m s q; do ipcs -$t 2>/dev/null|awk '$2 ~ /^[0-9]+$/{print $2}' > "$IPC_BASE/$t" 2>/dev/null; done; }
+# 스냅샷 diff: 테스트 시작 이후 새로 생긴 IPC 만 제거 (공유 서버의 mymq/etcd/postgres 등 기존 IPC 보호)
+wipe_ipc(){ [ -d "$IPC_BASE" ] || return 0; for t in m s q; do ipcs -$t 2>/dev/null|awk '$2 ~ /^[0-9]+$/{print $2}'|grep -vxF -f "$IPC_BASE/$t" 2>/dev/null|xargs -r -n1 ipcrm -$t 2>/dev/null; done; }
 cleanup(){
     for p in $PIDS; do kill -9 "$p" 2>/dev/null; done
     pkill -9 -x pc_7100_ur 2>/dev/null; pkill -9 -x pz_memory_mp 2>/dev/null; sleep 1; wipe_ipc
     [ -d "$CFG.vxpc_backup" ] && { rm -rf "$CFG"; mv "$CFG.vxpc_backup" "$CFG"; log "cfg restored"; }
+    rm -rf "$IPC_BASE" 2>/dev/null
 }
 fail(){ printf '[VXPC][FAIL] %s\n' "$1"; cleanup; exit 1; }
 trap cleanup INT TERM
 export _FEP_HOME=$FEP; export _FEP_DIV=TEST; export VX_TEST=1; . $ST01/env/pkg_env.sh >/dev/null 2>&1; ulimit -c unlimited 2>/dev/null
 mkdir -p "$RESULT"; rm -f "$RESULT"/vxpc_*.log 2>/dev/null
 if ps -ef|grep -E 'p[abcofwz]_[0-9a-z_]+_(mp|ts|tr|ur)'|grep -v grep >/dev/null; then fail "FEP 실행중"; fi
-wipe_ipc
+ipc_snapshot; wipe_ipc
 
 [ -x "$BIN/pc_7100_ur" ] || fail "pc_7100_ur 없음"
 cc -I$ST01/inc -o $INTEG/bin/vx_sise_pub $INTEG/mock/vx_sise_pub.c $ST01/test/vexch/vexch_catalog.c 2>&1|grep -iE error && fail "vx_sise_pub build"

@@ -10,7 +10,7 @@
 #   자체 스모크: 거래소 기동 → probe로 카탈로그 상품 응답/체결 push 확인
 #              + vx_sise_pub 카탈로그 로드/발행 확인. (FEP 무관 = VX 단위 검증)
 #------------------------------------------------------------------------
-FEP=$HOME/new_fep; ST01=$FEP/st01; INTEG=$ST01/test/integ; VEXCH=$ST01/test/vexch
+FEP=${_FEP_HOME:-$HOME/new_fep}; ST01=$FEP/st01; INTEG=$ST01/test/integ; VEXCH=$ST01/test/vexch
 CAT=$ST01/cfg/vexch.ini; PORT=${1:-19997}; PIDS=""
 log(){ printf '[VEXCH] %s\n' "$1"; }
 cleanup(){ for p in $PIDS; do kill -9 "$p" 2>/dev/null; done; }
