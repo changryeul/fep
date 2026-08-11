@@ -23,6 +23,10 @@ typedef struct {
     char wrapper[20];           /* push 래퍼 MsgType (TCHTDP00000)    */
     char fill_rule[12];         /* ack | full | partial | reject      */
     int  enabled;
+    /* 주문 프로토콜 (거래원) */
+    char order_proto[12];       /* krx(기본) | fx_smb (SMB_ST/TCP)     */
+    char fx_excode[2];          /* FX 거래원: J JPM/N NH/E EBS/C CMB.. */
+    int  fx_port;               /* FX 거래원 엔진 TCP 포트            */
     /* 시세 (UDP) */
     char sise_kind[8];          /* none | fx | krx                    */
     char sise_ip[20];

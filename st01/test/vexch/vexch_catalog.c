@@ -30,6 +30,9 @@ static void vx_set(VX_PRODUCT *p, const char *k, const char *v)
     else if (!strcmp(k, "wrapper"))     strncpy(p->wrapper, v, 19);
     else if (!strcmp(k, "fill_rule"))   strncpy(p->fill_rule, v, 11);
     else if (!strcmp(k, "enabled"))     p->enabled = (v[0] == 'Y' || v[0] == 'y');
+    else if (!strcmp(k, "order_proto")) strncpy(p->order_proto, v, 11);
+    else if (!strcmp(k, "fx_excode"))   strncpy(p->fx_excode, v, 1);
+    else if (!strcmp(k, "fx_port"))     p->fx_port = atoi(v);
     else if (!strcmp(k, "sise_kind"))   strncpy(p->sise_kind, v, 7);
     else if (!strcmp(k, "sise_ip"))     strncpy(p->sise_ip, v, 19);
     else if (!strcmp(k, "sise_port"))   p->sise_port = atoi(v);
@@ -61,6 +64,7 @@ int vx_load_catalog(const char *path, void (*log_fn)(const char *))
                 memset(cur, 0, sizeof(*cur));
                 strcpy(cur->wrapper, "TCHTDP00000");
                 strcpy(cur->sise_kind, "none");
+                strcpy(cur->order_proto, "krx");
                 sscanf(s, "[%31[^]]", cur->name);
             }
             continue;
