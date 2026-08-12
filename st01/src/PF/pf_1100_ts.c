@@ -231,25 +231,46 @@ void	On_Order_Request (char *line)
 /*----------------------------------------------------------------------*/
 {
 	SMB_ST	o;
-	char	exbuf[8], acct[31], sym[8], sidebuf[8], qty[31], px[31], clord[25];
-	char	*tok;
-	int		f = 0, i, vidx = -1;
+	char	*tok, *fld[10];
+	char	acct[31], sym[8], sidebuf[8], qty[31], px[31], clord[25], origclord[25];
+	int		nt = 0, i, vidx = -1;
 	char	excode;
 
-	exbuf[0]=acct[0]=sym[0]=sidebuf[0]=qty[0]=px[0]=clord[0]=0;
-	for (tok = strtok (line, ","); tok; tok = strtok (NULL, ","), f++)
+	for (tok = strtok (line, ","); tok && nt < 10; tok = strtok (NULL, ","))
+		fld[nt++] = tok;
+	if (nt == 0) return;
+
+	/* --- 취소: "CXL,EXCODE,CLORDID,ORIGCLORDID" --- */
+	if (!strcmp (fld[0], "CXL"))
 	{
-		switch (f) {
-		case 0: strncpy (exbuf, tok, 1);    break;
-		case 1: strncpy (acct, tok, 30);    break;
-		case 2: strncpy (sym,  tok, 7);     break;
-		case 3: strncpy (sidebuf, tok, 1);  break;
-		case 4: strncpy (qty,  tok, 30);    break;
-		case 5: strncpy (px,   tok, 30);    break;
-		case 6: strncpy (clord, tok, 24);   break;
-		}
+		if (nt < 4) { Log (USR_ERROR, "취소요청 필드부족 (CXL,EXCODE,CLORDID,ORIGCLORDID)"); return; }
+		excode = fld[1][0];
+		strncpy (clord, fld[2], 24); clord[24] = 0;
+		strncpy (origclord, fld[3], 24); origclord[24] = 0;
+		for (i = 0; i < VenueCnt; i++)
+			if (Venue[i].excode == excode && Venue[i].fd >= 0) { vidx = i; break; }
+		if (vidx < 0) { Log (USR_ERROR, "미등록 거래원 excode=%c (취소 ClOrdID=%s)", excode, clord); return; }
+		memset (&o, 0, SMB_SZ);
+		o.smb_MsgType[0] = 'F';					/* 취소 */
+		setf (o.smb_SenderCompID, 50, "FEP");
+		setf (o.smb_TargetCompID, 50, "SMB");
+		setf (o.smb_ClOrdID, 24, clord);
+		setf (o.smb_OrigClOrdID, 24, origclord);
+		if (write (Venue[vidx].fd, &o, SMB_SZ) != SMB_SZ)
+		{ Log (USR_ERROR, "cancel write fail venue=%c {%d:%s}", excode, SYS_NO, SYS_STR); return; }
+		Log (USR_OK, "FX CANCEL send venue=%c ClOrdID=%s OrigClOrdID=%s", excode, clord, origclord);
+		return;
 	}
-	excode = exbuf[0] ? exbuf[0] : Venue[0].excode;
+
+	/* --- 신규: "EXCODE,ACCT,SYMBOL,SIDE,QTY,PX,CLORDID" --- */
+	acct[0]=sym[0]=sidebuf[0]=qty[0]=px[0]=clord[0]=0;
+	excode = fld[0][0];
+	if (nt > 1) { strncpy (acct, fld[1], 30); acct[30] = 0; }
+	if (nt > 2) { strncpy (sym,  fld[2], 7);  sym[7]  = 0; }
+	if (nt > 3) sidebuf[0] = fld[3][0];
+	if (nt > 4) { strncpy (qty,  fld[4], 30); qty[30] = 0; }
+	if (nt > 5) { strncpy (px,   fld[5], 30); px[30]  = 0; }
+	if (nt > 6) { strncpy (clord, fld[6], 24); clord[24] = 0; }
 	if (!clord[0]) snprintf (clord, sizeof (clord), "FEPFX%010d", OrdSeq++);
 	if (!sidebuf[0]) sidebuf[0] = '1';
 
@@ -293,17 +314,18 @@ void	On_Venue_Recv (VENUE_T *v)
 	while (v->alen >= SMB_SZ)
 	{
 		SMB_ST *e = (SMB_ST *) v->acc;
-		char cl[25], oid[31], eid[31], cum[31], lpx[31];
-		field (cl,  e->smb_ClOrdID, 24);
+		char cl[25], oc[25], oid[31], eid[31], cum[31], lpx[31];
+		field (cl,  e->smb_ClOrdID,     24);
+		field (oc,  e->smb_OrigClOrdID, 24);
 		field (oid, e->smb_OrdID,   30);
 		field (eid, e->smb_ExecID,  30);
 		field (cum, e->smb_CumQty,  30);
 		field (lpx, e->smb_LastPx,  30);
-		Log (USR_OK, "FX EXEC recv venue=%c MsgType=%c ExecType=%c OrdStatus=%c ClOrdID=%s OrdID=%s ExecID=%s CumQty=%s LastPx=%s",
-			 v->excode, e->smb_MsgType[0], e->smb_ExecType[0], e->smb_OrdStatus[0], cl, oid, eid, cum, lpx);
+		Log (USR_OK, "FX EXEC recv venue=%c MsgType=%c ExecType=%c OrdStatus=%c ClOrdID=%s OrigClOrdID=%s OrdID=%s ExecID=%s CumQty=%s LastPx=%s",
+			 v->excode, e->smb_MsgType[0], e->smb_ExecType[0], e->smb_OrdStatus[0], cl, oc, oid, eid, cum, lpx);
 		if (getenv ("VX_TEST") != NULL)
-			Log (USR_OK, "VX_TEST exec venue=%c ExecType=%c OrdStatus=%c ClOrdID=%s OrdID=%s CumQty=%s",
-				 v->excode, e->smb_ExecType[0], e->smb_OrdStatus[0], cl, oid, cum);
+			Log (USR_OK, "VX_TEST exec venue=%c ExecType=%c OrdStatus=%c ClOrdID=%s OrigClOrdID=%s OrdID=%s CumQty=%s",
+				 v->excode, e->smb_ExecType[0], e->smb_OrdStatus[0], cl, oc, oid, cum);
 		memmove (v->acc, v->acc + SMB_SZ, v->alen - SMB_SZ);
 		v->alen -= SMB_SZ;
 	}

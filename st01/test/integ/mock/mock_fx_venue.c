@@ -83,12 +83,18 @@ static void handle_order(int fd, const SMB_ST *o, const VX_PRODUCT *pr)
     field(px,  o->smb_Price,   30);
     field(sym, o->smb_Symbol,   7);
 
-    fxlogf("FX: ORDER recv ClOrdID=%s Symbol=%s Side=%c OrderQty=%s Price=%s excode=%c fill=%s",
-           cl, sym, o->smb_Side[0], qty, px,
+    fxlogf("FX: REQ recv MsgType=%c ClOrdID=%s Symbol=%s Side=%c OrderQty=%s Price=%s excode=%c fill=%s",
+           o->smb_MsgType[0], cl, sym, o->smb_Side[0], qty, px,
            (pr && pr->fx_excode[0]) ? pr->fx_excode[0] : '?', fr);
 
+    if (o->smb_MsgType[0] == 'F') {                         /* 취소 요청 */
+        char oc[25]; field(oc, o->smb_OrigClOrdID, 24);
+        send_exec(fd, o, '4', '4', "0", "0", "0", NULL);    /* ExecType/OrdStatus 4=Canceled */
+        fxlogf("FX: CANCELED ClOrdID=%s OrigClOrdID=%s", cl, oc);
+        return;
+    }
     if (o->smb_MsgType[0] != 'D') {
-        fxlogf("FX: 비신규 MsgType=%c (이번 증분은 'D'만 처리) → 무시", o->smb_MsgType[0]);
+        fxlogf("FX: 미지원 MsgType=%c (D 신규 / F 취소만 처리) → 무시", o->smb_MsgType[0]);
         return;
     }
 
