@@ -10,8 +10,10 @@
 #------------------------------------------------------------------------
 FEP=${_FEP_HOME:-$HOME/new_fep}; ST01=$FEP/st01; E2E=$ST01/test/e2e; BIN=$ST01/bin; CFG=$ST01/cfg
 INTEG=$ST01/test/integ; VEXCH=$ST01/test/vexch; RESULT=$E2E/result
-PIDS=""; VPORT_J=19100; VPORT_N=19101; VPORT_E=19102; ORDFIFO=/tmp/vxfx_ord.fifo
+PIDS=""; VPORT_J=19100; VPORT_N=19101; VPORT_E=19102; VPORT_C=19103; VPORT_B=19104
+ORDFIFO=/tmp/vxfx_ord.fifo
 CLORD_J=FEPFXJ0000001; CLORD_N=FEPFXN0000001; CLORD_E=FEPFXE0000001; CXL_E=FEPFXECXL0001
+CLORD_C=FEPFXC0000001; CLORD_B=FEPFXB0000001
 IPC_BASE=/tmp/vxfx_ipcbase.$$
 log(){ printf '[VXFX] %s\n' "$1"; }
 ipc_snapshot(){ mkdir -p "$IPC_BASE"; for t in m s q; do ipcs -$t 2>/dev/null|awk '$2 ~ /^[0-9]+$/{print $2}' > "$IPC_BASE/$t" 2>/dev/null; done; }
@@ -93,35 +95,37 @@ log "pz z / f ..."
 ( cd $BIN && exec bash -c "exec -a pz_memory_mp $BIN/pz_memory_mp z" ) > "$RESULT/vxfx_pz_z.log" 2>&1; sleep 1
 ( cd $BIN && exec bash -c "exec -a pz_memory_mp $BIN/pz_memory_mp f" ) > "$RESULT/vxfx_pz_f.log" 2>&1; [ $? -eq 0 ] || fail "pz f"
 
-# --- 가상 FX 거래원 3개 기동 (JPM 19100 full, NH 19101 full, EBS 19102 ack) ---
-log "start mock_fx_venue J:$VPORT_J N:$VPORT_N E:$VPORT_E ..."
-VX_CATALOG=$CFG/vexch.ini $INTEG/bin/mock_fx_venue $VPORT_J > "$RESULT/vxfx_venue_J.log" 2>&1 &
-MJPID=$!; PIDS="$PIDS $MJPID"
-VX_CATALOG=$CFG/vexch.ini $INTEG/bin/mock_fx_venue $VPORT_N > "$RESULT/vxfx_venue_N.log" 2>&1 &
-MNPID=$!; PIDS="$PIDS $MNPID"
-VX_CATALOG=$CFG/vexch.ini $INTEG/bin/mock_fx_venue $VPORT_E > "$RESULT/vxfx_venue_E.log" 2>&1 &
-MEPID=$!; PIDS="$PIDS $MEPID"; sleep 1
+# --- 가상 FX 거래원 5개 기동 (J full/N full/E ack/C partial/B reject) ---
+log "start mock_fx_venue J N E C B ..."
+for pv in J:$VPORT_J N:$VPORT_N E:$VPORT_E C:$VPORT_C B:$VPORT_B; do
+    ex=${pv%%:*}; pt=${pv##*:}
+    VX_CATALOG=$CFG/vexch.ini $INTEG/bin/mock_fx_venue $pt > "$RESULT/vxfx_venue_$ex.log" 2>&1 &
+    PIDS="$PIDS $!"; eval "M${ex}PID=$!"
+done
+sleep 1
 
 # --- pf_1100_ts 기동 (다거래원 접속 + 주문 FIFO 트리거) ---
-log "start pf_1100_ts (venues J N E, fifo $ORDFIFO) ..."
+log "start pf_1100_ts (venues J N E C B, fifo $ORDFIFO) ..."
 ( cd $BIN && ulimit -t 30 2>/dev/null;
-  VX_FX_VENUES="J:127.0.0.1:$VPORT_J,N:127.0.0.1:$VPORT_N,E:127.0.0.1:$VPORT_E" \
+  VX_FX_VENUES="J:127.0.0.1:$VPORT_J,N:127.0.0.1:$VPORT_N,E:127.0.0.1:$VPORT_E,C:127.0.0.1:$VPORT_C,B:127.0.0.1:$VPORT_B" \
   VX_FX_ORDER_FIFO=$ORDFIFO VX_TEST=1 \
   exec bash -c "exec -a pf_1100_ts $BIN/pf_1100_ts" ) </dev/null > "$RESULT/vxfx_pf.log" 2>&1 &
 APID=$!; PIDS="$PIDS $APID"
-( sleep 20; kill -9 $APID $MJPID $MNPID $MEPID 2>/dev/null; pkill -9 -x pf_1100_ts 2>/dev/null ) & WDPID=$!
+( sleep 20; kill -9 $APID $MJPID $MNPID $MEPID $MCPID $MBPID 2>/dev/null; pkill -9 -x pf_1100_ts 2>/dev/null ) & WDPID=$!
 sleep 3
 pgrep -x pf_1100_ts >/dev/null || fail "pf_1100_ts 미기동(로그 $RESULT/vxfx_pf.log)"
 
-# --- 주문 주입: J 매수(체결) + N 매도(체결) + E 신규(ack만) → E 취소 ---
-log "주문 주입: J=$CLORD_J N=$CLORD_N E=$CLORD_E, 그리고 E 취소($CXL_E)"
+# --- 주문 주입: J매수·N매도 체결 + E신규(ack)→취소 + C부분체결 + B거부 ---
+log "주문 주입: J/N 체결, E ack→취소, C 부분체결, B 거부"
 printf 'J,FXACCT0001,USD/KRW,1,1000000,1385.50,%s\n' "$CLORD_J" > "$ORDFIFO"
 printf 'N,FXACCT0001,USD/KRW,2,500000,1385.60,%s\n'  "$CLORD_N" > "$ORDFIFO"
 printf 'E,FXACCT0001,USD/KRW,1,2000000,1385.40,%s\n' "$CLORD_E" > "$ORDFIFO"
+printf 'C,FXACCT0001,USD/KRW,1,2000000,1385.30,%s\n' "$CLORD_C" > "$ORDFIFO"
+printf 'B,FXACCT0001,USD/KRW,2,1000000,1385.70,%s\n' "$CLORD_B" > "$ORDFIFO"
 sleep 1
 printf 'CXL,E,%s,%s\n' "$CXL_E" "$CLORD_E" > "$ORDFIFO"     # E 미체결 주문 취소
 sleep 3
-kill -9 $APID $MJPID $MNPID $MEPID 2>/dev/null; pkill -9 -x pf_1100_ts 2>/dev/null; kill $WDPID 2>/dev/null; sleep 1
+kill -9 $APID $MJPID $MNPID $MEPID $MCPID $MBPID 2>/dev/null; pkill -9 -x pf_1100_ts 2>/dev/null; kill $WDPID 2>/dev/null; sleep 1
 
 # --- 검증 (다거래원: J/N 각각 라우팅·왕복·상관) ---
 PLOG=$(ls -t $FEP/st03/LOG/PF/*/pf_1100_ts* 2>/dev/null|head -1)
@@ -133,22 +137,25 @@ if [ -n "$PLOG" ]; then
     CORR_N=$(grep -c "VX_TEST exec venue=N ExecType=F.*ClOrdID=$CLORD_N" "$PLOG")
     ACK_E=$(grep -c "VX_TEST exec venue=E ExecType=0.*ClOrdID=$CLORD_E" "$PLOG")
     CXL_OK=$(grep -c "VX_TEST exec venue=E ExecType=4.*OrigClOrdID=$CLORD_E" "$PLOG")
-else CONN=0; SENT=0; CXLS=0; CORR_J=0; CORR_N=0; ACK_E=0; CXL_OK=0; fi
-CONN=${CONN:-0}; SENT=${SENT:-0}; CXLS=${CXLS:-0}; CORR_J=${CORR_J:-0}; CORR_N=${CORR_N:-0}; ACK_E=${ACK_E:-0}; CXL_OK=${CXL_OK:-0}
+    PART_C=$(grep -c "VX_TEST exec venue=C ExecType=1.*ClOrdID=$CLORD_C" "$PLOG")
+    REJ_B=$(grep -c "VX_TEST exec venue=B ExecType=8.*ClOrdID=$CLORD_B" "$PLOG")
+else CONN=0; SENT=0; CXLS=0; CORR_J=0; CORR_N=0; ACK_E=0; CXL_OK=0; PART_C=0; REJ_B=0; fi
+CONN=${CONN:-0}; SENT=${SENT:-0}; CXLS=${CXLS:-0}; CORR_J=${CORR_J:-0}; CORR_N=${CORR_N:-0}; ACK_E=${ACK_E:-0}; CXL_OK=${CXL_OK:-0}; PART_C=${PART_C:-0}; REJ_B=${REJ_B:-0}
 CORES=$(ls $E2E/core.* $BIN/core.* 2>/dev/null|wc -l)
 echo ""
 echo "========================================"
-echo "  VX-4d: FEP FX 다거래원 + 취소 라이프사이클"
+echo "  VX-4e: FEP FX 다거래원 + fill_rule 전 매트릭스 + 취소"
 echo "========================================"
-echo "  거래원 접속(connected)   : $CONN   (3 기대: J,N,E)"
+echo "  거래원 접속(connected)   : $CONN   (5 기대: J,N,E,C,B)"
 echo "  주문 송신 / 취소 송신    : $SENT / $CXLS"
-echo "  J 체결(FILLED)           : $CORR_J ($CLORD_J → venue=J)"
-echo "  N 체결(FILLED)           : $CORR_N ($CLORD_N → venue=N)"
+echo "  J 전량체결(full/FILLED)  : $CORR_J ($CLORD_J → venue=J)"
+echo "  N 전량체결(full/FILLED)  : $CORR_N ($CLORD_N → venue=N)"
 echo "  E 신규 ack(미체결)       : $ACK_E ($CLORD_E → venue=E)"
 echo "  E 취소확인(Canceled)     : $CXL_OK (OrigClOrdID=$CLORD_E)"
+echo "  C 부분체결(partial)      : $PART_C ($CLORD_C → venue=C)"
+echo "  B 거부(reject)           : $REJ_B ($CLORD_B → venue=B)"
 echo "  core dump                : $CORES"
-echo "  판정 : $([ "${CONN:-0}" -ge 3 ] && [ "${CORR_J:-0}" -ge 1 ] && [ "${CORR_N:-0}" -ge 1 ] && [ "${ACK_E:-0}" -ge 1 ] && [ "${CXL_OK:-0}" -ge 1 ] && [ "${CORES:-0}" -eq 0 ] && echo 'PASS (다거래원 라우팅+체결+취소 라이프사이클 확인)' || echo 'FAIL/PENDING')"
+echo "  판정 : $([ "${CONN:-0}" -ge 5 ] && [ "${CORR_J:-0}" -ge 1 ] && [ "${CORR_N:-0}" -ge 1 ] && [ "${ACK_E:-0}" -ge 1 ] && [ "${CXL_OK:-0}" -ge 1 ] && [ "${PART_C:-0}" -ge 1 ] && [ "${REJ_B:-0}" -ge 1 ] && [ "${CORES:-0}" -eq 0 ] && echo 'PASS (다거래원 라우팅 + fill_rule 4종 + 취소 전 라이프사이클)' || echo 'FAIL/PENDING')"
 echo "========================================"
-echo "--- pf_1100_ts log (마지막 22줄) ---"; [ -n "$PLOG" ] && tail -22 "$PLOG" 2>/dev/null
-echo "--- venue E log (ack+취소) ---"; tail -8 "$RESULT/vxfx_venue_E.log" 2>/dev/null
+echo "--- pf_1100_ts log (마지막 26줄) ---"; [ -n "$PLOG" ] && tail -26 "$PLOG" 2>/dev/null
 cleanup; log "done"
