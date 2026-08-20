@@ -386,15 +386,21 @@ static int vx_route_msg(int fd, char *buf, int rt)
                응답을 echo하지 않는다 — 응답/체결은 별도 수신 프로세스
                (pb_1201_tr)의 별도 접속으로 온다. echo 금지(I-9).
                VX-1b: 카탈로그로 주문 상품 식별(order-aware). */
+            /* 실 KRX 주문: Header MsgType 은 generic 래퍼(TCHODR00000), 구체 TR 은
+               Body Transaction_Code(@KRX_HDR_LEN+11, 11B). vx_probe(헤더 TR)·실
+               pc_1100_ts(바디 TR) 모두 지원 — 둘 다 order_tr 과 대조. */
             int  ci, matched = -1;
-            for (ci = 0; ci < vx_cat_cnt; ci++)
-                if (vx_cat[ci].order_tr[0] &&
-                        !strncmp(msg_type, vx_cat[ci].order_tr,
-                                 strlen(vx_cat[ci].order_tr))) { matched = ci; break; }
+            char body_tr[12];
+            memcpy(body_tr, buf + KRX_HDR_LEN + 11, 11); body_tr[11] = '\0';
+            for (ci = 0; ci < vx_cat_cnt; ci++) {
+                int L; if (!vx_cat[ci].order_tr[0]) continue; L = strlen(vx_cat[ci].order_tr);
+                if (!strncmp(msg_type, vx_cat[ci].order_tr, L) ||
+                    !strncmp(body_tr, vx_cat[ci].order_tr, L)) { matched = ci; break; }
+            }
             if (matched >= 0) {
                 int ono = vx_book_order(matched, buf + KRX_HDR_LEN, rt - KRX_HDR_LEN);
-                mock_log("VX: ORDER recv %s [%s] booked OrderNo=%d (응답/체결 수신소켓 push서 회원영역 echo)",
-                         msg_type, vx_cat[matched].name, ono);
+                mock_log("VX: ORDER recv hdr=%s body_tr=%s [%s] booked OrderNo=%d",
+                         msg_type, body_tr, vx_cat[matched].name, ono);
                 /* VX-6 왕복: 주문 수신 즉시 응답/체결을 수신(push)세션으로 교차 전송(booked→correlation) */
                 if (g_push_fd >= 0 && g_push_fd != fd) {
                     vx_push_catalog(g_push_fd, resp, sizeof(resp), matched);
@@ -414,20 +420,21 @@ static int vx_route_msg(int fd, char *buf, int rt)
 /*------------------------------------------------------------------------
     vx_serve — multi-connection select 루프 (listen + N clients, 공유 book)
 ------------------------------------------------------------------------*/
-static int vx_serve(int listen_fd)
+static int vx_serve(int *lfds, int nl)
 {
     char    buf[MOCK_BUF_SIZE];
     int     clients[FD_SETSIZE], nclients = 0;
     int     i, maxfd, cfd, rt;
     fd_set  rset;
 
-    mock_log("VX: multi-connection exchange up (listen fd=%d)", listen_fd);
+    mock_log("VX: multi-connection exchange up (listen ports=%d)", nl);
     while (1) {
-        FD_ZERO(&rset); FD_SET(listen_fd, &rset); maxfd = listen_fd;
+        FD_ZERO(&rset); maxfd = -1;
+        for (i = 0; i < nl; i++) { FD_SET(lfds[i], &rset); if (lfds[i] > maxfd) maxfd = lfds[i]; }
         for (i = 0; i < nclients; i++) { FD_SET(clients[i], &rset); if (clients[i] > maxfd) maxfd = clients[i]; }
         if (select(maxfd + 1, &rset, NULL, NULL, NULL) < 0) { if (errno == EINTR) continue; break; }
-        if (FD_ISSET(listen_fd, &rset)) {
-            cfd = accept(listen_fd, NULL, NULL);
+        for (i = 0; i < nl; i++) if (FD_ISSET(lfds[i], &rset)) {
+            cfd = accept(lfds[i], NULL, NULL);
             if (cfd >= 0 && nclients < FD_SETSIZE) { clients[nclients++] = cfd;
                 mock_log("VX: client connected fd=%d (active=%d)", cfd, nclients); }
         }
@@ -475,43 +482,37 @@ int main(int argc, char *argv[])
             mock_log("VX: catalog empty → fallback DERIV hardcode 불가, push 없음");
     }
 
-    /* Create listen socket */
-    g_listen_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (g_listen_fd < 0) {
-        perror("socket");
-        return 1;
-    }
-
-    setsockopt(g_listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    /* Create listen socket(s) — 다중 포트(주문 37221 + 수신 57221 등)를 단일
+       프로세스가 listen → 이중소켓 왕복(g_push_fd/book 공유)이 한 mock 에서 성립.
+       argv[1..] = 포트들. VX-6b: `mock_krx_server 37221 57221`. */
+    {
+        int  pi, np = 0, nl = 0, lfds[8], ports[8];
+        if (argc > 1) { for (pi = 1; pi < argc && np < 8; pi++) ports[np++] = atoi(argv[pi]); }
+        else ports[np++] = MOCK_DEFAULT_PORT;
+        for (pi = 0; pi < np; pi++) {
+            int lf = socket(AF_INET, SOCK_STREAM, 0);
+            if (lf < 0) { perror("socket"); return 1; }
+            setsockopt(lf, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 #ifdef SO_REUSEPORT
-    setsockopt(g_listen_fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
+            setsockopt(lf, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
 #endif
-
-    memset(&svr_addr, 0, sizeof(svr_addr));
-    svr_addr.sin_family      = AF_INET;
-    svr_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    svr_addr.sin_port        = htons(port);
-
-    if (bind(g_listen_fd, (struct sockaddr *)&svr_addr, sizeof(svr_addr)) < 0) {
-        perror("bind");
-        close(g_listen_fd);
-        return 1;
+            memset(&svr_addr, 0, sizeof(svr_addr));
+            svr_addr.sin_family      = AF_INET;
+            svr_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+            svr_addr.sin_port        = htons(ports[pi]);
+            if (bind(lf, (struct sockaddr *)&svr_addr, sizeof(svr_addr)) < 0) { perror("bind"); close(lf); return 1; }
+            if (listen(lf, 16) < 0) { perror("listen"); close(lf); return 1; }
+            lfds[nl++] = lf;
+            mock_log("MOCK: Listening on 127.0.0.1:%d (log=%s)", ports[pi], log_path);
+        }
+        g_listen_fd = lfds[0];
+        fflush(stdout);
+        (void)cli_addr; (void)cli_len;
+        vx_serve(lfds, nl);
+        for (pi = 0; pi < nl; pi++) close(lfds[pi]);
     }
-
-    if (listen(g_listen_fd, 16) < 0) {
-        perror("listen");
-        close(g_listen_fd);
-        return 1;
-    }
-
-    mock_log("MOCK: Listening on 127.0.0.1:%d (log=%s)", port, log_path);
-    fflush(stdout);
-    (void)cli_addr; (void)cli_len;
-
-    /* VX-1b-b: 다중 커넥션 select 서버 (주문 송신소켓 + 체결 수신소켓 동시 + 공유 book) */
-    vx_serve(g_listen_fd);
-
-    close(g_listen_fd);
+    /* (unreached below kept for structure) */
+    if (0) close(g_listen_fd);
     if (g_logfp) fclose(g_logfp);
 
     mock_log("MOCK: Server exiting");
