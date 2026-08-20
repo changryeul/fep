@@ -1,14 +1,14 @@
 #!/bin/sh
 #------------------------------------------------------------------------
 #   E2E: 9000_mp full-loop Inc1 — po_daemon_mp가 po_9000_mp 기동 (데몬 경로)
-#   File: run_po_daemon_e2e.sh   (Linux 서버 전용, ~/new_fep)
+#   File: run_po_daemon_e2e.sh   (Linux 서버 전용, ~/common/fep)
 #
 #   기존 E2E는 exec -a 로 프로세스 직접기동(데몬 우회)했으나, 9000_mp 슬롯할당은
 #   데몬(DTART_FD 신호→execl)이 필수. 본 하니스는 'o' 섹터 데몬(po_daemon_mp)이
 #   proc.ini(status R, 시간창)를 읽어 **po_9000_mp 를 execl 기동**하는지 검증(Inc1).
 #   (Inc2=500100→슬롯 cp+DTART→슬롯 exec, Inc3=full-loop 는 후속)
 #------------------------------------------------------------------------
-FEP=$HOME/new_fep; ST01=$FEP/st01; E2E=$ST01/test/e2e; BIN=$ST01/bin; CFG=$ST01/cfg
+FEP=${_FEP_HOME:-$HOME/common/fep}; ST01=$FEP/st01; E2E=$ST01/test/e2e; BIN=$ST01/bin; CFG=$ST01/cfg
 RESULT=$E2E/result; PIDS=""
 log(){ printf '[PODMN] %s\n' "$1"; }
 wipe_ipc(){ for t in m s q; do ipcs -$t 2>/dev/null|awk '/^0x/{print $2}'|xargs -r -n1 ipcrm -$t 2>/dev/null; done; }

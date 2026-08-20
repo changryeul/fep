@@ -8,7 +8,7 @@
 #   체결('8') 반환 → pf_1100_ts 가 수신·기록(VX_TEST exec). ClOrdID 상관 검증.
 #   HA 무관(주문 세션). cfg 백업/복원 + 공유서버 IPC 안전(스냅샷 diff).
 #------------------------------------------------------------------------
-FEP=${_FEP_HOME:-$HOME/new_fep}; ST01=$FEP/st01; E2E=$ST01/test/e2e; BIN=$ST01/bin; CFG=$ST01/cfg
+FEP=${_FEP_HOME:-$HOME/common/fep}; ST01=$FEP/st01; E2E=$ST01/test/e2e; BIN=$ST01/bin; CFG=$ST01/cfg
 INTEG=$ST01/test/integ; VEXCH=$ST01/test/vexch; RESULT=$E2E/result
 PIDS=""; VPORT_J=19100; VPORT_N=19101; VPORT_E=19102; VPORT_C=19103; VPORT_B=19104
 ORDFIFO=/tmp/vxfx_ord.fifo

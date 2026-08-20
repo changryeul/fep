@@ -1,7 +1,7 @@
 #!/bin/sh
 #------------------------------------------------------------------------
 #   E2E 하니스: pc_ 파생 응답/체결 수신 검증 (Phase 2, 수신경로)
-#   File   : run_pc_rx_e2e.sh   (Linux 서버 전용, ~/new_fep 기준)
+#   File   : run_pc_rx_e2e.sh   (Linux 서버 전용, ~/common/fep 기준)
 #
 #   파이프라인:
 #     mock_krx_server(:57221, listen+push) <-connect- pc_1200_tr(=argv[0] pb_1201_tr)
@@ -14,7 +14,7 @@
 #   Usage: sh run_pc_rx_e2e.sh
 #------------------------------------------------------------------------
 
-FEP=$HOME/new_fep
+FEP=${_FEP_HOME:-$HOME/common/fep}
 ST01=$FEP/st01
 E2E=$ST01/test/e2e
 BIN=$ST01/bin

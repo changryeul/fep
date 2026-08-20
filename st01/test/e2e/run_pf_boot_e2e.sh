@@ -1,6 +1,6 @@
 #!/bin/sh
 #------------------------------------------------------------------------
-#   E2E: pf_ FX 시세수신 부팅검증 (P4-full a) — Linux 서버 전용, ~/new_fep
+#   E2E: pf_ FX 시세수신 부팅검증 (P4-full a) — Linux 서버 전용, ~/common/fep
 #   File: run_pf_boot_e2e.sh
 #
 #   pf_7400_ur(FX 시세수신, NO_AGXPI 빌드)를 'f' 섹터에서 기동 →
@@ -10,7 +10,7 @@
 #   ※ agxpi(FIX 디코드)는 NO_AGXPI로 스텁 — 실 시세 디코드는 운영 전용. 여기선 FEP 통합 부팅만.
 #   ※ Recv_Data는 select 70s 블록 → 부팅신호 감지 즉시 SIGKILL(spin 아님, 방어적 워치독).
 #------------------------------------------------------------------------
-FEP=$HOME/new_fep; ST01=$FEP/st01; E2E=$ST01/test/e2e; BIN=$ST01/bin; CFG=$ST01/cfg
+FEP=${_FEP_HOME:-$HOME/common/fep}; ST01=$FEP/st01; E2E=$ST01/test/e2e; BIN=$ST01/bin; CFG=$ST01/cfg
 RESULT=$E2E/result; PIDS=""
 PF=pf_7400_ur; PFBIN=$BIN/pf_7400_ur
 log(){ printf '[PFBOOT] %s\n' "$1"; }

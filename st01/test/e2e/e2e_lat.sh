@@ -9,7 +9,7 @@
 #------------------------------------------------------------------------
 RES=$1
 OUT=$2
-BIN=$HOME/new_fep/st01/bin
+BIN=${_FEP_HOME:-$HOME/common/fep}/st01/bin
 
 # 두 로그의 proc 필드를 공통 토큰으로 치환 → lat_report가 (proc,key)로 짝지음
 #   mock_oms IN:  <usec>|e2e|IN|<ordno>   → <usec>|e2e_path|IN|<ordno>

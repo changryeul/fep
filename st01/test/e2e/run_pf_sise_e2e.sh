@@ -1,6 +1,6 @@
 #!/bin/sh
 #------------------------------------------------------------------------
-#   E2E: pf_ FX 시세 기록 (P4-full c) — Linux 서버 전용, ~/new_fep
+#   E2E: pf_ FX 시세 기록 (P4-full c) — Linux 서버 전용, ~/common/fep
 #   File: run_pf_sise_e2e.sh
 #
 #   fx_sise_inject → UDP CO_B6FX → pf_7400_ur Recv_Data → Conv_Dispatch(NO_AGXPI
@@ -9,7 +9,7 @@
 #   주입 심볼/가격이 FX_Sise/Shm_FX 에 실제 저장됨을 확인. (arb FX leg 가 읽을 데이터)
 #   ※ 실 FIX 디코드=agxpi 운영 전용; dev 는 CO_B6FX raw wire 로 대체.
 #------------------------------------------------------------------------
-FEP=${_FEP_HOME:-$HOME/new_fep}; ST01=$FEP/st01; E2E=$ST01/test/e2e; BIN=$ST01/bin; CFG=$ST01/cfg
+FEP=${_FEP_HOME:-$HOME/common/fep}; ST01=$FEP/st01; E2E=$ST01/test/e2e; BIN=$ST01/bin; CFG=$ST01/cfg
 RESULT=$E2E/result; PIDS=""; PF=pf_7400_ur; PFBIN=$BIN/pf_7400_ur
 log(){ printf '[PFSISE] %s\n' "$1"; }
 IPC_BASE=/tmp/pfs_ipcbase.$$

@@ -1,7 +1,7 @@
 #!/bin/sh
 #------------------------------------------------------------------------
 #   E2E: 9000_mp full-loop Inc2 — 500100 클라 → 슬롯할당 → 데몬이 전략 슬롯 exec
-#   File: run_po_slot_e2e.sh   (Linux 서버 전용, ~/new_fep)
+#   File: run_po_slot_e2e.sh   (Linux 서버 전용, ~/common/fep)
 #
 #   po_daemon_mp → po_9000_mp 기동(Inc1) 위에, oms_client_inject(po_9009_mp)가
 #   500100(ApType=5050 채권LP)을 po_9000_in 에 F_W → po_9000_mp Start_Client 가
@@ -9,7 +9,7 @@
 #   execl → 500110 응답. blp_shm_stub 로 BLP SHM 대역(슬롯 전략 부팅용).
 #   검증: 9000_mp cp 로그 + 데몬 START[po_50101mp] + po_50101mp alive.
 #------------------------------------------------------------------------
-FEP=$HOME/new_fep; ST01=$FEP/st01; E2E=$ST01/test/e2e; BIN=$ST01/bin; CFG=$ST01/cfg
+FEP=${_FEP_HOME:-$HOME/common/fep}; ST01=$FEP/st01; E2E=$ST01/test/e2e; BIN=$ST01/bin; CFG=$ST01/cfg
 RESULT=$E2E/result; PIDS=""; BLP_KEY=0xbb001001
 log(){ printf '[POSLOT] %s\n' "$1"; }
 wipe_ipc(){ for t in m s q; do ipcs -$t 2>/dev/null|awk '/^0x/{print $2}'|xargs -r -n1 ipcrm -$t 2>/dev/null; done; }

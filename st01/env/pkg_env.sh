@@ -19,7 +19,7 @@ else
     export  _FEP_DIV="TEST"
 fi
 export  _HA_HB_PORT=50000                   # HA heartbeat UDP 포트 (양쪽 동일)
-# 사전설정된 _FEP_HOME이 있으면 존중(예: dev 트리 ~/new_fep, E2E 하니스). 없으면 기본 $HOME/fep.
+# 사전설정된 _FEP_HOME이 있으면 존중(예: dev 트리 ~/common/fep, E2E 하니스). 없으면 기본 $HOME/fep.
 # (이중 트리 환경에서 _P_CFG 등 경로변수가 엉뚱한 트리를 가리켜 config 오독→크래시하던 문제 방지)
 export  _FEP_HOME=${_FEP_HOME:-$HOME/fep}
 export  _FEP_SYSTEM="p"

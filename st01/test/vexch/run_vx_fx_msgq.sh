@@ -11,7 +11,7 @@
 #   실 큐키(msgqueue.cfg): smb_ord 0x90001110 / ebs_ord 0x90001330 / exe 0x90002110
 #     mtype: SMB=100, EBS=300 (체결큐 공유 데뮉스)
 #------------------------------------------------------------------------
-FEP=${_FEP_HOME:-$HOME/new_fep}; ST01=$FEP/st01; E2E=$ST01/test/e2e; BIN=$ST01/bin; CFG=$ST01/cfg
+FEP=${_FEP_HOME:-$HOME/common/fep}; ST01=$FEP/st01; E2E=$ST01/test/e2e; BIN=$ST01/bin; CFG=$ST01/cfg
 INTEG=$ST01/test/integ; RESULT=$E2E/result; PIDS=""; ORDFIFO=/tmp/vxfxq_ord.fifo
 CLORD_S=FEPFXS0000001; CLORD_E=FEPFXE0000001; CXL_E=FEPFXECXL0001
 MSGQ_PF="S:0x90001110:0x90002110:100,E:0x90001330:0x90002110:300"

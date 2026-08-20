@@ -1,13 +1,13 @@
 #!/bin/sh
 #------------------------------------------------------------------------
 #   run_all.sh — 가상거래소(vexch) 전체 테스트 확인 (한 번에 실행+요약)
-#   File: st01/test/vexch/run_all.sh   (Linux 서버, ~/new_fep)
+#   File: st01/test/vexch/run_all.sh   (Linux 서버, ~/common/fep)
 #
 #   사용법: sh run_all.sh
 #   각 하니스를 순차 실행하고 판정(PASS/FAIL/PENDING)을 집계한다.
 #   개별 상세는 각 하니스를 직접 실행: 아래 [실행] 명령 참조.
 #------------------------------------------------------------------------
-FEP=${_FEP_HOME:-$HOME/new_fep}; VEXCH=$FEP/st01/test/vexch; E2E=$FEP/st01/test/e2e
+FEP=${_FEP_HOME:-$HOME/common/fep}; VEXCH=$FEP/st01/test/vexch; E2E=$FEP/st01/test/e2e
 pass=0; other=0; RESULT=$FEP/st01/test/e2e/result; mkdir -p "$RESULT"
 
 run_one() {

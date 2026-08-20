@@ -1,7 +1,7 @@
 #!/bin/sh
 #------------------------------------------------------------------------
 #   run_vexch.sh — 가상거래소(vexch) 통합 빌드 + 자체 스모크 (VX-3)
-#   File: st01/test/vexch/run_vexch.sh   (Linux 서버, ~/new_fep)
+#   File: st01/test/vexch/run_vexch.sh   (Linux 서버, ~/common/fep)
 #
 #   공유 카탈로그(vexch_catalog)로 구동되는 VX 도구를 한 번에 빌드/검증:
 #     - mock_krx_server : 거래소 엔진(주문/체결 TCP, 카탈로그 구동 push)
@@ -10,7 +10,7 @@
 #   자체 스모크: 거래소 기동 → probe로 카탈로그 상품 응답/체결 push 확인
 #              + vx_sise_pub 카탈로그 로드/발행 확인. (FEP 무관 = VX 단위 검증)
 #------------------------------------------------------------------------
-FEP=${_FEP_HOME:-$HOME/new_fep}; ST01=$FEP/st01; INTEG=$ST01/test/integ; VEXCH=$ST01/test/vexch
+FEP=${_FEP_HOME:-$HOME/common/fep}; ST01=$FEP/st01; INTEG=$ST01/test/integ; VEXCH=$ST01/test/vexch
 CAT=$ST01/cfg/vexch.ini; PORT=${1:-19997}; PIDS=""
 log(){ printf '[VEXCH] %s\n' "$1"; }
 cleanup(){ for p in $PIDS; do kill -9 "$p" 2>/dev/null; done; }

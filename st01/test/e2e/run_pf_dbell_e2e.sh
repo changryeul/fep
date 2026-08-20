@@ -1,6 +1,6 @@
 #!/bin/sh
 #------------------------------------------------------------------------
-#   E2E: pf_ 도어벨 fanout (P4-full d, 생산자측) — Linux 서버 전용, ~/new_fep
+#   E2E: pf_ 도어벨 fanout (P4-full d, 생산자측) — Linux 서버 전용, ~/common/fep
 #   File: run_pf_dbell_e2e.sh
 #
 #   pf_7400_ur 이 Set_Sise 후 auto_use[slot]!=0 인 슬롯의 도어벨(pf_dbell_<slot>)을
@@ -8,7 +8,7 @@
 #   auto_use[0]=1 세팅 → 재주입 → pf_ 가 pf_dbell_00 에 "1" write → read 로 확인.
 #   (소비자측=arb Poll[3]=pf_dbell_<OD_SEQ> 는 slot-keyed 동일 이름 → 별도 arb-slot 부팅으로 확인)
 #------------------------------------------------------------------------
-FEP=$HOME/new_fep; ST01=$FEP/st01; E2E=$ST01/test/e2e; BIN=$ST01/bin; CFG=$ST01/cfg
+FEP=${_FEP_HOME:-$HOME/common/fep}; ST01=$FEP/st01; E2E=$ST01/test/e2e; BIN=$ST01/bin; CFG=$ST01/cfg
 RESULT=$E2E/result; PIDS=""; PF=pf_7400_ur; PFBIN=$BIN/pf_7400_ur
 DBELL=$FEP/st02/FIFO/PO/pf_dbell_00
 log(){ printf '[PFDBELL] %s\n' "$1"; }

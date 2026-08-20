@@ -1,7 +1,7 @@
 #!/bin/sh
 #------------------------------------------------------------------------
 #   E2E: 채권 주문 forwarder (SEAM_ORDQ_BOND → 송신부 입력) — Phase 4 P2
-#   File: run_fwd_e2e.sh  (Linux 서버 전용, ~/new_fep)
+#   File: run_fwd_e2e.sh  (Linux 서버 전용, ~/common/fep)
 #
 #   스텁(seam_ord_inject, raw) ─SEAM_ORD_W─▶ [SEAM_ORDQ_BOND]
 #       └─SEAM_ORD_R─▶ pb_1109_mp(forwarder) ─F_W(OFN)─▶ pb_1109_out(관측 파일큐)
@@ -9,7 +9,7 @@
 #   검증: 주입한 채권주문(TCHODR40001)이 forwarder를 거쳐 출력 큐에 도달.
 #   (운영은 OFN_1=pb_1101_ts 입력 → 송신부 무변경. 여기선 관측 파일로 대체.)
 #------------------------------------------------------------------------
-FEP=$HOME/new_fep
+FEP=${_FEP_HOME:-$HOME/common/fep}
 ST01=$FEP/st01
 E2E=$ST01/test/e2e
 BIN=$ST01/bin

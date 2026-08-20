@@ -1,7 +1,7 @@
 #!/bin/sh
 #------------------------------------------------------------------------
 #   E2E 하니스: po_ OMS코어 런타임 부문화 + po_1200_mp 응답분배 검증
-#   File   : run_po_e2e.sh   (Linux 서버 전용, ~/new_fep 기준)
+#   File   : run_po_e2e.sh   (Linux 서버 전용, ~/common/fep 기준)
 #
 #   목적:
 #     1) 'o' 부문(D_K=14)을 config만으로 세운다 (Daemon_O + PO_CONF proc/file).
@@ -15,7 +15,7 @@
 #   Usage: sh run_po_e2e.sh
 #------------------------------------------------------------------------
 
-FEP=$HOME/new_fep
+FEP=${_FEP_HOME:-$HOME/common/fep}
 ST01=$FEP/st01
 E2E=$ST01/test/e2e
 BIN=$ST01/bin

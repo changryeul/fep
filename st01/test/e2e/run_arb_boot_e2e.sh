@@ -1,6 +1,6 @@
 #!/bin/sh
 #------------------------------------------------------------------------
-#   E2E: 차익거래(arb) 전략 부팅검증 (P4-3) — Linux 서버 전용, ~/new_fep
+#   E2E: 차익거래(arb) 전략 부팅검증 (P4-3) — Linux 서버 전용, ~/common/fep
 #   File: run_arb_boot_e2e.sh
 #
 #   pc_7070_mp(arb, po_ 슬롯) 는 LP와 달리 매칭엔진/엔진스텁이 불필요 —
@@ -10,7 +10,7 @@
 #   (/fsfxwin/.../config.ini, /fslog) 뿐. 주문은 SEAM 아님(결정C=yarb 게이트웨이).
 #   검증: Init_Proc + l_arb_init_param(SHM 자가생성) + 메인루프 도달(crash 0).
 #------------------------------------------------------------------------
-FEP=$HOME/new_fep; ST01=$FEP/st01; E2E=$ST01/test/e2e; BIN=$ST01/bin; CFG=$ST01/cfg
+FEP=${_FEP_HOME:-$HOME/common/fep}; ST01=$FEP/st01; E2E=$ST01/test/e2e; BIN=$ST01/bin; CFG=$ST01/cfg
 RESULT=$E2E/result; PIDS=""
 ARB=po_5070_mp                       # exec -a 이름 → argv[0][1]='o' → D_K='o' 슬롯
 ARBBIN=$BIN/pc_7070_mp

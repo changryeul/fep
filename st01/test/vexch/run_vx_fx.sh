@@ -7,7 +7,7 @@
 #   SMB_ST 신규주문('D') 전송 → 체결통지('8') 수신. ClOrdID echo(상관) +
 #   New ack + 체결(fill_rule=full → 2건) 검증. FEP 인프라 불요.
 #------------------------------------------------------------------------
-FEP=${_FEP_HOME:-$HOME/new_fep}; ST01=$FEP/st01
+FEP=${_FEP_HOME:-$HOME/common/fep}; ST01=$FEP/st01
 INTEG=$ST01/test/integ; VEXCH=$ST01/test/vexch; CFG=$ST01/cfg
 PORT=19100; CLORD=FXPROBE00000042
 VENUE_LOG=/tmp/mock_fx_$PORT.log

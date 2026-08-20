@@ -1,13 +1,13 @@
 #!/bin/sh
 #------------------------------------------------------------------------
 #   E2E: VX-2c — 가상거래소 KRX 시세(멀티캐스트) → pc_7100_ur 실 수신
-#   File: st01/test/vexch/run_vx_pc_e2e.sh   (Linux 서버, ~/new_fep)
+#   File: st01/test/vexch/run_vx_pc_e2e.sh   (Linux 서버, ~/common/fep)
 #
 #   vx_sise_pub (카탈로그 PRODUCT_DERIV sise_kind=krx, 239.1.1.1:17001) →
 #   멀티캐스트 A301F → pc_7100_ur('c' 섹터, UDP 수신 + IP_ADD_MEMBERSHIP join) 수신·분류.
 #   HA 는 _FEP_DIV=TEST → STANDALONE. (relay/FF_SHM 하류는 VX-2c-full)
 #------------------------------------------------------------------------
-FEP=${_FEP_HOME:-$HOME/new_fep}; ST01=$FEP/st01; E2E=$ST01/test/e2e; BIN=$ST01/bin; CFG=$ST01/cfg
+FEP=${_FEP_HOME:-$HOME/common/fep}; ST01=$FEP/st01; E2E=$ST01/test/e2e; BIN=$ST01/bin; CFG=$ST01/cfg
 INTEG=$ST01/test/integ; RESULT=$E2E/result; PIDS=""; GRP=239.1.1.1; PORT=17001
 log(){ printf '[VXPC] %s\n' "$1"; }
 IPC_BASE=/tmp/vxpc_ipcbase.$$

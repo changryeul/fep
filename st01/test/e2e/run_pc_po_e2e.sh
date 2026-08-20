@@ -1,7 +1,7 @@
 #!/bin/sh
 #------------------------------------------------------------------------
 #   E2E 하니스: pc_ + po_ 단일 라이브 파이프라인 (KRX→pc_→SEAM→po_→MK_PM)
-#   File   : run_pc_po_e2e.sh   (Linux 서버 전용, ~/new_fep 기준)
+#   File   : run_pc_po_e2e.sh   (Linux 서버 전용, ~/common/fep 기준)
 #
 #   그동안 반쪽씩(생산자 run_pc_rx / 소비자 run_po) 검증한 것을 하나의
 #   살아있는 파이프라인으로 봉합한다. 'b'(pc_ 수신)와 'o'(po_ 코어)를 동시
@@ -17,7 +17,7 @@
 #   Usage: sh run_pc_po_e2e.sh
 #------------------------------------------------------------------------
 
-FEP=$HOME/new_fep
+FEP=${_FEP_HOME:-$HOME/common/fep}
 ST01=$FEP/st01
 E2E=$ST01/test/e2e
 BIN=$ST01/bin

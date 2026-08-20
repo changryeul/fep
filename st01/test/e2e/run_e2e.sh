@@ -1,7 +1,7 @@
 #!/bin/sh
 #------------------------------------------------------------------------
 #   E2E 하니스: PB 주문 인바운드 홉 검증 (F5 order-pipeline-dshm V-04/05/06)
-#   File   : run_e2e.sh   (Linux 서버 전용, ~/new_fep 기준)
+#   File   : run_e2e.sh   (Linux 서버 전용, ~/common/fep 기준)
 #
 #   파이프라인:
 #     mock_oms(:41001, listen) <-connect- pb_1301_tr
@@ -23,7 +23,7 @@ MODE=${1:-file}
 COUNT=${2:-100}
 INTERVAL=${3:-10}
 
-FEP=$HOME/new_fep
+FEP=${_FEP_HOME:-$HOME/common/fep}
 ST01=$FEP/st01
 E2E=$ST01/test/e2e
 BIN=$ST01/bin

@@ -1,14 +1,14 @@
 #!/bin/sh
 #------------------------------------------------------------------------
 #   E2E: 채권 LP 전략 부팅검증 (P3a) — pb_5050_mp가 매칭엔진 SHM에 attach·부팅
-#   File: run_blp_boot_e2e.sh  (Linux 서버 전용, ~/new_fep)
+#   File: run_blp_boot_e2e.sh  (Linux 서버 전용, ~/common/fep)
 #
 #   blp_shm_stub(매칭엔진 대역) ─Mem_Create(BLP_KEY)─▶ [BLP SHM 0xbb001001]
 #       └─ pb_5050_mp(전략, po_ 슬롯) Blp_Open→Mem_Open attach → 부팅
 #   검증: Init_Parameters(Blp_Open success) + SEAM_ORD_Init OK + 메인루프 도달(crash 0).
 #   (실제 LP호가 emit은 매칭엔진 필요 — P3-full. 여기선 FEP측 통합 부팅만.)
 #------------------------------------------------------------------------
-FEP=$HOME/new_fep; ST01=$FEP/st01; E2E=$ST01/test/e2e; BIN=$ST01/bin; CFG=$ST01/cfg
+FEP=${_FEP_HOME:-$HOME/common/fep}; ST01=$FEP/st01; E2E=$ST01/test/e2e; BIN=$ST01/bin; CFG=$ST01/cfg
 RESULT=$E2E/result; PIDS=""; BLP_KEY=0xbb001001
 log(){ printf '[BLPBOOT] %s\n' "$1"; }
 fail(){ printf '[BLPBOOT][FAIL] %s\n' "$1"; cleanup; exit 1; }
