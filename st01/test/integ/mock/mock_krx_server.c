@@ -251,14 +251,16 @@ static void vx_echo_order(char *pl, int plen, VX_ORDER *bo)
     if (plen >= VX_RESP_ORDNO_OFF + 10)  memcpy(pl + VX_RESP_ORDNO_OFF, no, 10);
     if (plen >= VX_RESP_MEMBER_OFF + 60) memcpy(pl + VX_RESP_MEMBER_OFF, bo->member, 60);
 }
-static void vx_push_catalog(int fd, char *resp, int respcap)
+static int g_push_seq = 0;   /* push 세션 전역 단조 MsgSeqNum (SCHOPQ서 리셋) */
+static void vx_push_catalog(int fd, char *resp, int respcap, int only_ci)
 {
     char pl[2048];
-    int  ci, plen, push_len, seq = 1;
+    int  ci, plen, push_len, ms;
 
     for (ci = 0; ci < vx_cat_cnt; ci++) {
         VX_PRODUCT *pr = &vx_cat[ci];
         VX_ORDER   *bo;
+        if (only_ci >= 0 && ci != only_ci) continue;   /* 주문 왕복: 해당 상품만 */
         if (!pr->enabled) continue;
         if (!pr->resp_tr[0]) continue;   /* 시세-only 상품(FX 등)은 TCP 주문/체결 push 제외 */
 
@@ -266,12 +268,12 @@ static void vx_push_catalog(int fd, char *resp, int respcap)
 
         plen = vx_build_payload(pr->resp_tr, pl, pr->resp_size);
         vx_echo_order(pl, plen, bo);
+        ms = ++g_push_seq;
         push_len = krx_build_data_push(resp, respcap, KRX_DEFAULT_SENDER,
-                                       pr->wrapper, pr->resp_tr, seq, seq, pl, plen);
+                                       pr->wrapper, pr->resp_tr, ms, ms, pl, plen);
         if (push_len > 0) { mock_sendn(fd, resp, push_len);
-            mock_log("VX: push RESP %s (%d B) [%s]%s", pr->resp_tr, push_len, pr->name,
+            mock_log("VX: push RESP %s (%d B) seq=%d [%s]%s", pr->resp_tr, push_len, ms, pr->name,
                      bo ? " CORRELATED(OrderNo+member echo)" : ""); }
-        seq++;
         usleep(300000);
 
         if (!strcmp(pr->fill_rule, "ack")) {
@@ -290,13 +292,13 @@ static void vx_push_catalog(int fd, char *resp, int respcap)
                            !strncmp(pr->exec_tr, "TTRTDP42301", 11) ? 82 : -1;
                 if (qoff >= 0 && plen >= qoff + 10) memcpy(pl + qoff, "0000000050", 10);
             }
+            ms = ++g_push_seq;
             push_len = krx_build_data_push(resp, respcap, KRX_DEFAULT_SENDER,
-                                           pr->wrapper, pr->exec_tr, seq, seq, pl, plen);
+                                           pr->wrapper, pr->exec_tr, ms, ms, pl, plen);
             if (push_len > 0) { mock_sendn(fd, resp, push_len);
-                mock_log("VX: push EXEC %s (%d B) [%s]%s%s", pr->exec_tr, push_len, pr->name,
+                mock_log("VX: push EXEC %s (%d B) seq=%d [%s]%s%s", pr->exec_tr, push_len, ms, pr->name,
                          bo ? " CORRELATED" : "",
                          !strcmp(pr->fill_rule, "partial") ? " PARTIAL(qty=50)" : ""); }
-            seq++;
             if (bo) bo->filled = 1;       /* 체결 완료 → book 소진 */
         }
     }
@@ -308,6 +310,7 @@ static void vx_push_catalog(int fd, char *resp, int respcap)
     동시 처리하고 global order book 을 공유해 주문↔체결 correlation 을 성립.
     (기존 단일 handle_client → vx_serve select 루프로 승격)
 ========================================================================*/
+static int g_push_fd = -1;   /* recv/push 세션 fd (SCHOPQ10000 발신 소켓 = pc_1201_tr) */
 static int vx_route_msg(int fd, char *buf, int rt)
 {
     char resp[MOCK_BUF_SIZE];
@@ -358,12 +361,12 @@ static int vx_route_msg(int fd, char *buf, int rt)
             memcpy(resp + KRX_OFF_MSGSEQNUM, bl, 11);
             mock_sendn(fd, resp, resp_len);
             mock_log("MOCK: Sent LINK_RESP(SCHOPR10000) (%d bytes)", resp_len);
+            g_push_fd = fd; g_push_seq = 0; /* 이 소켓 = 응답/체결 수신(push) 세션, seq 리셋 */
 
-            /* 회원처리호가 응답 TTRODP11301(318B) push:
-               Header MsgType=TCHTDP00000, MsgSeqNum=1, Body(DataSeq=ME그룹seq=1,
-               TrCode=TTRODP11301, Megrp="01") + payload(294) */
-            /* VX-1: 카탈로그(cfg/vexch.ini) 구동 push — enabled 상품마다 응답+체결 */
-            vx_push_catalog(fd, resp, sizeof(resp));
+            /* VX-1/run_pc_rx: SCHOPQ 접속 시 catalog auto-push(하위호환).
+               VX-6 주문왕복 테스트는 VX_NO_SCHOPQ_PUSH=1 로 억제(주문 트리거 push만). */
+            if (getenv("VX_NO_SCHOPQ_PUSH") == NULL)
+                vx_push_catalog(fd, resp, sizeof(resp), -1);
         }
         else if (strcmp(msg_type, KRX_POLL_REQ) == 0) {
             /* POLL request → POLL response */
@@ -392,6 +395,11 @@ static int vx_route_msg(int fd, char *buf, int rt)
                 int ono = vx_book_order(matched, buf + KRX_HDR_LEN, rt - KRX_HDR_LEN);
                 mock_log("VX: ORDER recv %s [%s] booked OrderNo=%d (응답/체결 수신소켓 push서 회원영역 echo)",
                          msg_type, vx_cat[matched].name, ono);
+                /* VX-6 왕복: 주문 수신 즉시 응답/체결을 수신(push)세션으로 교차 전송(booked→correlation) */
+                if (g_push_fd >= 0 && g_push_fd != fd) {
+                    vx_push_catalog(g_push_fd, resp, sizeof(resp), matched);
+                    mock_log("VX: 주문→체결 왕복: [%s] 응답/체결을 수신소켓(fd=%d)으로 push", vx_cat[matched].name, g_push_fd);
+                }
             }
             else
                 mock_log("VX: ORDER recv %s (미등록 상품 → cfg/vexch.ini 에 블록 추가 필요)",
