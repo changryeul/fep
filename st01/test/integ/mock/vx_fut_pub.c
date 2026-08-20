@@ -26,6 +26,7 @@
 
 #define TRLEN   173
 #define MSTLEN  1318
+#define H3LEN   53
 #define MAXCODE 16
 
 /* 고정폭 필드에 우측정렬 실수(소수점 ASCII) 기록 */
@@ -86,6 +87,18 @@ static void build_master(char *b, long seq, const char *code, const char *name,
     putf(b, 748, 11, yprc);           /* @748 yprc 전일종가 */
 }
 
+/* 선물 정산가 H306F(53B) — DecodeH306F: code@5 sprc@23(18) spcd@41 lspr@43(8) lspc@51 */
+static void build_h306f(char *b, const char *code, double sprc, const char *spcd)
+{
+    memset(b, ' ', H3LEN);
+    memcpy(b, "H306F", 5);            /* @0  TR */
+    puts_l(b, 5, 12, code);           /* @5  종목코드 */
+    putf(b, 23, 18, sprc);            /* @23 sprc 정산가격 */
+    memcpy(b + 41, spcd, 2);          /* @41 spcd 정산가격구분(10:장중) */
+    putf(b, 43, 8, sprc);             /* @43 lspr 최종결제가격 */
+    memcpy(b + 51, "1", 1);           /* @51 lspc 구분 */
+}
+
 int main(int argc, char **argv)
 {
     int    interval_ms = (argc > 1) ? atoi(argv[1]) : 1000;
@@ -139,10 +152,12 @@ int main(int argc, char **argv)
         snprintf(hms, sizeof(hms), "%02d%02d%02d%03ld", lt->tm_hour, lt->tm_min, lt->tm_sec, (tick%1000));
         if (tick == 0 || tick % 60 == 0) {          /* 마스터(A006F): 기동시 + 주기 재발행 → wtg 화면 종목/기준가/등락 */
             for (i = 0; i < ncode; i++) {
-                char mb[MSTLEN];
+                char mb[MSTLEN], hb[H3LEN];
                 build_master(mb, seq++, codes[i], "KOSPI200 FUT",
                              base[i], base[i]*1.08, base[i]*0.92, base[i], "20260312");
                 sendto(s, mb, MSTLEN, 0, (struct sockaddr*)&wtg, sizeof(wtg));
+                build_h306f(hb, codes[i], px[i], "10");        /* 정산가(장중) */
+                sendto(s, hb, H3LEN, 0, (struct sockaddr*)&wtg, sizeof(wtg));
             }
         }
         for (i = 0; i < ncode; i++) {
