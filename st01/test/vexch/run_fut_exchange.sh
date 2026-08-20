@@ -138,7 +138,7 @@ FEP_RECV=$(grep -c "VX_TEST recv" "$PLOG" 2>/dev/null); FEP_RECV=${FEP_RECV:-0}
 WTG_NOW=$(grep -oE '"packets":[0-9]+' "$WTG_OUT" 2>/dev/null | tail -1 | grep -oE '[0-9]+$'); WTG_NOW=${WTG_NOW:-0}
 WTG_DELTA=$((WTG_NOW - WTG_BASE))
 WTG_UNK=$(grep -oE '"unknown":[0-9]+' "$WTG_OUT" 2>/dev/null | tail -1 | grep -oE '[0-9]+$'); WTG_UNK=${WTG_UNK:-0}
-KT=$($HOME/common/wtg/bin/krx-tester --url ws://127.0.0.1:8085/v1/subscribe --symbols 101V6000 --count 2 --timeout 10 2>&1)
+KT=$($HOME/common/wtg/bin/krx-tester --url ws://127.0.0.1:8085/v1/subscribe --symbols 101V6000 --count 2 --timeout 10s 2>&1)
 KTN=$(echo "$KT" | grep -ic 'trade\|101V6000')
 echo "  [FEP] pc_7100_ur 수신(A301F)     : $FEP_RECV"
 echo "  [wtg] mci-edge-krx packets 증가   : $WTG_DELTA (unknown=$WTG_UNK, 0이어야 정상파싱)"

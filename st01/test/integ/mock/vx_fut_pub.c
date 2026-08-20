@@ -25,6 +25,7 @@
 #include <arpa/inet.h>
 
 #define TRLEN   173
+#define MSTLEN  1318
 #define MAXCODE 16
 
 /* 고정폭 필드에 우측정렬 실수(소수점 ASCII) 기록 */
@@ -63,6 +64,28 @@ static void build_tr(char *b, const char *trcode, long seq, const char *code,
     /* @163~172 (하한 등) 공백 유지 */
 }
 
+/* 파생 종목 마스터 A006F(1318B) — DecodeA006F 오프셋 기준(종목/기준가/상하한/전일종가) */
+static void build_master(char *b, long seq, const char *code, const char *name,
+                         double bprc, double upl, double dnl, double yprc, const char *exdt)
+{
+    memset(b, ' ', MSTLEN);
+    memcpy(b, "A006F", 5);            /* @0   TR */
+    puti(b, 5, 8, seq);               /* @5   seqno */
+    puts_l(b, 27, 12, code);          /* @27  표준종목코드 */
+    memcpy(b + 45, "F", 1);           /* @45  focd 선물 */
+    puts_l(b, 57, 9, code);           /* @57  iscd 단축코드 */
+    puts_l(b, 66, 80, name);          /* @66  klnm 종목명 */
+    puts_l(b, 146, 40, name);         /* @146 ksnm 약명 */
+    puts_l(b, 309, 8, "20250102");    /* @309 ltdt 상장일 */
+    putf(b, 331, 11, upl);            /* @331 upl1 상한 */
+    putf(b, 364, 11, dnl);            /* @364 lpl1 하한 */
+    putf(b, 397, 11, bprc);           /* @397 bprc 기준가 */
+    puts_l(b, 457, 8, exdt);          /* @457 exdt 만기 */
+    putf(b, 484, 22, 1.0);            /* @484 unit 거래단위 */
+    putf(b, 506, 22, 250000.0);       /* @506 mult 거래승수 */
+    putf(b, 748, 11, yprc);           /* @748 yprc 전일종가 */
+}
+
 int main(int argc, char **argv)
 {
     int    interval_ms = (argc > 1) ? atoi(argv[1]) : 1000;
@@ -71,7 +94,7 @@ int main(int argc, char **argv)
     const char *fgrp = getenv("VX_FUT_FEP_GRP"); const char *fprt = getenv("VX_FUT_FEP_PORT");
     const char *codes_env = getenv("VX_FUT_CODES");
     const char *iface = getenv("VX_FUT_IFACE");
-    char   codes[MAXCODE][16]; double px[MAXCODE], op[MAXCODE], hi[MAXCODE], lo[MAXCODE], pp[MAXCODE];
+    char   codes[MAXCODE][16]; double px[MAXCODE], op[MAXCODE], hi[MAXCODE], lo[MAXCODE], pp[MAXCODE], base[MAXCODE];
     long   tv[MAXCODE]; int ncode = 0;
     struct sockaddr_in wtg, fep;
     int    s, i, on = 1; unsigned char ttl = 4, loop = 1;
@@ -86,6 +109,7 @@ int main(int argc, char **argv)
       for (t = strtok(tmp, ","); t && ncode < MAXCODE; t = strtok(NULL, ",")) {
         strncpy(codes[ncode], t, 15); codes[ncode][15]=0;
         px[ncode] = 260.0 + ncode*55.0;             /* 시작가(종목별 상이) */
+        base[ncode]=px[ncode];                      /* 기준가(전일종가) 고정 */
         op[ncode]=px[ncode]; hi[ncode]=px[ncode]; lo[ncode]=px[ncode]; pp[ncode]=px[ncode];
         tv[ncode]=0; ncode++;
       } }
@@ -113,6 +137,14 @@ int main(int argc, char **argv)
         if (duration_s > 0 && (now - start) >= duration_s) break;
         lt = localtime(&now);
         snprintf(hms, sizeof(hms), "%02d%02d%02d%03ld", lt->tm_hour, lt->tm_min, lt->tm_sec, (tick%1000));
+        if (tick == 0 || tick % 60 == 0) {          /* 마스터(A006F): 기동시 + 주기 재발행 → wtg 화면 종목/기준가/등락 */
+            for (i = 0; i < ncode; i++) {
+                char mb[MSTLEN];
+                build_master(mb, seq++, codes[i], "KOSPI200 FUT",
+                             base[i], base[i]*1.08, base[i]*0.92, base[i], "20260312");
+                sendto(s, mb, MSTLEN, 0, (struct sockaddr*)&wtg, sizeof(wtg));
+            }
+        }
         for (i = 0; i < ncode; i++) {
             char b[TRLEN]; double step = ((rand()%7)-3) * 0.05;   /* ±0.15 워크(0.05틱) */
             pp[i] = px[i]; px[i] += step; if (px[i] < 1) px[i] = 1;
